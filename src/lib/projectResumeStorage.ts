@@ -43,13 +43,26 @@ export const createDefaultVillageResume = (projectId: string, desaName: string, 
 const VILLAGE_CACHE_PREFIX = 'project_ventura_village_resumes_';
 const LETTERS_CACHE_PREFIX = 'project_ventura_agency_letters_';
 
+// Safety wrapper so Firestore promises (network lag, offline, or rule delays) never hang indefinitely
+async function withTimeout<T>(promise: Promise<T>, timeoutMs = 2500): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Operasi Firestore melebihi batas waktu (timeout)')), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 // ----------------- VILLAGE RESUME FUNCTIONS -----------------
 
 export async function loadVillageResumes(projectId: string): Promise<VillageResume[]> {
   try {
     const resumesRef = collection(db, 'village_resumes');
     const q = query(resumesRef, where('projectId', '==', projectId));
-    const snap = await getDocs(q);
+    const snap = await withTimeout(getDocs(q), 2500);
     
     if (!snap.empty) {
       const list: VillageResume[] = [];
@@ -98,10 +111,10 @@ export async function saveVillageResume(resume: VillageResume): Promise<void> {
     console.warn('Gagal menyimpan ke cache lokal:', err);
   }
 
-  // 2. Persist to Firestore
+  // 2. Persist to Firestore with safety timeout
   try {
     const resumeRef = doc(db, 'village_resumes', resume.id);
-    await setDoc(resumeRef, updatedResume, { merge: true });
+    await withTimeout(setDoc(resumeRef, updatedResume, { merge: true }), 2500);
   } catch (err) {
     console.warn('Gagal menyimpan village resume ke Firestore:', err);
   }
@@ -200,7 +213,7 @@ export async function loadAgencyLetters(projectId: string): Promise<AgencyLetter
   try {
     const lettersRef = collection(db, 'agency_letters');
     const q = query(lettersRef, where('projectId', '==', projectId));
-    const snap = await getDocs(q);
+    const snap = await withTimeout(getDocs(q), 2500);
     
     if (!snap.empty) {
       const list: AgencyLetter[] = [];
@@ -278,7 +291,7 @@ export async function saveAgencyLetter(letter: AgencyLetter): Promise<void> {
   // 2. Firestore
   try {
     const letterRef = doc(db, 'agency_letters', letter.id);
-    await setDoc(letterRef, updatedLetter, { merge: true });
+    await withTimeout(setDoc(letterRef, updatedLetter, { merge: true }), 2500);
   } catch (err) {
     console.warn('Gagal simpan agency letter ke Firestore:', err);
   }
@@ -305,7 +318,7 @@ export async function deleteAgencyLetter(projectId: string, letterId: string): P
   // 2. Firestore
   try {
     const letterRef = doc(db, 'agency_letters', letterId);
-    await deleteDoc(letterRef);
+    await withTimeout(deleteDoc(letterRef), 2500);
   } catch (err) {
     console.warn('Gagal delete agency letter dari Firestore:', err);
   }

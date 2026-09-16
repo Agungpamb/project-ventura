@@ -83,7 +83,6 @@ export default function SuratInstansiPanel({
 
   // Deletion Confirmation Modal State
   const [letterToDelete, setLetterToDelete] = useState<AgencyLetter | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Modal Form State (Add/Edit)
@@ -262,44 +261,48 @@ export default function SuratInstansiPanel({
       return;
     }
 
-    setIsSaving(true);
     setFormError(null);
+    const letterToSave: AgencyLetter = {
+      id: editingLetter ? editingLetter.id : `${activeProjectId}_letter_${Date.now()}`,
+      projectId: activeProjectId,
+      instansiName: formInstansi.trim(),
+      noSurat: formNoSurat.trim(),
+      tanggalSurat: formTanggal,
+      perihal: formPerihal.trim(),
+      suratPdfUrl: formPdfUrl,
+      suratPdfName: formPdfName,
+      docPhotos: formDocPhotos,
+      status: formStatus,
+      catatanTindakLanjut: formTindakLanjut.trim(),
+      picInstansi: formPic.trim(),
+      createdAt: editingLetter ? editingLetter.createdAt : Date.now(),
+      updatedAt: Date.now(),
+      updatedBy: operatorName || userEmail
+    };
+
+    // 1. Optimistic instant UI update
+    setLetters(prev => {
+      const idx = prev.findIndex(l => l.id === letterToSave.id);
+      if (idx >= 0) {
+        const cp = [...prev];
+        cp[idx] = letterToSave;
+        return cp;
+      }
+      return [letterToSave, ...prev];
+    });
+
+    setIsFormOpen(false);
+    setActionFeedback({ 
+      type: 'success', 
+      message: editingLetter ? 'Perubahan surat berhasil disimpan.' : 'Surat instansi baru berhasil ditambahkan.' 
+    });
+    setTimeout(() => setActionFeedback(null), 3500);
+
+    // 2. Persist in background with timeout safety
     try {
-      const letterToSave: AgencyLetter = {
-        id: editingLetter ? editingLetter.id : `${activeProjectId}_letter_${Date.now()}`,
-        projectId: activeProjectId,
-        instansiName: formInstansi.trim(),
-        noSurat: formNoSurat.trim(),
-        tanggalSurat: formTanggal,
-        perihal: formPerihal.trim(),
-        suratPdfUrl: formPdfUrl,
-        suratPdfName: formPdfName,
-        docPhotos: formDocPhotos,
-        status: formStatus,
-        catatanTindakLanjut: formTindakLanjut.trim(),
-        picInstansi: formPic.trim(),
-        createdAt: editingLetter ? editingLetter.createdAt : Date.now(),
-        updatedAt: Date.now(),
-        updatedBy: operatorName || userEmail
-      };
-
       await saveAgencyLetter(letterToSave);
-      setLetters(prev => {
-        const idx = prev.findIndex(l => l.id === letterToSave.id);
-        if (idx >= 0) {
-          const cp = [...prev];
-          cp[idx] = letterToSave;
-          return cp;
-        }
-        return [letterToSave, ...prev];
-      });
-
-      setIsFormOpen(false);
     } catch (err) {
-      console.error('Error saving agency letter:', err);
-      alert('Gagal menyimpan surat instansi.');
-    } finally {
-      setIsSaving(false);
+      console.warn('Background save agency letter failed:', err);
     }
   };
 
@@ -308,23 +311,23 @@ export default function SuratInstansiPanel({
     setLetterToDelete(letter);
   };
 
-  // Confirm Delete Letter execution
+  // Confirm Delete Letter execution (Instant Optimistic UI)
   const handleConfirmDelete = async () => {
     if (!letterToDelete) return;
-    setIsDeleting(true);
     const targetId = letterToDelete.id;
+    const targetInstansi = letterToDelete.instansiName;
+
+    // 1. Optimistic removal from UI immediately - closes modal instantly
+    setLetters(prev => prev.filter(l => l.id !== targetId));
+    setLetterToDelete(null);
+    setActionFeedback({ type: 'success', message: `Surat ${targetInstansi} berhasil dihapus dari daftar.` });
+    setTimeout(() => setActionFeedback(null), 3500);
+
+    // 2. Perform background deletion with safety timeout
     try {
       await deleteAgencyLetter(activeProjectId, targetId);
-      setLetters(prev => prev.filter(l => l.id !== targetId));
-      setLetterToDelete(null);
-      setActionFeedback({ type: 'success', message: 'Surat instansi berhasil dihapus dari daftar.' });
-      setTimeout(() => setActionFeedback(null), 3500);
     } catch (err) {
-      console.error('Gagal menghapus surat:', err);
-      setActionFeedback({ type: 'error', message: 'Gagal menghapus surat instansi dari sistem.' });
-      setTimeout(() => setActionFeedback(null), 3500);
-    } finally {
-      setIsDeleting(false);
+      console.warn('Gagal menghapus surat di background:', err);
     }
   };
 
@@ -337,8 +340,10 @@ export default function SuratInstansiPanel({
       updatedAt: Date.now(),
       updatedBy: operatorName || userEmail
     };
-    await saveAgencyLetter(updated);
+    // Instant UI update
     setLetters(prev => prev.map(l => l.id === letter.id ? updated : l));
+    // Background persist
+    saveAgencyLetter(updated).catch(err => console.warn('Background status update failed:', err));
   };
 
   // Export CSV
@@ -1166,8 +1171,13 @@ export default function SuratInstansiPanel({
 
       {/* 6. MODAL KONFIRMASI HAPUS SURAT (In-App Dialog, Tanpa window.confirm) */}
       {letterToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="glass-card rounded-3xl w-full max-w-md border border-rose-500/30 shadow-2xl p-6 space-y-4 bg-slate-900">
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setLetterToDelete(null);
+          }}
+        >
+          <div className="glass-card rounded-3xl w-full max-w-md border border-rose-500/30 shadow-2xl p-6 space-y-4 bg-slate-900 animate-scaleUp">
             <div className="flex items-center gap-3 text-rose-400">
               <div className="p-2.5 bg-rose-500/20 rounded-2xl border border-rose-500/30">
                 <Trash2 className="w-6 h-6 text-rose-400" />
@@ -1185,35 +1195,24 @@ export default function SuratInstansiPanel({
             </div>
 
             <p className="text-xs text-slate-300 leading-relaxed">
-              Surat ini akan dihapus permanen dari basis data Firestore dan riwayat monitoring proyek.
+              Surat ini akan segera dihapus permanen dari antarmuka, cache lokal, dan basis data cloud.
             </p>
 
             <div className="flex items-center justify-end gap-2.5 pt-2">
               <button
                 type="button"
-                disabled={isDeleting}
                 onClick={() => setLetterToDelete(null)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer"
               >
                 Batal
               </button>
               <button
                 type="button"
-                disabled={isDeleting}
                 onClick={handleConfirmDelete}
-                className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-lg shadow-rose-600/30 flex items-center gap-2 disabled:opacity-50"
+                className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-lg shadow-rose-600/30 flex items-center gap-2"
               >
-                {isDeleting ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    Menghapus...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Ya, Hapus Surat
-                  </>
-                )}
+                <Trash2 className="w-3.5 h-3.5" />
+                Ya, Hapus Surat
               </button>
             </div>
           </div>
