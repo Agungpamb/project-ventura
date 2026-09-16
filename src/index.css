@@ -1,0 +1,465 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Custom Frosted Glass Styles & Animations */
+@layer utilities {
+  .glass-card {
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .glass-card-subtle {
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    background-color: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+  }
+
+  .glass-card-dark {
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    background-color: rgba(15, 23, 42, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .glass-input {
+    background-color: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #f8fafc;
+    transition: all 0.2s ease-in-out;
+  }
+
+  .glass-input:focus {
+    border-color: rgba(129, 140, 248, 0.6); /* indigo-400 */
+    background-color: rgba(15, 23, 42, 0.8);
+    box-shadow: 0 0 12px rgba(99, 102, 241, 0.15);
+    outline: none;
+  }
+
+  .glow-indigo {
+    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.25);
+  }
+
+  .glow-emerald {
+    box-shadow: 0 4px 20px rgba(16, 185, 129, 0.2);
+  }
+}
+
+/* Dark theme custom scrollbar styling & scroll within scroll */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 9999px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.35);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.6);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* Light mode scrollbar */
+.light .scrollbar-thin::-webkit-scrollbar-track {
+  background: rgba(226, 232, 240, 0.8);
+}
+
+.light .scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.4);
+}
+
+.light .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.7);
+}
+
+/* Table scroll wrapper for scroll-within-scroll */
+.table-scroll-container {
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  position: relative;
+}
+
+/* Global transitions and overrides */
+body {
+  background-color: #020617; /* slate-950 */
+  color: #f1f5f9; /* slate-100 */
+  min-height: 100vh;
+  font-family: "Inter", sans-serif;
+  overflow-x: hidden;
+}
+
+/* Daylight / Light Theme Overrides */
+.light {
+  color-scheme: light;
+}
+
+.light body, .light #sip_root_app {
+  background-color: #f1f5f9 !important; /* slate-100 */
+  color: #0f172a !important; /* slate-900 */
+}
+
+/* Light theme background blobs */
+.light .bg-blob-indigo {
+  background-color: #6366f1 !important;
+  opacity: 0.08 !important;
+}
+.light .bg-blob-emerald {
+  background-color: #10b981 !important;
+  opacity: 0.08 !important;
+}
+.light .bg-blob-purple {
+  background-color: #a855f7 !important;
+  opacity: 0.06 !important;
+}
+
+/* Light theme typography */
+.light h1, .light h2, .light h3, .light h4, .light h5, .light h6 {
+  color: #0f172a !important; /* slate-900 */
+}
+
+.light .text-slate-100, .light .text-slate-200 {
+  color: #0f172a !important; /* slate-900 */
+}
+
+.light .text-slate-300 {
+  color: #1e293b !important; /* slate-800 */
+}
+
+.light .text-slate-400 {
+  color: #334155 !important; /* slate-700 */
+}
+
+.light .text-slate-500 {
+  color: #64748b !important; /* slate-500 */
+}
+
+/* Higher contrast text colors for status badges in light mode */
+.light .text-indigo-400 {
+  color: #4338ca !important; /* indigo-700 */
+}
+.light .text-indigo-300 {
+  color: #4f46e5 !important; /* indigo-600 */
+}
+.light .text-emerald-400 {
+  color: #059669 !important; /* emerald-600 */
+}
+.light .text-emerald-300 {
+  color: #047857 !important; /* emerald-700 */
+}
+.light .text-amber-400 {
+  color: #d97706 !important; /* amber-600 */
+}
+.light .text-rose-400 {
+  color: #e11d48 !important; /* rose-600 */
+}
+.light .text-blue-400 {
+  color: #2563eb !important; /* blue-600 */
+}
+
+/* Maintain bright white text on solid colored backgrounds and buttons in light mode */
+.light .bg-indigo-600,
+.light .bg-indigo-500,
+.light .bg-emerald-600,
+.light .bg-rose-600,
+.light .bg-amber-500,
+.light .bg-amber-600,
+.light button.bg-indigo-600,
+.light button.bg-indigo-500,
+.light button.bg-emerald-600,
+.light button.bg-rose-600,
+.light button.bg-amber-500,
+.light button.bg-amber-600,
+.light .bg-indigo-600.text-white,
+.light .bg-indigo-500.text-white,
+.light .bg-emerald-600.text-white,
+.light .bg-rose-600.text-white,
+.light .bg-amber-500.text-white,
+.light .bg-amber-600.text-white,
+.light .bg-indigo-600 .text-white,
+.light .bg-indigo-500 .text-white,
+.light .bg-emerald-600 .text-white,
+.light .bg-rose-600 .text-white,
+.light .bg-amber-500 .text-white,
+.light .bg-amber-600 .text-white,
+.light .text-white-keep,
+.light .text-white-keep * {
+  color: #ffffff !important;
+  opacity: 1 !important;
+}
+
+.light .text-white {
+  color: #0f172a; /* fall back to slate-900 on typical light backgrounds */
+}
+
+/* Glass Card light theme - High contrast crisp white cards */
+.light .glass-card {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important; /* slate-300 */
+  box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.08), 0 2px 4px -1px rgba(15, 23, 42, 0.04) !important;
+}
+
+.light .glass-card-subtle {
+  background-color: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+}
+
+.light .glass-card-dark {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+  box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.08) !important;
+}
+
+/* Form and Inputs light theme */
+.light .glass-input,
+.light select,
+.light input {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+.light .glass-input::placeholder,
+.light input::placeholder {
+  color: #64748b !important;
+}
+
+.light .glass-input:focus,
+.light select:focus,
+.light input:focus {
+  border-color: #4f46e5 !important; /* indigo-600 */
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15) !important;
+}
+
+/* Background & Border Overrides for Light Mode */
+.light [class*="bg-slate-950"],
+.light [class*="bg-slate-900"],
+.light .bg-slate-950,
+.light .bg-slate-900,
+.light .bg-slate-950\/60,
+.light .bg-slate-950\/70,
+.light .bg-slate-950\/80,
+.light .bg-slate-950\/40,
+.light .bg-slate-900\/80,
+.light .bg-slate-900\/60,
+.light .bg-slate-900\/40,
+.light .bg-slate-900\/20,
+.light .bg-slate-900\/10 {
+  background-color: #ffffff !important;
+}
+
+/* Sub-containers / inner cards for contrast in Light Mode */
+.light .bg-slate-950\/60,
+.light .bg-slate-950\/70,
+.light .bg-slate-950\/40,
+.light .bg-slate-950\/70,
+.light .bg-slate-900\/40,
+.light .bg-slate-900\/60 {
+  background-color: #f8fafc !important; /* clean light slate-50 */
+  border-color: #cbd5e1 !important;
+}
+
+/* Inner list items / pill containers in Light Mode */
+.light .bg-white\/5,
+.light .bg-white\/10,
+.light .bg-white\/2\.5 {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* Recharts Pie sector stroke in light mode */
+.light .recharts-pie-sector {
+  stroke: #ffffff !important;
+}
+
+/* Distinct Table Headers & Sticky Containers in Light Mode */
+.light thead,
+.light thead tr,
+.light thead th,
+.light th.bg-slate-900,
+.light .bg-slate-900 {
+  background-color: #f1f5f9 !important; /* slate-100 header background for strong contrast */
+  color: #0f172a !important; /* slate-900 bold header text */
+}
+
+.light thead th {
+  border-bottom: 2px solid #cbd5e1 !important;
+  font-weight: 700 !important;
+  color: #334155 !important;
+}
+
+.light .bg-slate-800,
+.light .bg-slate-900.rounded-full,
+.light .bg-slate-800.rounded-full {
+  background-color: #e2e8f0 !important;
+}
+
+.light .hover\:bg-white\/5:hover,
+.light .hover\:bg-white\/10:hover {
+  background-color: #f1f5f9 !important;
+}
+
+.light .border-white\/10, .light .border-white\/5, .light .border-white\/20 {
+  border-color: #e2e8f0 !important;
+}
+
+.light .divide-white\/10 > :not([hidden]) ~ :not([hidden]),
+.light .divide-white\/5 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #e2e8f0 !important;
+}
+
+/* Accent overlays & Badges in Light Mode */
+.light .text-indigo-300 {
+  color: #4338ca !important; /* indigo-700 */
+}
+
+.light .text-indigo-400 {
+  color: #3730a3 !important; /* indigo-800 */
+}
+
+.light .bg-indigo-500\/10 {
+  background-color: #e0e7ff !important; /* indigo-100 badge background */
+}
+
+.light .bg-indigo-500\/15 {
+  background-color: #c7d2fe !important;
+}
+
+.light .border-indigo-500\/20, .light .border-indigo-500\/30 {
+  border-color: #a5b4fc !important;
+}
+
+.light .bg-indigo-600\/35 {
+  background-color: rgba(79, 70, 229, 0.15) !important;
+}
+
+/* Scrollbar override */
+.light .scrollbar-thin::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.01);
+}
+
+.light .scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.light .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+/* Map specific overrides */
+.light .leaflet-container {
+  background-color: #f1f5f9 !important;
+}
+
+.light .custom-map-tooltip {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border-color: rgba(0, 0, 0, 0.12) !important;
+  color: #1e293b !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
+}
+
+.light .custom-map-tooltip-dark {
+  background-color: rgba(255, 255, 255, 0.98) !important;
+  border-color: rgba(79, 70, 229, 0.4) !important;
+  color: #1e293b !important;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.1) !important;
+}
+
+/* Recharts override for light mode */
+.light .recharts-default-tooltip {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05) !important;
+}
+
+.light .recharts-tooltip-label {
+  color: #0f172a !important;
+}
+
+/* Modals backdrop & card overrides */
+.light .bg-slate-900\/90, .light .bg-slate-900\/80 {
+  background-color: rgba(255, 255, 255, 0.8) !important;
+}
+
+.light .bg-slate-950\/30 {
+  background-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+/* Recharts override for dark tooltips */
+
+/* Recharts override for dark tooltips */
+.recharts-default-tooltip {
+  background-color: rgba(15, 23, 42, 0.9) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 12px !important;
+  backdrop-filter: blur(8px);
+}
+
+.recharts-tooltip-label {
+  color: #ffffff !important;
+  font-weight: 700 !important;
+}
+
+/* Custom animation effects */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(12px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+.animate-slideUp {
+  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Custom Leaflet Tooltip Styling */
+.custom-map-tooltip {
+  background-color: rgba(15, 23, 42, 0.95) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  color: #f1f5f9 !important;
+  font-family: var(--font-sans) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+
+.custom-map-tooltip-dark {
+  background-color: rgba(15, 23, 42, 0.98) !important;
+  border: 1px solid rgba(99, 102, 241, 0.3) !important;
+  color: #f1f5f9 !important;
+  font-family: var(--font-sans) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.6) !important;
+  padding: 8px 12px !important;
+}
+
+.leaflet-tooltip-left:before { border-left-color: rgba(15, 23, 42, 0.95) !important; }
+.leaflet-tooltip-right:before { border-right-color: rgba(15, 23, 42, 0.95) !important; }
+.leaflet-tooltip-top:before { border-top-color: rgba(15, 23, 42, 0.95) !important; }
+.leaflet-tooltip-bottom:before { border-bottom-color: rgba(15, 23, 42, 0.95) !important; }

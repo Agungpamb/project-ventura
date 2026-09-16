@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 110" width="760" height="220">
+  <defs>
+    <style>
+      .id-txt { font-family: 'Liberation Sans', 'DejaVu Sans', 'Arial', sans-serif; font-size: 42px; font-weight: 900; fill: #0284c7; }
+      .survey-txt { font-family: 'Liberation Sans', 'DejaVu Sans', 'Arial', sans-serif; font-size: 42px; font-weight: 700; fill: #1e293b; }
+      .tagline { font-family: 'Liberation Sans', 'DejaVu Sans', 'Arial', sans-serif; font-size: 15px; font-weight: 600; fill: #64748b; letter-spacing: 0.8px; }
+    </style>
+  </defs>
+  <!-- Modern ID Survey Badge / Checkmark Shield -->
+  <g transform="translate(20, 15)">
+    <!-- Cyan circle -->
+    <circle cx="36" cy="38" r="34" fill="#0284c7" />
+    <!-- White inner circle ring -->
+    <circle cx="36" cy="38" r="22" fill="#ffffff" />
+    <!-- Center teal dot -->
+    <circle cx="36" cy="38" r="14" fill="#0ea5e9" />
+    <!-- Crisp checkmark in white -->
+    <path d="M28,38 L34,44 L46,30" fill="none" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+  <!-- Typography -->
+  <text x="105" y="54"><tspan class="id-txt">id</tspan><tspan class="survey-txt">survey</tspan></text>
+  <text x="105" y="80" class="tagline">Testing · Inspection · Certification</text>
+</svg>

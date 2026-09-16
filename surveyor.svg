@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 110" width="680" height="220">
+  <defs>
+    <style>
+      .si-title { font-family: 'Liberation Sans', 'DejaVu Sans', 'Arial', sans-serif; font-size: 26px; font-weight: 900; fill: #0284c7; letter-spacing: 1.5px; }
+      .si-sub { font-family: 'Liberation Sans', 'DejaVu Sans', 'Arial', sans-serif; font-size: 15px; font-weight: 600; fill: #64748b; letter-spacing: 0.5px; }
+    </style>
+  </defs>
+  <!-- Globe / Grid wireframe icon -->
+  <g transform="translate(10, 16)">
+    <!-- Globe circle -->
+    <circle cx="36" cy="38" r="32" fill="none" stroke="#0284c7" stroke-width="3.5" />
+    <!-- Longitude elliptical arcs -->
+    <ellipse cx="36" cy="38" rx="14" ry="32" fill="none" stroke="#0284c7" stroke-width="2.5" />
+    <line x1="36" y1="6" x2="36" y2="70" stroke="#0284c7" stroke-width="2.5" />
+    <!-- Latitude horizontal lines -->
+    <line x1="6" y1="38" x2="66" y2="38" stroke="#0284c7" stroke-width="2.5" />
+    <line x1="12" y1="24" x2="60" y2="24" stroke="#0284c7" stroke-width="2" />
+    <line x1="12" y1="52" x2="60" y2="52" stroke="#0284c7" stroke-width="2" />
+  </g>
+  <!-- Typography -->
+  <text x="90" y="44" class="si-title">SURVEYOR</text>
+  <text x="90" y="68" class="si-title" fill="#0284c7">INDONESIA</text>
+  <text x="90" y="88" class="si-sub">Member of ID Survey</text>
+</svg>

@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Catch-all default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // configs collection (e.g. projects list)
+    match /configs/{document} {
+      // Allow anyone (even unauthenticated guests) to read the project configs
+      allow read: if true;
+      // Allow authenticated users to write/update configurations
+      allow write: if request.auth != null;
+    }
+
+    // records_cache collection (cached records of each project)
+    match /records_cache/{projectId} {
+      // Allow anyone (even unauthenticated guests) to read cached records
+      allow read: if true;
+      // Allow authenticated users to write/update cached records
+      allow write: if request.auth != null;
+    }
+
+    // activity_logs collection
+    match /activity_logs/{logId} {
+      // Allow reading and writing activity logs
+      allow read, write: if true;
+    }
+
+    // integrity_logs collection
+    match /integrity_logs/{logId} {
+      // Allow reading and writing integrity logs
+      allow read, write: if true;
+    }
+
+    // registered_operators collection
+    match /registered_operators/{operatorId} {
+      // Allow read and write for registered operators
+      allow read, write: if true;
+    }
+
+    // geojson_layers collection
+    match /geojson_layers/{layerId} {
+      // Allow anyone (even unauthenticated guests) to read custom layers
+      allow read: if true;
+      // Allow authenticated users to write/delete custom layers
+      allow write: if request.auth != null;
+    }
+  }
+}

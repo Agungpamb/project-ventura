@@ -1,0 +1,6 @@
+{
+  "name": "Project Ventura - Land GIS & Management",
+  "description": "Sistem Informasi Geografis & Pertanahan Desa (GIS) untuk inventarisasi lahan, bidang tanah, jalur transmisi ROW, dan QC.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
