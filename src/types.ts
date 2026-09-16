@@ -475,3 +475,54 @@ export interface ActivityLog {
   recordCode: string;
 }
 
+// Types for Menu 1.4: Resume Project (Per Desa)
+export type StageStatus = 'BELUM' | 'PROSES' | 'SELESAI';
+
+export interface VillageStageDoc {
+  pdfUrl?: string;
+  pdfName?: string;
+  docPhotos?: string[]; // Array of base64 or drive URLs
+  date?: string;
+  status: StageStatus;
+  notes?: string;
+}
+
+export interface VillageResume {
+  id: string; // `${projectId}_${desaName}`
+  projectId: string;
+  desaName: string;
+  kecamatan?: string;
+  kabupaten?: string;
+  // 6 Tahapan Proyek Lapangan
+  baSosialisasiAwal: VillageStageDoc;       // Dokumen BA sos awal (upload pdf dan dokumentasi)
+  baPengumuman: VillageStageDoc;            // Dokumen BA Pengumuman (upload pdf dan dokumentasi)
+  lampiranBapt: VillageStageDoc;            // Lampiran BAPT (upload pdf)
+  baPenyampaianNilai: VillageStageDoc;      // Dok BA penyampaian nilai (upload pdf dan dokumentasi)
+  baSerahTerimaRekening: VillageStageDoc;   // Dok BA serah terima buku rekening (upload pdf dan dokumentasi)
+  bushClearing: VillageStageDoc;            // Bush Clearing (upload dokumentasi)
+  lastUpdated?: number;
+  updatedBy?: string;
+}
+
+// Types for Menu 1.5: Surat Instansi
+export type AgencyLetterStatus = 'SUDAH_MASUK' | 'ON_PROGRESS' | 'TINDAK_LANJUT' | 'SELESAI';
+
+export interface AgencyLetter {
+  id: string;
+  projectId: string;
+  instansiName: string;
+  noSurat: string;
+  tanggalSurat: string;
+  perihal: string;
+  suratPdfUrl?: string;
+  suratPdfName?: string;
+  docPhotos?: string[]; // Dokumentasi / foto tanda terima
+  status: AgencyLetterStatus;
+  catatanTindakLanjut?: string; // Isian manual, misal: harus turun lapangan atau memasukkan surat baru
+  picInstansi?: string;
+  createdAt: number;
+  updatedAt: number;
+  updatedBy: string;
+}
+
+

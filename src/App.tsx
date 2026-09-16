@@ -29,12 +29,14 @@ const PetaBidangTanah = lazy(() => import('./components/PetaBidangTanah'));
 const SandingDataPanel = lazy(() => import('./components/SandingDataPanel'));
 const SandingEsdmPanel = lazy(() => import('./components/SandingEsdmPanel'));
 const DaftarNominatifPanel = lazy(() => import('./components/DaftarNominatifPanel'));
+const ResumeProjectPanel = lazy(() => import('./components/ResumeProjectPanel'));
+const SuratInstansiPanel = lazy(() => import('./components/SuratInstansiPanel'));
 import { 
   Map as MapIcon, Database, UploadCloud, ShieldAlert, LogOut, 
   RefreshCw, FileSpreadsheet, KeyRound, CheckSquare,
   Plus, User, UserCheck, Settings, Folder, Key, Eye, EyeOff, Lock, Unlock, Info, ShieldCheck, HelpCircle, Briefcase, Filter,
   Pin, Menu, Clock, LayoutGrid, Sun, Moon, Copy, Users, ExternalLink, Layers, Trash2, X, Globe, GitCompare,
-  CheckCircle2, AlertCircle, FileText
+  CheckCircle2, AlertCircle, FileText, Landmark, Mail
 } from 'lucide-react';
 
 interface ProjectConfig {
@@ -154,7 +156,7 @@ export default function App() {
   const location = useLocation();
 
   // Helper to map pathname to activeMenu
-  const getMenuFromPath = (pathname: string): 'dashboard' | 'nominatif' | 'input' | 'qc' | 'qc_sanding' | 'qc_sanding_esdm' | 'map' | 'map_span' | 'logs' | 'project' => {
+  const getMenuFromPath = (pathname: string): 'dashboard' | 'nominatif' | 'input' | 'qc' | 'qc_sanding' | 'qc_sanding_esdm' | 'map' | 'map_span' | 'resume_project' | 'surat_instansi' | 'logs' | 'project' => {
     const cleanPath = pathname.replace(/^\/+/, '').split('/')[0] || '';
     switch (cleanPath) {
       case 'nominatif': return 'nominatif';
@@ -164,6 +166,10 @@ export default function App() {
       case 'sanding-esdm': return 'qc_sanding_esdm';
       case 'map': return 'map';
       case 'peta-bidang': return 'map_span';
+      case 'resume-project':
+      case 'resume': return 'resume_project';
+      case 'surat-instansi':
+      case 'surat': return 'surat_instansi';
       case 'logs': return 'logs';
       case 'project': return 'project';
       case 'dashboard':
@@ -181,6 +187,8 @@ export default function App() {
       case 'qc_sanding_esdm': return '/sanding-esdm';
       case 'map': return '/map';
       case 'map_span': return '/peta-bidang';
+      case 'resume_project': return '/resume-project';
+      case 'surat_instansi': return '/surat-instansi';
       case 'logs': return '/logs';
       case 'project': return '/project';
       case 'dashboard':
@@ -340,12 +348,12 @@ export default function App() {
   const [records, setRecords] = useState<LandRecord[]>([]);
   const [spreadsheetId, setSpreadsheetId] = useState<string | null>(null);
   const [projectUploadsFolderId, setProjectUploadsFolderId] = useState<string | null>(null);
-  const [activeMenu, setActiveMenuState] = useState<'dashboard' | 'nominatif' | 'input' | 'qc' | 'qc_sanding' | 'qc_sanding_esdm' | 'map' | 'map_span' | 'logs' | 'project'>(() => {
+  const [activeMenu, setActiveMenuState] = useState<'dashboard' | 'nominatif' | 'input' | 'qc' | 'qc_sanding' | 'qc_sanding_esdm' | 'map' | 'map_span' | 'resume_project' | 'surat_instansi' | 'logs' | 'project'>(() => {
     return getMenuFromPath(window.location.pathname);
   });
 
   // Navigate function that syncs activeMenu state and URL
-  const setActiveMenu = useCallback((menu: 'dashboard' | 'nominatif' | 'input' | 'qc' | 'qc_sanding' | 'qc_sanding_esdm' | 'map' | 'map_span' | 'logs' | 'project') => {
+  const setActiveMenu = useCallback((menu: 'dashboard' | 'nominatif' | 'input' | 'qc' | 'qc_sanding' | 'qc_sanding_esdm' | 'map' | 'map_span' | 'resume_project' | 'surat_instansi' | 'logs' | 'project') => {
     setActiveMenuState(menu);
     const targetPath = getPathFromMenu(menu);
     if (location.pathname !== targetPath) {
@@ -2757,6 +2765,40 @@ export default function App() {
               1.3. Peta Bidang Tanah
             </button>
 
+            {/* Menu 1.4. Resume Project - All roles can see */}
+            <button
+              id="sidebar_menu_resume_project_btn"
+              onClick={() => {
+                setActiveMenu('resume_project');
+                if (!isSidebarPinned) setIsSidebarHovered(false);
+              }}
+              className={`w-full text-left pl-7 pr-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
+                activeMenu === 'resume_project' 
+                  ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-inner' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
+              }`}
+            >
+              <Landmark className="w-3.5 h-3.5 shrink-0 text-purple-400" />
+              1.4. Resume Project
+            </button>
+
+            {/* Menu 1.5. Surat Instansi - All roles can see */}
+            <button
+              id="sidebar_menu_surat_instansi_btn"
+              onClick={() => {
+                setActiveMenu('surat_instansi');
+                if (!isSidebarPinned) setIsSidebarHovered(false);
+              }}
+              className={`w-full text-left pl-7 pr-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
+                activeMenu === 'surat_instansi' 
+                  ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-inner' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
+              }`}
+            >
+              <Mail className="w-3.5 h-3.5 shrink-0 text-sky-400" />
+              1.5. Surat Instansi
+            </button>
+
             {/* Menu 2. Input & Edit Lahan - Locked for Guests */}
             {role !== 'GUEST' && (
               <button
@@ -3510,6 +3552,37 @@ export default function App() {
                       setSelectedRecordForEdit(rec);
                       setActiveMenu('input');
                     }}
+                  />
+                )}
+
+                {/* Menu 1.4: Resume Project (Per Desa) */}
+                {activeMenu === 'resume_project' && (
+                  <ResumeProjectPanel 
+                    records={records}
+                    activeProjectId={activeProjectId}
+                    activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
+                    role={role}
+                    userEmail={user?.email || 'operator@ventura.id'}
+                    operatorName={operatorName}
+                    accessToken={token || undefined}
+                    uploadsFolderId={projectUploadsFolderId || undefined}
+                    onNavigateToInput={(rec) => {
+                      setSelectedRecordForEdit(rec);
+                      setActiveMenu('input');
+                    }}
+                  />
+                )}
+
+                {/* Menu 1.5: Surat Instansi */}
+                {activeMenu === 'surat_instansi' && (
+                  <SuratInstansiPanel 
+                    activeProjectId={activeProjectId}
+                    activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
+                    role={role}
+                    userEmail={user?.email || 'operator@ventura.id'}
+                    operatorName={operatorName}
+                    accessToken={token || undefined}
+                    uploadsFolderId={projectUploadsFolderId || undefined}
                   />
                 )}
                 

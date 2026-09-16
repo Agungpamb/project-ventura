@@ -48,5 +48,15 @@ service cloud.firestore {
       // Allow authenticated users to write/delete custom layers
       allow write: if request.auth != null;
     }
+
+    // village_resumes collection (Menu 1.4)
+    match /village_resumes/{resumeId} {
+      allow read, write: if true;
+    }
+
+    // agency_letters collection (Menu 1.5)
+    match /agency_letters/{letterId} {
+      allow read, write: if true;
+    }
   }
 }

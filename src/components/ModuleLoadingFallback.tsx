@@ -59,6 +59,16 @@ const MENU_INFO: Record<string, { title: string; subtitle: string; icon: React.C
     subtitle: 'Menyiapkan kanvas geometri bidang tanah, buffer ruang bebas, dan rincian span...',
     icon: Layers
   },
+  resume_project: {
+    title: '1.4. Resume Proyek (Resume Dokumen Per Desa)',
+    subtitle: 'Memuat matriks progres 6 tahapan desa, berkas Berita Acara, dan foto dokumentasi...',
+    icon: Layers
+  },
+  surat_instansi: {
+    title: '1.5. Surat Instansi & Monitoring Tindak Lanjut',
+    subtitle: 'Mengambil daftar korespondensi instansi vertikal, tanda terima, dan catatan tindak lanjut...',
+    icon: FileSpreadsheet
+  },
   logs: {
     title: 'Log Aktivitas & Riwayat Audit',
     subtitle: 'Mengambil riwayat transaksi operator, sinkronisasi master, dan integritas data...',
