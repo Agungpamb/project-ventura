@@ -293,8 +293,8 @@ export default function FormInput({
   };
 
   // Form Submission
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setSubmitMessage(null);
 
     if (!validateForm()) {
@@ -393,6 +393,23 @@ export default function FormInput({
       document.getElementById('sip_form_card')?.scrollIntoView({ behavior: 'smooth' });
     }
   };
+
+  // Ergonomic keyboard shortcut listener: Ctrl+S (Windows/Linux) or Cmd+S (Mac)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault(); // Stop native browser "Save webpage" dialog
+        if (activeTab !== 'cetak_unggah' && !isSubmitting) {
+          handleSubmit();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [formData, selectedEditRecord, records, activeTab, isSubmitting, onSave, onRefreshGoogleToken]);
 
   return (
     <div className="space-y-6" id="sip_form_input">
@@ -740,68 +757,94 @@ export default function FormInput({
             </div>
           )}
 
-          {/* Form Navigation Tabs */}
-          <div className="flex border-b border-white/10 overflow-x-auto scrollbar-none gap-1">
-            <button
-              type="button"
-              onClick={() => setActiveTab('lahan_pemilik')}
-              className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
-                activeTab === 'lahan_pemilik' 
-                  ? 'border-amber-400 text-amber-300 font-extrabold' 
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <MapPin className="w-4 h-4" />
-              Lahan & Pemilik
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('alas_bangunan')}
-              className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
-                activeTab === 'alas_bangunan' 
-                  ? 'border-amber-400 text-amber-300 font-extrabold' 
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Home className="w-4 h-4" />
-              Alas Hak & Bangunan
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('tanaman')}
-              className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
-                activeTab === 'tanaman' 
-                  ? 'border-amber-400 text-amber-300 font-extrabold' 
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Sprout className="w-4 h-4" />
-              Tanaman Lahan
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('administrasi')}
-              className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
-                activeTab === 'administrasi' 
-                  ? 'border-amber-400 text-amber-300 font-extrabold' 
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Landmark className="w-4 h-4" />
-              Administrasi & Status
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('cetak_unggah')}
-              className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
-                activeTab === 'cetak_unggah' 
-                  ? 'border-amber-400 text-amber-300 font-extrabold' 
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <FileText className="w-4 h-4" />
-              Cetak & Unggah Berkas
-            </button>
+          {/* Form Navigation Tabs & Quick Action */}
+          <div className="flex flex-wrap items-center justify-between border-b border-white/10 gap-2 pb-1">
+            <div className="flex overflow-x-auto scrollbar-none gap-1">
+              <button
+                type="button"
+                onClick={() => setActiveTab('lahan_pemilik')}
+                className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+                  activeTab === 'lahan_pemilik' 
+                    ? 'border-amber-400 text-amber-300 font-extrabold' 
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <MapPin className="w-4 h-4" />
+                Lahan & Pemilik
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('alas_bangunan')}
+                className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+                  activeTab === 'alas_bangunan' 
+                    ? 'border-amber-400 text-amber-300 font-extrabold' 
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Home className="w-4 h-4" />
+                Alas Hak & Bangunan
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('tanaman')}
+                className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+                  activeTab === 'tanaman' 
+                    ? 'border-amber-400 text-amber-300 font-extrabold' 
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Sprout className="w-4 h-4" />
+                Tanaman Lahan
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('administrasi')}
+                className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+                  activeTab === 'administrasi' 
+                    ? 'border-amber-400 text-amber-300 font-extrabold' 
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Landmark className="w-4 h-4" />
+                Administrasi & Status
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('cetak_unggah')}
+                className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+                  activeTab === 'cetak_unggah' 
+                    ? 'border-amber-400 text-amber-300 font-extrabold' 
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <FileText className="w-4 h-4" />
+                Cetak & Unggah Berkas
+              </button>
+            </div>
+
+            {activeTab !== 'cetak_unggah' && (
+              <div className="flex items-center gap-2 pb-2">
+                <span className="hidden sm:inline-flex items-center gap-1.5 px-2 py-1 bg-white/5 border border-white/10 rounded-lg text-[11px] font-medium text-slate-300">
+                  <span className="text-amber-400">⚡ Pintasan:</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-950 border border-white/20 rounded text-[10px] font-mono text-amber-300 font-extrabold">Ctrl+S</kbd>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleSubmit()}
+                  disabled={isSubmitting}
+                  className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                  title="Simpan data formulir sekarang tanpa perlu ke tab terakhir (Shortcut: Ctrl+S)"
+                >
+                  {isSubmitting ? (
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Save className="w-3.5 h-3.5" />
+                  )}
+                  <span>Simpan Cepat</span>
+                  <kbd className="hidden md:inline-block px-1 py-0.5 bg-emerald-800/80 rounded text-[9px] font-mono">Ctrl+S</kbd>
+                </button>
+              </div>
+            )}
           </div>
 
           {activeTab !== 'cetak_unggah' ? (
@@ -1137,14 +1180,26 @@ export default function FormInput({
                     </button>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('alas_bangunan')}
-                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-sm font-semibold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
-                >
-                  Tab Berikutnya
-                  <ArrowRight className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => handleSubmit()}
+                    disabled={isSubmitting}
+                    className="px-4 py-2 bg-emerald-600/90 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                    title="Simpan data saat ini tanpa harus ke tab terakhir (Shortcut: Ctrl+S)"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>Simpan (Ctrl+S)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('alas_bangunan')}
+                    className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-sm font-semibold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
+                  >
+                    Tab Berikutnya
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1357,18 +1412,17 @@ export default function FormInput({
                   <ArrowLeft className="w-4 h-4" />
                   Sebelumnya
                 </button>
-                <div className="flex items-center gap-3">
-                  {role === 'ADMIN' && selectedEditRecord && (
-                    <button
-                      type="button"
-                      onClick={() => setIsDeleteModalOpen(true)}
-                      className="px-4 py-2 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-xl text-xs font-bold flex items-center gap-1.5 border border-rose-500/30 transition-all cursor-pointer"
-                      title="Hapus bidang data ini (Khusus Admin)"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Hapus Bidang</span>
-                    </button>
-                  )}
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => handleSubmit()}
+                    disabled={isSubmitting}
+                    className="px-4 py-2 bg-emerald-600/90 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                    title="Simpan data saat ini tanpa harus ke tab terakhir (Shortcut: Ctrl+S)"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>Simpan (Ctrl+S)</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => setActiveTab('tanaman')}
@@ -1517,18 +1571,17 @@ export default function FormInput({
                   <ArrowLeft className="w-4 h-4" />
                   Sebelumnya
                 </button>
-                <div className="flex items-center gap-3">
-                  {role === 'ADMIN' && selectedEditRecord && (
-                    <button
-                      type="button"
-                      onClick={() => setIsDeleteModalOpen(true)}
-                      className="px-4 py-2 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-xl text-xs font-bold flex items-center gap-1.5 border border-rose-500/30 transition-all cursor-pointer"
-                      title="Hapus bidang data ini (Khusus Admin)"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Hapus Bidang</span>
-                    </button>
-                  )}
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => handleSubmit()}
+                    disabled={isSubmitting}
+                    className="px-4 py-2 bg-emerald-600/90 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                    title="Simpan data saat ini tanpa harus ke tab terakhir (Shortcut: Ctrl+S)"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>Simpan (Ctrl+S)</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => setActiveTab('administrasi')}
@@ -1750,7 +1803,8 @@ export default function FormInput({
                   <button
                     type="submit"
                     disabled={isSubmitting}
-                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold flex items-center gap-2 shadow-sm transition-all disabled:opacity-50"
+                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold flex items-center gap-2 shadow-sm transition-all disabled:opacity-50 cursor-pointer active:scale-95"
+                    title="Simpan data lahan (Shortcut: Ctrl+S)"
                   >
                     {isSubmitting ? (
                       <>
@@ -1760,7 +1814,8 @@ export default function FormInput({
                     ) : (
                       <>
                         <Save className="w-4 h-4" />
-                        {selectedEditRecord ? 'Simpan Perubahan Lahan' : 'Daftarkan Lahan Baru'}
+                        <span>{selectedEditRecord ? 'Simpan Perubahan Lahan' : 'Daftarkan Lahan Baru'}</span>
+                        <kbd className="hidden sm:inline-block px-1.5 py-0.5 bg-emerald-800/80 rounded text-[10px] font-mono">Ctrl+S</kbd>
                       </>
                     )}
                   </button>

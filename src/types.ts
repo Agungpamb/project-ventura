@@ -525,4 +525,13 @@ export interface AgencyLetter {
   updatedBy: string;
 }
 
+export interface ProjectConfig {
+  id: string;
+  name: string;
+  folderId: string | null;
+  spreadsheetId: string | null;
+  uploadsFolderId: string | null;
+  publicCsvUrl?: string | null;
+}
+
 

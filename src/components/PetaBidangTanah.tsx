@@ -4,7 +4,7 @@ import { toPng } from 'html-to-image';
 import { 
   Map as MapIcon, Layers, Compass, RotateCw, Printer, Search, 
   ChevronDown, Info, Shield, CheckCircle2, FileText, ArrowUp, Download, Image as ImageIcon, Loader2,
-  Edit3, ExternalLink, Trash2
+  Edit3, ExternalLink, Trash2, MapPin, Navigation, X
 } from 'lucide-react';
 import DeleteParcelModal from "./DeleteParcelModal";
 import type { LandRecord } from '../types';
@@ -107,6 +107,37 @@ export default function PetaBidangTanah({
   const [projectionCorrection, setProjectionCorrection] = useState<number>(0); // Optional projection correction offset
   const [currentScaleText, setCurrentScaleText] = useState<string>('1 : 1.000');
   const [isExportingPNG, setIsExportingPNG] = useState<boolean>(false);
+
+  // Selected polygon / feature for navigation to Google Maps & details
+  const [selectedFeature, setSelectedFeature] = useState<{
+    props: any;
+    coordinates?: { lat: number; lng: number } | null;
+    record?: LandRecord | null;
+    displayLabel?: string;
+    towerLabel?: string;
+    isTower?: boolean;
+  } | null>(null);
+
+  // Link URL to open Google Maps with precise pin in a new tab
+  const googleMapsUrl = useMemo(() => {
+    if (!selectedFeature) return null;
+    if (selectedFeature.coordinates?.lat && selectedFeature.coordinates?.lng) {
+      return `https://www.google.com/maps?q=${selectedFeature.coordinates.lat},${selectedFeature.coordinates.lng}&z=19`;
+    }
+    if (selectedFeature.record) {
+      const q = [
+        selectedFeature.record.DESA ? `Desa ${selectedFeature.record.DESA}` : '',
+        selectedFeature.record.KECAMATAN ? `Kecamatan ${selectedFeature.record.KECAMATAN}` : '',
+        'Indonesia'
+      ].filter(Boolean).join(', ');
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+    }
+    const desa = selectedFeature.props?.DESA || selectedFeature.props?.Desa || selectedFeature.props?.desa;
+    if (desa) {
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Desa ${desa}, Indonesia`)}`;
+    }
+    return null;
+  }, [selectedFeature]);
 
   // Extract distinct Desa & Span list from both spreadsheet records & GeoJSON layers
   const desaOptions = useMemo(() => {
@@ -785,6 +816,43 @@ export default function PetaBidangTanah({
                 const labelHtml = `<div style="transform: rotate(${-effectiveRotationAngle}deg); transform-origin: center; display: inline-block; white-space: nowrap; transition: transform 0.3s ease;">${displayLabel}</div>`;
                 l.bindTooltip(labelHtml, { permanent: true, direction: 'center', className: 'map-nobid-tooltip-top' });
               }
+
+              // Interactive click selection to inspect and navigate to Google Maps
+              l.on('click', (e: any) => {
+                if (e.originalEvent) {
+                  e.originalEvent.stopPropagation();
+                }
+                let coords: { lat: number; lng: number } | null = null;
+                if (e.latlng) {
+                  coords = { lat: e.latlng.lat, lng: e.latlng.lng };
+                } else if ((l as any).getLatLng) {
+                  const ll = (l as any).getLatLng();
+                  coords = { lat: ll.lat, lng: ll.lng };
+                } else if ((l as any).getBounds) {
+                  const b = (l as any).getBounds();
+                  if (b && b.isValid()) {
+                    const c = b.getCenter();
+                    coords = { lat: c.lat, lng: c.lng };
+                  }
+                }
+
+                let matchedRecord: LandRecord | null = null;
+                if (featNobid) {
+                  matchedRecord = records.find(r => 
+                    (normalizeClean(r.NOBID) === normalizeClean(featNobid) || r.NOBID === featNobid) &&
+                    (!selectedDesa || normalizeClean(r.DESA) === normalizeClean(selectedDesa))
+                  ) || records.find(r => normalizeClean(r.NOBID) === normalizeClean(featNobid)) || null;
+                }
+
+                setSelectedFeature({
+                  props: feat.properties || {},
+                  coordinates: coords,
+                  record: matchedRecord,
+                  displayLabel,
+                  towerLabel,
+                  isTower: isFeatureTower
+                });
+              });
             }
           }).addTo(topLayerGroup);
 
@@ -822,6 +890,43 @@ export default function PetaBidangTanah({
                 const labelHtml = `<div style="transform: rotate(${-effectiveRotationAngle}deg); transform-origin: center; display: inline-block; white-space: nowrap; transition: transform 0.3s ease;">${displayLabel}</div>`;
                 l.bindTooltip(labelHtml, { permanent: true, direction: 'center', className: 'map-nobid-tooltip-bottom' });
               }
+
+              // Interactive click selection to inspect and navigate to Google Maps
+              l.on('click', (e: any) => {
+                if (e.originalEvent) {
+                  e.originalEvent.stopPropagation();
+                }
+                let coords: { lat: number; lng: number } | null = null;
+                if (e.latlng) {
+                  coords = { lat: e.latlng.lat, lng: e.latlng.lng };
+                } else if ((l as any).getLatLng) {
+                  const ll = (l as any).getLatLng();
+                  coords = { lat: ll.lat, lng: ll.lng };
+                } else if ((l as any).getBounds) {
+                  const b = (l as any).getBounds();
+                  if (b && b.isValid()) {
+                    const c = b.getCenter();
+                    coords = { lat: c.lat, lng: c.lng };
+                  }
+                }
+
+                let matchedRecord: LandRecord | null = null;
+                if (featNobid) {
+                  matchedRecord = records.find(r => 
+                    (normalizeClean(r.NOBID) === normalizeClean(featNobid) || r.NOBID === featNobid) &&
+                    (!selectedDesa || normalizeClean(r.DESA) === normalizeClean(selectedDesa))
+                  ) || records.find(r => normalizeClean(r.NOBID) === normalizeClean(featNobid)) || null;
+                }
+
+                setSelectedFeature({
+                  props: feat.properties || {},
+                  coordinates: coords,
+                  record: matchedRecord,
+                  displayLabel,
+                  towerLabel,
+                  isTower: isFeatureTower
+                });
+              });
             }
           }).addTo(bottomLayerGroup);
 
@@ -1136,6 +1241,73 @@ export default function PetaBidangTanah({
             <span className="text-xs font-black text-slate-800 uppercase">{activeProjectName || 'SUTT / SUTET'}</span>
           </div>
         </div>
+
+        {/* Floating Quick Action Card: Menuju Lokasi via Google Maps (Tab Baru) */}
+        {selectedFeature && (
+          <div className="p-3.5 bg-slate-900 text-white rounded-xl border-2 border-emerald-500 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fadeIn">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg shrink-0 mt-0.5">
+                <MapPin className="w-5 h-5 animate-pulse" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-black text-amber-400 font-mono bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+                    {selectedFeature.isTower ? `Tower ${selectedFeature.towerLabel}` : (selectedFeature.displayLabel ? `Bidang ${selectedFeature.displayLabel}` : (selectedFeature.record?.NOBID ? `Bidang No. ${selectedFeature.record.NOBID}` : 'Bidang Terpilih'))}
+                  </span>
+                  <span className="text-xs font-extrabold text-white truncate">
+                    {selectedFeature.record?.NAMA || selectedFeature.props?.NAMA || selectedFeature.props?.PEMILIK || 'Informasi Geometri Bidang'}
+                  </span>
+                  {selectedFeature.record?.LUAS && (
+                    <span className="text-[10px] text-slate-300 bg-slate-800 px-1.5 py-0.5 rounded">
+                      Luas: {selectedFeature.record.LUAS} m²
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-3 flex-wrap">
+                  <span>Desa {selectedFeature.record?.DESA || selectedDesa || '-'} &bull; Span {selectedFeature.record?.SPAN || selectedSpan || '-'}</span>
+                  {selectedFeature.coordinates && (
+                    <span className="font-mono text-emerald-400 font-semibold">
+                      📍 {selectedFeature.coordinates.lat.toFixed(6)}, {selectedFeature.coordinates.lng.toFixed(6)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {googleMapsUrl && (
+                <a
+                  href={googleMapsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-3.5 rounded-xl shadow-md shadow-emerald-600/30 transition-all cursor-pointer active:scale-95 text-center"
+                  title="Buka titik bidang ini di Google Maps (Buka Tab Baru)"
+                >
+                  <Navigation className="w-3.5 h-3.5 shrink-0" />
+                  <span>Buka di Google Maps</span>
+                  <ExternalLink className="w-3.5 h-3.5 shrink-0 opacity-80" />
+                </a>
+              )}
+              {selectedFeature.record && onNavigateToInput && role !== 'GUEST' && (
+                <button
+                  onClick={() => onNavigateToInput(selectedFeature.record!)}
+                  className="flex items-center gap-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs py-2 px-3 rounded-xl transition-all cursor-pointer"
+                  title="Edit Data Bidang Ini"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>Edit</span>
+                </button>
+              )}
+              <button
+                onClick={() => setSelectedFeature(null)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                title="Tutup Info"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* DUAL MAP PANES (STACKED VERTICALLY LIKE REFERENCE IMAGE) */}
         <div className="space-y-4">

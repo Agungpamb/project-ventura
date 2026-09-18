@@ -15,10 +15,11 @@ import {
   saveLayerToLocalStorage,
   loadDeployedDefaultGeoJSONs
 } from './lib/geojsonStorage';
-import { type LandRecord, compareLandRecords, type OperatorConfig, type DataIntegrityLog, type ActivityLog } from './types';
+import { type LandRecord, compareLandRecords, type OperatorConfig, type DataIntegrityLog, type ActivityLog, type ProjectConfig } from './types';
 import { saveActivityLog, saveIntegrityLog } from './lib/activityStorage';
 import CacheDiffModal from './components/CacheDiffModal';
 import ModuleLoadingFallback from './components/ModuleLoadingFallback';
+import { TutorialGuideModal } from './components/TutorialGuideModal';
 
 // Code-splitting with React.lazy for high performance and reduced initial memory footprint
 const Dashboard = lazy(() => import('./components/Dashboard'));
@@ -37,17 +38,8 @@ import {
   RefreshCw, FileSpreadsheet, KeyRound, CheckSquare,
   Plus, User, UserCheck, Settings, Folder, Key, Eye, EyeOff, Lock, Unlock, Info, ShieldCheck, HelpCircle, Briefcase, Filter,
   Pin, Menu, Clock, LayoutGrid, Sun, Moon, Copy, Users, ExternalLink, Layers, Trash2, X, Globe, GitCompare,
-  CheckCircle2, AlertCircle, FileText, Landmark, Mail
+  CheckCircle2, AlertCircle, FileText, Landmark, Mail, Sparkles, BookOpen
 } from 'lucide-react';
-
-interface ProjectConfig {
-  id: string;
-  name: string;
-  folderId: string | null;
-  spreadsheetId: string | null;
-  uploadsFolderId: string | null;
-  publicCsvUrl?: string | null;
-}
 
 const DEFAULT_PROJECTS: ProjectConfig[] = [
   { id: 'proj-1', name: 'KOMPENSASI ROW 150 kV JELOK - SANGGARAHAN', folderId: null, spreadsheetId: null, uploadsFolderId: null, publicCsvUrl: null },
@@ -389,6 +381,9 @@ export default function App() {
   const [spreadsheetRecordsForDiff, setSpreadsheetRecordsForDiff] = useState<LandRecord[]>([]);
   const [cachedRecordsForDiff, setCachedRecordsForDiff] = useState<LandRecord[]>([]);
   const [isApplyingDiffDecision, setIsApplyingDiffDecision] = useState(false);
+
+  // User Guide & Tutorial Modal state
+  const [isTutorialModalOpen, setIsTutorialModalOpen] = useState(false);
 
   // Admin specific states
   const [isAddingProject, setIsAddingProject] = useState(false);
@@ -1099,6 +1094,53 @@ export default function App() {
     }
   };
 
+  // Helper to load realistic Indonesian dummy compensation records for testing & demo
+  const handleLoadDemoData = (targetProjectId?: string) => {
+    const projId = targetProjectId || activeProjectId;
+    const proj = projects.find(p => p.id === projId);
+    const projName = proj?.name || 'JALUR TRANSMISI';
+
+    const demoRecords: LandRecord[] = [
+      createMockRecord("DEMO-001", "Budi Santoso", "Sukamaju", "SPAN-1 (T.01 - T.02)", "001", "350", "Lengkap", "Selesai", "APPROVED", "Semua berkas dan hasil ukur valid BPN"),
+      createMockRecord("DEMO-002", "Siti Rahmawati", "Sukamaju", "SPAN-1 (T.01 - T.02)", "002", "420", "Sebagian", "Belum", "PENDING", "Menunggu tanda tangan Surat Kuasa Waris"),
+      createMockRecord("DEMO-003", "Ahmad Fauzi", "Sukamaju", "SPAN-1 (T.01 - T.02)", "003", "180", "Belum", "Belum", "PENDING", "Belum mengumpulkan fotokopi KTP dan SPPT PBB"),
+      createMockRecord("DEMO-004", "Dewi Lestari", "Kebondalem", "SPAN-2 (T.02 - T.03)", "004", "510", "Lengkap", "Selesai", "APPROVED", "Terverifikasi siap pembayaran kompensasi tahap 1"),
+      createMockRecord("DEMO-005", "Hendra Wijaya", "Kebondalem", "SPAN-2 (T.02 - T.03)", "005", "640", "Sebagian", "Selesai", "REJECTED", "Perbedaan nama antara KTP dan Sertipikat Hak Milik"),
+      createMockRecord("DEMO-006", "Slamet Riyadi", "Kebondalem", "SPAN-2 (T.02 - T.03)", "006", "290", "Lengkap", "Selesai", "APPROVED", "Validasi alas hak Letter C oleh Kepala Desa selesai"),
+      createMockRecord("DEMO-007", "Sri Wahyuni", "Jatisari", "SPAN-3 (T.03 - T.04)", "007", "475", "Sebagian", "Belum", "PENDING", "Menunggu inventarisasi ulang jumlah tegakan pohon sengon"),
+      createMockRecord("DEMO-008", "Supriyadi", "Jatisari", "SPAN-3 (T.03 - T.04)", "008", "820", "Lengkap", "Selesai", "APPROVED", "Bangunan rumah tinggal dan tanah telah dinilai tim KJPP")
+    ];
+
+    setRecords(demoRecords);
+    try {
+      localStorage.setItem(`project_ventura_records_cache_${projId}`, JSON.stringify(demoRecords));
+    } catch (e) {
+      console.warn("localStorage quota exceeded:", e);
+    }
+    saveRecordsToFirestoreCache(projId, demoRecords);
+
+    setSyncFeedback({
+      type: 'success',
+      message: `🧪 Mode Demo: Data Dummy (${demoRecords.length} bidang) berhasil dimuat untuk ${projName}!`,
+      timestamp: Date.now()
+    });
+  };
+
+  const handleClearProjectRecords = (targetProjectId?: string) => {
+    const projId = targetProjectId || activeProjectId;
+    const proj = projects.find(p => p.id === projId);
+    setRecords([]);
+    try {
+      localStorage.removeItem(`project_ventura_records_cache_${projId}`);
+    } catch (e) {}
+    saveRecordsToFirestoreCache(projId, []);
+    setSyncFeedback({
+      type: 'success',
+      message: `Semua data bidang pada jalur "${proj?.name || projId}" telah dibersihkan.`,
+      timestamp: Date.now()
+    });
+  };
+
   // Connect and load/create project-specific Google Drive/Spreadsheet
   const loadProjectData = useCallback(async (
     accessToken: string, 
@@ -1196,17 +1238,21 @@ export default function App() {
           console.warn("Gagal mengambil cache data dari Firestore:", fsErr);
         }
 
-        // If we didn't get from Firestore and also have nothing in local storage, use the default mocks
+        // If we didn't get from Firestore and also have nothing in local storage, use the default mocks for initial project
         if (!hasLoadedLocal) {
-          // Fallback template records
-          const mockList: LandRecord[] = [
-            createMockRecord("VT-001", "Budi Santoso", "Sukamaju", "SPAN-1", "015", "250", "Lengkap", "Selesai", "APPROVED", "Semua berkas sudah valid"),
-            createMockRecord("VT-002", "Siti Rahmawati", "Sukamaju", "SPAN-1", "016", "410", "Sebagian", "Belum", "PENDING", "Menunggu Surat Kuasa ditandatangani"),
-            createMockRecord("VT-003", "Ahmad Fauzi", "Sukamaju", "SPAN-2", "017", "180", "Belum", "Belum", "PENDING", "Belum ada berkas fisik"),
-            createMockRecord("VT-004", "Dewi Lestari", "Jatisari", "SPAN-3", "005", "320", "Lengkap", "Selesai", "APPROVED", "Validasi BPN sesuai"),
-            createMockRecord("VT-005", "Hendra Wijaya", "Jatisari", "SPAN-3", "006", "550", "Sebagian", "Selesai", "REJECTED", "Nama di sertifikat beda dengan KTP, belum ada Surat Keterangan Beda Nama")
-          ];
-          setRecords(mockList);
+          if (projectId === 'proj-1') {
+            // Fallback template records for default sample path
+            const mockList: LandRecord[] = [
+              createMockRecord("VT-001", "Budi Santoso", "Sukamaju", "SPAN-1", "015", "250", "Lengkap", "Selesai", "APPROVED", "Semua berkas sudah valid"),
+              createMockRecord("VT-002", "Siti Rahmawati", "Sukamaju", "SPAN-1", "016", "410", "Sebagian", "Belum", "PENDING", "Menunggu Surat Kuasa ditandatangani"),
+              createMockRecord("VT-003", "Ahmad Fauzi", "Sukamaju", "SPAN-2", "017", "180", "Belum", "Belum", "PENDING", "Belum ada berkas fisik"),
+              createMockRecord("VT-004", "Dewi Lestari", "Jatisari", "SPAN-3", "005", "320", "Lengkap", "Selesai", "APPROVED", "Validasi BPN sesuai"),
+              createMockRecord("VT-005", "Hendra Wijaya", "Jatisari", "SPAN-3", "006", "550", "Sebagian", "Selesai", "REJECTED", "Nama di sertifikat beda dengan KTP, belum ada Surat Keterangan Beda Nama")
+            ];
+            setRecords(mockList);
+          } else {
+            setRecords([]);
+          }
         }
         return;
       }
@@ -1703,26 +1749,52 @@ export default function App() {
       throw new Error('Izin Ditolak: Akun operator Anda dikunci hanya untuk jalur proyek yang teregister.');
     }
 
-    if (!spreadsheetId) {
-      throw new Error('ID Spreadsheet proyek belum disetel. Periksa konfigurasi di menu Pengaturan.');
-    }
-    
-    await executeWithAuthRetry(async (activeAuthToken) => {
-      // 1. Save/append to spreadsheet and get assigned row
-      const saved = await saveRecordToSpreadsheet(activeAuthToken, spreadsheetId, record, isEdit, records);
-      
-      // 2. Refresh local list with atomic min-count verification
-      const expectedMinCount = isEdit ? records.length : records.length + 1;
-      const updatedRecords = await fetchSpreadsheetRecords(activeAuthToken, spreadsheetId, { expectedMinCount });
-      
-      // 3. Verify and deduplicate before state update
-      const verifiedRecords = verifyAndMergeRecords(updatedRecords, saved);
-      const sortedRecords = [...verifiedRecords].sort(compareLandRecords);
-      setRecords(sortedRecords);
+    const isOfflineOrGuest = !token || token === 'GUEST_BYPASS' || !spreadsheetId || spreadsheetId === 'guest_bypass';
 
-      // 4. Update Firestore cache
+    if (isOfflineOrGuest) {
+      let updatedList: LandRecord[];
+      if (isEdit) {
+        updatedList = records.map(r => r.CODE === record.CODE ? { ...r, ...record } : r);
+      } else {
+        const newRecordWithRow = {
+          ...record,
+          rowNumber: records.length + 2,
+          ID_UNIK: record.ID_UNIK || `LOCAL_${Date.now()}`
+        };
+        updatedList = [...records, newRecordWithRow];
+      }
+      const sortedRecords = [...updatedList].sort(compareLandRecords);
+      setRecords(sortedRecords);
+      try {
+        localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(sortedRecords));
+      } catch (e) {
+        console.warn("Gagal menyimpan ke cache lokal:", e);
+      }
       saveRecordsToFirestoreCache(activeProjectId, sortedRecords);
-    });
+
+      setSyncFeedback({
+        type: 'success',
+        message: `✅ Berhasil disimpan (${record.CODE}). Data tersimpan di penyimpanan lokal & cloud.`,
+        timestamp: Date.now()
+      });
+    } else {
+      await executeWithAuthRetry(async (activeAuthToken) => {
+        // 1. Save/append to spreadsheet and get assigned row
+        const saved = await saveRecordToSpreadsheet(activeAuthToken, spreadsheetId, record, isEdit, records);
+        
+        // 2. Refresh local list with atomic min-count verification
+        const expectedMinCount = isEdit ? records.length : records.length + 1;
+        const updatedRecords = await fetchSpreadsheetRecords(activeAuthToken, spreadsheetId, { expectedMinCount });
+        
+        // 3. Verify and deduplicate before state update
+        const verifiedRecords = verifyAndMergeRecords(updatedRecords, saved);
+        const sortedRecords = [...verifiedRecords].sort(compareLandRecords);
+        setRecords(sortedRecords);
+
+        // 4. Update Firestore cache
+        saveRecordsToFirestoreCache(activeProjectId, sortedRecords);
+      });
+    }
     
     // Calculate log details
     let logType: 'CREATE' | 'UPDATE' = isEdit ? 'UPDATE' : 'CREATE';
@@ -1856,21 +1928,38 @@ export default function App() {
       }
     }
 
-    await executeWithAuthRetry(async (activeAuthToken) => {
-      // 1. Save full record back to spreadsheet
-      const saved = await saveRecordToSpreadsheet(activeAuthToken, spreadsheetId, updatedRecord, true, records);
-      
-      // 2. Refresh local list with min-count verification
-      const refreshed = await fetchSpreadsheetRecords(activeAuthToken, spreadsheetId, { expectedMinCount: records.length });
-      
-      // 3. Verify and deduplicate before state update
-      const verified = verifyAndMergeRecords(refreshed, saved);
-      const sortedRefreshed = [...verified].sort(compareLandRecords);
-      setRecords(sortedRefreshed);
+    const isOfflineOrGuest = !token || token === 'GUEST_BYPASS' || !spreadsheetId || spreadsheetId === 'guest_bypass';
 
-      // 4. Update Firestore cache
+    if (isOfflineOrGuest) {
+      const updatedList = records.map(r => r.CODE === updatedRecord.CODE ? { ...r, ...updatedRecord } : r);
+      const sortedRefreshed = [...updatedList].sort(compareLandRecords);
+      setRecords(sortedRefreshed);
+      try {
+        localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(sortedRefreshed));
+      } catch (e) {}
       saveRecordsToFirestoreCache(activeProjectId, sortedRefreshed);
-    });
+      setSyncFeedback({
+        type: 'success',
+        message: `✅ Perubahan berhasil disimpan (${updatedRecord.CODE}).`,
+        timestamp: Date.now()
+      });
+    } else {
+      await executeWithAuthRetry(async (activeAuthToken) => {
+        // 1. Save full record back to spreadsheet
+        const saved = await saveRecordToSpreadsheet(activeAuthToken, spreadsheetId, updatedRecord, true, records);
+        
+        // 2. Refresh local list with min-count verification
+        const refreshed = await fetchSpreadsheetRecords(activeAuthToken, spreadsheetId, { expectedMinCount: records.length });
+        
+        // 3. Verify and deduplicate before state update
+        const verified = verifyAndMergeRecords(refreshed, saved);
+        const sortedRefreshed = [...verified].sort(compareLandRecords);
+        setRecords(sortedRefreshed);
+
+        // 4. Update Firestore cache
+        saveRecordsToFirestoreCache(activeProjectId, sortedRefreshed);
+      });
+    }
 
     // Save log asynchronously
     logActivity(updatedRecord.CODE, actionType, details);
@@ -2098,6 +2187,15 @@ export default function App() {
     saveProjectsToCloud(updated);
     setActiveProjectId(newProj.id);
     localStorage.setItem('project_ventura_active_project_id', newProj.id);
+    setSpreadsheetId(newProj.spreadsheetId);
+    setProjectUploadsFolderId(newProj.uploadsFolderId);
+    setRecords([]); // Immediately clear records so new path starts completely clean
+
+    setSyncFeedback({
+      type: 'success',
+      message: `✨ Jalur proyek baru "${newProj.name}" berhasil ditambahkan! Anda dapat mulai menginput data atau memuat data dummy demo.`,
+      timestamp: Date.now()
+    });
     
     setNewProjectName('');
     setNewProjectSpreadsheetId('');
@@ -2124,6 +2222,12 @@ export default function App() {
         localStorage.setItem('project_ventura_active_project_id', nextActive);
       }
     }
+  };
+
+  // Switch active project path helper
+  const handleSwitchProject = (newId: string) => {
+    setActiveProjectId(newId);
+    localStorage.setItem('project_ventura_active_project_id', newId);
   };
 
   // Admin action: Save customized PIN codes
@@ -2413,6 +2517,16 @@ export default function App() {
                   </span>
 
                   <button
+                    onClick={() => setIsTutorialModalOpen(true)}
+                    className="p-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded-lg border border-amber-500/30 hover:border-amber-500/50 transition-all text-[10px] font-bold flex items-center gap-1.5 cursor-pointer shrink-0"
+                    title="Buku Panduan Pengguna & Tutorial Resmi (PDF)"
+                  >
+                    <BookOpen className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="hidden md:inline">Buku Panduan (PDF)</span>
+                    <span className="md:hidden">Panduan</span>
+                  </button>
+
+                  <button
                     onClick={handleSwitchRole}
                     className="p-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg border border-white/10 hover:border-white/20 transition-all text-[10px] font-bold cursor-pointer shrink-0"
                     title="Ganti Jalur Proyek atau Hak Akses / Peran"
@@ -2573,6 +2687,15 @@ export default function App() {
                 >
                   <UserCheck className="w-4 h-4 text-amber-400 shrink-0" />
                   <span>MASUK SEBAGAI TAMU (MODE PANTAU / READ-ONLY)</span>
+                </button>
+
+                <button 
+                  type="button"
+                  onClick={() => setIsTutorialModalOpen(true)}
+                  className="w-full flex items-center justify-center gap-2.5 bg-gradient-to-r from-amber-500/10 via-amber-500/20 to-amber-500/10 hover:from-amber-500/25 hover:to-amber-500/25 border border-amber-500/30 hover:border-amber-400 rounded-xl px-5 py-3 text-xs font-bold text-amber-300 hover:text-amber-200 transition-all cursor-pointer shadow-md"
+                >
+                  <BookOpen className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>BUKU PANDUAN PENGGUNA & TUTORIAL SISTEM (PDF)</span>
                 </button>
               </div>
 
@@ -3076,6 +3199,27 @@ export default function App() {
                 )}
               </button>
             )}
+
+            {/* Tombol Buku Panduan Pengguna & PDF Tutorial */}
+            <div className="pt-2 border-t border-white/5">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsTutorialModalOpen(true);
+                  if (!isSidebarPinned) setIsSidebarHovered(false);
+                }}
+                className="w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between cursor-pointer bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:border-amber-400 group shadow-sm"
+                title="Buka Buku Panduan Pengguna & Unduh Tutorial Lengkap (PDF)"
+              >
+                <div className="flex items-center gap-2.5">
+                  <BookOpen className="w-4 h-4 shrink-0 text-amber-400 group-hover:scale-110 transition-transform" />
+                  <span>Buku Panduan (PDF)</span>
+                </div>
+                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 text-[10px] font-mono font-extrabold border border-amber-500/30">
+                  v2.4
+                </span>
+              </button>
+            </div>
 
             {/* Connected Sheet Display & Fast Jalur Selector */}
             <div className="mt-4 p-3 bg-white/5 rounded-xl border border-white/10 text-[10px] text-slate-400 space-y-2 font-sans shadow-inner">
@@ -3651,6 +3795,47 @@ export default function App() {
                     </div>
                   </div>
                 )}
+
+                {/* Empty State Helper Banner when current project has 0 records */}
+                {records.length === 0 && !isLoadingData && activeMenu !== 'input' && activeMenu !== 'proyek' && (
+                  <div className="bg-gradient-to-r from-amber-500/10 via-slate-900 to-amber-500/10 border border-amber-500/30 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl animate-fadeIn">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2.5 bg-amber-500/20 text-amber-400 rounded-xl shrink-0 mt-0.5">
+                        <Sparkles className="w-5 h-5 animate-pulse" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-extrabold text-white">
+                          Jalur Transmisi Belum Memiliki Data Bidang Tanah
+                        </h4>
+                        <p className="text-xs text-slate-400 mt-0.5 max-w-xl leading-relaxed">
+                          Jalur <strong className="text-amber-300">"{projects.find(p => p.id === activeProjectId)?.name || 'Proyek'}"</strong> masih kosong. Anda dapat langsung menginput bidang baru atau memuat 8 data contoh (dummy) untuk simulasi demo dan uji coba fitur.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2.5 shrink-0 w-full sm:w-auto">
+                      <button
+                        type="button"
+                        onClick={() => handleLoadDemoData()}
+                        className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all cursor-pointer active:scale-95"
+                        title="Muat 8 bidang tanah contoh untuk latihan dan demo aplikasi"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Muat Data Dummy (Demo)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedRecordForEdit(null);
+                          setActiveMenu('input');
+                        }}
+                        className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl border border-white/10 transition-all cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>+ Input Bidang Baru</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <Suspense fallback={
                   <ModuleLoadingFallback activeMenu={activeMenu} isLightMode={isLightMode} />
                 }>
@@ -4001,23 +4186,57 @@ export default function App() {
                                   </div>
                                 )}
 
-                                <div className="flex justify-end gap-2 pt-2 border-t border-white/5">
-                                  <button
-                                    type="button"
-                                    onClick={() => startEditingProject(proj)}
-                                    className="text-amber-400 hover:text-amber-300 text-xs font-bold px-3 py-1.5 bg-amber-500/10 rounded-lg cursor-pointer border border-amber-500/15 hover:bg-amber-500/20 transition-all flex items-center gap-1"
-                                    title="Edit Manual ID Spreadsheet & Folder"
-                                  >
-                                    <Settings className="w-3.5 h-3.5" />
-                                    Edit ID
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteProject(proj.id)}
-                                    className="text-rose-400 hover:text-rose-300 text-xs font-bold px-3 py-1.5 bg-rose-500/10 rounded-lg cursor-pointer border border-rose-500/15 hover:bg-rose-500/20 transition-all"
-                                  >
-                                    Hapus
-                                  </button>
+                                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/5">
+                                  <div className="flex items-center gap-1.5">
+                                    {activeProjectId === proj.id ? (
+                                      <span className="text-[11px] font-extrabold text-amber-400 bg-amber-500/15 px-2.5 py-1 rounded-lg border border-amber-500/25 flex items-center gap-1">
+                                        <CheckCircle2 className="w-3.5 h-3.5" />
+                                        Jalur Aktif
+                                      </span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSwitchProject(proj.id)}
+                                        className="text-xs font-bold text-slate-200 hover:text-white px-2.5 py-1 bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 transition-all cursor-pointer"
+                                        title="Jadikan jalur ini sebagai proyek aktif"
+                                      >
+                                        Buka Jalur Ini
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (activeProjectId !== proj.id) {
+                                          handleSwitchProject(proj.id);
+                                        }
+                                        handleLoadDemoData(proj.id);
+                                      }}
+                                      className="text-[11px] font-bold text-amber-300 hover:text-amber-200 px-2 py-1 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg border border-amber-500/20 transition-all cursor-pointer flex items-center gap-1"
+                                      title="Muat data dummy contoh pada jalur ini untuk pengujian"
+                                    >
+                                      <Sparkles className="w-3 h-3" />
+                                      Isi Demo
+                                    </button>
+                                  </div>
+
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => startEditingProject(proj)}
+                                      className="text-amber-400 hover:text-amber-300 text-xs font-bold px-2.5 py-1 bg-amber-500/10 rounded-lg cursor-pointer border border-amber-500/15 hover:bg-amber-500/20 transition-all flex items-center gap-1"
+                                      title="Edit Manual ID Spreadsheet & Folder"
+                                    >
+                                      <Settings className="w-3.5 h-3.5" />
+                                      Edit ID
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteProject(proj.id)}
+                                      className="text-rose-400 hover:text-rose-300 text-xs font-bold px-2.5 py-1 bg-rose-500/10 rounded-lg cursor-pointer border border-rose-500/15 hover:bg-rose-500/20 transition-all"
+                                    >
+                                      Hapus
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
                             ))}
@@ -5097,6 +5316,14 @@ export default function App() {
         onApplySpreadsheet={handleApplySpreadsheetData}
         onApplyCache={handleApplyCacheData}
         isApplying={isApplyingDiffDecision}
+      />
+
+      {/* Tutorial & User Guide Modal */}
+      <TutorialGuideModal
+        isOpen={isTutorialModalOpen}
+        onClose={() => setIsTutorialModalOpen(false)}
+        activeProject={projects.find(p => p.id === activeProjectId)}
+        userRole={role}
       />
     </div>
   );
