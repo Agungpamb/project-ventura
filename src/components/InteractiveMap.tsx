@@ -371,7 +371,9 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
   useEffect(() => {
     if (activeSubTab === 'peta' && mapRef.current) {
       const timer = setTimeout(() => {
-        mapRef.current?.invalidateSize();
+        if (mapRef.current && (mapRef.current as any)._mapPane) {
+          mapRef.current.invalidateSize();
+        }
       }, 100);
       return () => clearTimeout(timer);
     }
@@ -426,14 +428,14 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
     mapRef.current = map;
 
     // Trigger invalidateSize after container finishes mounting/animating
-    setTimeout(() => {
-      if (mapRef.current) {
+    const initTimer = setTimeout(() => {
+      if (mapRef.current && (mapRef.current as any)._mapPane) {
         mapRef.current.invalidateSize();
       }
     }, 200);
 
     const handleResize = () => {
-      if (mapRef.current) {
+      if (mapRef.current && (mapRef.current as any)._mapPane) {
         mapRef.current.invalidateSize();
       }
     };
@@ -485,10 +487,14 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
     });
 
     return () => {
+      clearTimeout(initTimer);
       window.removeEventListener('resize', handleResize);
       unsubscribe();
       if (mapRef.current) {
-        mapRef.current.remove();
+        try {
+          mapRef.current.stop();
+          mapRef.current.remove();
+        } catch {}
         mapRef.current = null;
       }
     };
@@ -899,20 +905,20 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
                   setSelectedCoordinates(coords);
                 }
 
-                // Auto-zoom closely to the clicked bidang
-                if (mapRef.current) {
-                  try {
-                    if (anyFLayer.getBounds) {
-                      mapRef.current.fitBounds(anyFLayer.getBounds(), { padding: [40, 40], maxZoom: 20 });
-                    } else if (anyFLayer.getLatLng) {
-                      mapRef.current.setView(anyFLayer.getLatLng(), 20);
-                    }
-                  } catch (err) {}
-                }
-
                 // Auto-select corresponding LandRecord if matched using latest records ref
                 const currentRecords = recordsRef.current || [];
                 const matched = currentRecords.find(r => checkRecordMatch(properties, r, layer));
+
+                // If no spreadsheet record matches, zoom directly to the clicked raw feature
+                if (!matched && mapRef.current && (mapRef.current as any)._mapPane) {
+                  try {
+                    if (anyFLayer.getBounds) {
+                      mapRef.current.fitBounds(anyFLayer.getBounds(), { padding: [40, 40], maxZoom: 19 });
+                    } else if (anyFLayer.getLatLng) {
+                      mapRef.current.setView(anyFLayer.getLatLng(), 19);
+                    }
+                  } catch (err) {}
+                }
 
                 setSelectedRecord(matched || null);
               });
@@ -965,7 +971,13 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
 
   // Update styles and auto-zoom when selectedRecord changes
   useEffect(() => {
+    if (!mapRef.current || !(mapRef.current as any)._mapPane) return;
+    let isCancelled = false;
     let centered = false;
+
+    try {
+      mapRef.current.stop();
+    } catch {}
 
     Object.keys(geojsonLayersRef.current).forEach(key => {
       const geojsonLayer = geojsonLayersRef.current[key];
@@ -981,18 +993,18 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
           if (checkRecordMatch(featProps, selectedRecord, layerObj)) {
             isHighlighted = true;
 
-            if (!centered && mapRef.current) {
+            if (!centered && mapRef.current && (mapRef.current as any)._mapPane) {
               try {
                 if (typeof subLayer.getBounds === 'function') {
                   const bounds = subLayer.getBounds();
                   if (bounds && bounds.isValid()) {
-                    mapRef.current.flyToBounds(bounds, { padding: [60, 60], maxZoom: 19, duration: 0.8 });
+                    mapRef.current.flyToBounds(bounds, { padding: [60, 60], maxZoom: 19, duration: 0.6 });
                     centered = true;
                     const center = bounds.getCenter();
                     setSelectedCoordinates({ lat: Number(center.lat.toFixed(6)), lng: Number(center.lng.toFixed(6)) });
                   }
                 } else if (typeof subLayer.getLatLng === 'function') {
-                  mapRef.current.flyTo(subLayer.getLatLng(), 19, { duration: 0.8 });
+                  mapRef.current.flyTo(subLayer.getLatLng(), 19, { duration: 0.6 });
                   centered = true;
                   const latlng = subLayer.getLatLng();
                   setSelectedCoordinates({ lat: Number(latlng.lat.toFixed(6)), lng: Number(latlng.lng.toFixed(6)) });
@@ -1020,20 +1032,25 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
     });
 
     // Fallback: search-based coordinate fetching from Nominatim if no GeoJSON match is loaded
-    if (!centered && mapRef.current && selectedRecord) {
+    if (!centered && mapRef.current && (mapRef.current as any)._mapPane && selectedRecord) {
       const queryStr = `${selectedRecord.DESA || ''}, Kecamatan ${selectedRecord.KECAMATAN || ''}, Jawa Tengah, Indonesia`;
       fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryStr)}`)
         .then(res => res.json())
         .then(data => {
-          if (data && data[0] && mapRef.current) {
+          if (isCancelled) return;
+          if (data && data[0] && mapRef.current && (mapRef.current as any)._mapPane) {
             const lat = parseFloat(data[0].lat);
             const lon = parseFloat(data[0].lon);
-            mapRef.current.flyTo([lat, lon], 16, { duration: 0.8 });
+            mapRef.current.flyTo([lat, lon], 16, { duration: 0.6 });
             setSelectedCoordinates({ lat: Number(lat.toFixed(6)), lng: Number(lon.toFixed(6)) });
           }
         })
         .catch(() => {});
     }
+
+    return () => {
+      isCancelled = true;
+    };
   }, [selectedRecord, loadedGeoJSONs]);
 
   // Center on map helper

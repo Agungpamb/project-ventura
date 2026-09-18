@@ -553,17 +553,21 @@ export default function PetaBidangTanah({
 
     // 3. Map Sync Handler (Top -> Bottom)
     const syncTopToBottom = () => {
-      if (isSyncingRef.current || !bottomMapRef.current) return;
+      if (isSyncingRef.current || !bottomMapRef.current || !(bottomMapRef.current as any)._mapPane) return;
       isSyncingRef.current = true;
-      bottomMapRef.current.setView(topMap.getCenter(), topMap.getZoom(), { animate: false });
+      try {
+        bottomMapRef.current.setView(topMap.getCenter(), topMap.getZoom(), { animate: false });
+      } catch (e) {}
       isSyncingRef.current = false;
     };
 
     // 4. Map Sync Handler (Bottom -> Top)
     const syncBottomToTop = () => {
-      if (isSyncingRef.current || !topMapRef.current) return;
+      if (isSyncingRef.current || !topMapRef.current || !(topMapRef.current as any)._mapPane) return;
       isSyncingRef.current = true;
-      topMapRef.current.setView(bottomMap.getCenter(), bottomMap.getZoom(), { animate: false });
+      try {
+        topMapRef.current.setView(bottomMap.getCenter(), bottomMap.getZoom(), { animate: false });
+      } catch (e) {}
       isSyncingRef.current = false;
     };
 
@@ -572,25 +576,27 @@ export default function PetaBidangTanah({
 
     // Dynamic Scale Calculation
     const updateMapScale = () => {
-      if (!topMapRef.current) return;
-      const zoom = topMapRef.current.getZoom();
-      const center = topMapRef.current.getCenter();
-      const latRad = (center.lat * Math.PI) / 180;
-      const metersPerPixel = (156543.03392 * Math.cos(latRad)) / Math.pow(2, zoom);
-      const rawScale = metersPerPixel * 3779.52;
+      if (!topMapRef.current || !(topMapRef.current as any)._mapPane) return;
+      try {
+        const zoom = topMapRef.current.getZoom();
+        const center = topMapRef.current.getCenter();
+        const latRad = (center.lat * Math.PI) / 180;
+        const metersPerPixel = (156543.03392 * Math.cos(latRad)) / Math.pow(2, zoom);
+        const rawScale = metersPerPixel * 3779.52;
 
-      let roundedScale = 1000;
-      if (rawScale < 350) roundedScale = 250;
-      else if (rawScale < 650) roundedScale = 500;
-      else if (rawScale < 850) roundedScale = 750;
-      else if (rawScale < 1250) roundedScale = 1000;
-      else if (rawScale < 1750) roundedScale = 1500;
-      else if (rawScale < 2500) roundedScale = 2000;
-      else if (rawScale < 3500) roundedScale = 3000;
-      else if (rawScale < 7500) roundedScale = 5000;
-      else roundedScale = Math.round(rawScale / 1000) * 1000;
+        let roundedScale = 1000;
+        if (rawScale < 350) roundedScale = 250;
+        else if (rawScale < 650) roundedScale = 500;
+        else if (rawScale < 850) roundedScale = 750;
+        else if (rawScale < 1250) roundedScale = 1000;
+        else if (rawScale < 1750) roundedScale = 1500;
+        else if (rawScale < 2500) roundedScale = 2000;
+        else if (rawScale < 3500) roundedScale = 3000;
+        else if (rawScale < 7500) roundedScale = 5000;
+        else roundedScale = Math.round(rawScale / 1000) * 1000;
 
-      setCurrentScaleText(`1 : ${roundedScale.toLocaleString('id-ID')}`);
+        setCurrentScaleText(`1 : ${roundedScale.toLocaleString('id-ID')}`);
+      } catch (e) {}
     };
 
     topMap.on('zoomend', updateMapScale);
@@ -602,8 +608,14 @@ export default function PetaBidangTanah({
       bottomMap.off('move', syncBottomToTop);
       topMap.off('zoomend', updateMapScale);
       topMap.off('moveend', updateMapScale);
-      topMap.remove();
-      bottomMap.remove();
+      try {
+        topMap.stop();
+        topMap.remove();
+      } catch (e) {}
+      try {
+        bottomMap.stop();
+        bottomMap.remove();
+      } catch (e) {}
       topMapRef.current = null;
       bottomMapRef.current = null;
     };
@@ -832,13 +844,17 @@ export default function PetaBidangTanah({
       for (let i = 1; i < boundsToFit.length; i++) {
         mergedBounds.extend(boundsToFit[i]);
       }
-      topMap.invalidateSize();
-      bottomMap.invalidateSize();
-      topMap.fitBounds(mergedBounds, { padding: [15, 15], maxZoom: 19 });
-      bottomMap.fitBounds(mergedBounds, { padding: [15, 15], maxZoom: 19 });
+      if ((topMap as any)._mapPane) {
+        topMap.invalidateSize();
+        topMap.fitBounds(mergedBounds, { padding: [15, 15], maxZoom: 19, animate: false });
+      }
+      if ((bottomMap as any)._mapPane) {
+        bottomMap.invalidateSize();
+        bottomMap.fitBounds(mergedBounds, { padding: [15, 15], maxZoom: 19, animate: false });
+      }
     } else {
-      topMap.invalidateSize();
-      bottomMap.invalidateSize();
+      if ((topMap as any)._mapPane) topMap.invalidateSize();
+      if ((bottomMap as any)._mapPane) bottomMap.invalidateSize();
     }
 
     return () => {
@@ -849,8 +865,8 @@ export default function PetaBidangTanah({
 
   // Invalidate map size when rotation changes to ensure tiles fill oversized canvas
   useEffect(() => {
-    if (topMapRef.current) topMapRef.current.invalidateSize();
-    if (bottomMapRef.current) bottomMapRef.current.invalidateSize();
+    if (topMapRef.current && (topMapRef.current as any)._mapPane) topMapRef.current.invalidateSize();
+    if (bottomMapRef.current && (bottomMapRef.current as any)._mapPane) bottomMapRef.current.invalidateSize();
   }, [effectiveRotationAngle]);
 
   // Quick rotation offset controls
