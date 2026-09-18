@@ -737,3 +737,55 @@ export async function uploadFileToDrive(
     throw err;
   }
 }
+
+/**
+ * Deletes a specific row in Google Sheets if rowNumber or record is provided.
+ */
+export async function deleteSpreadsheetRow(
+  accessToken: string,
+  spreadsheetId: string,
+  rowNumber: number
+): Promise<boolean> {
+  if (!accessToken || accessToken === 'GUEST_BYPASS' || !spreadsheetId || !rowNumber || rowNumber <= 1) {
+    return false;
+  }
+  try {
+    const startIndex = rowNumber - 1; // 0-based inclusive
+    const endIndex = rowNumber;       // 0-based exclusive
+
+    const response = await fetchWithTimeout(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          requests: [
+            {
+              deleteDimension: {
+                range: {
+                  sheetId: 0,
+                  dimension: 'ROWS',
+                  startIndex,
+                  endIndex
+                }
+              }
+            }
+          ]
+        })
+      },
+      10000
+    );
+
+    if (!response.ok) {
+      console.warn("Gagal menghapus baris dari Google Sheets:", await response.text());
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn("deleteSpreadsheetRow error:", err);
+    return false;
+  }
+}

@@ -3,20 +3,30 @@ import {
   FileSpreadsheet, Printer, Download, Filter, Search, 
   FileText, Edit3, Layers, User, MapPin, CheckCircle2, 
   Clock, AlertCircle, Building2, Trees, RefreshCw, X, ChevronRight, Eye,
-  ArrowRight, Zap
+  ArrowRight, Zap, GitMerge, Scissors, CheckSquare, Square, ShieldAlert, Trash2
 } from 'lucide-react';
 import { type LandRecord } from '../types';
+import MergeParcelModal from './MergeParcelModal';
+import SplitParcelModal from './SplitParcelModal';
+import QuickParcelPickerModal from './QuickParcelPickerModal';
+import DeleteParcelModal from './DeleteParcelModal';
 
 interface DaftarNominatifPanelProps {
   records: LandRecord[];
+  role?: 'ADMIN' | 'FIELD' | 'QC' | 'GUEST' | null;
   activeProjectName?: string;
   onNavigateToInput?: (record: LandRecord) => void;
+  onBatchUpdateRecords?: (newRecords: LandRecord[], logDetails: string) => Promise<void>;
+  onDeleteRecord?: (record: LandRecord, adjustNextParcels: boolean) => Promise<void>;
 }
 
 export default function DaftarNominatifPanel({
   records,
+  role,
   activeProjectName = 'SUTT 150 KV JELOK - SANGGRAHAN',
-  onNavigateToInput
+  onNavigateToInput,
+  onBatchUpdateRecords,
+  onDeleteRecord
 }: DaftarNominatifPanelProps) {
   // Table Container Height Mode for "Scroll dalam scroll" (Compact, Normal, Full)
   const [tableHeightMode, setTableHeightMode] = useState<'compact' | 'standard' | 'tall'>('standard');
@@ -27,6 +37,57 @@ export default function DaftarNominatifPanel({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [desaSearch, setDesaSearch] = useState<string>('');
   const [selectedRecordDetail, setSelectedRecordDetail] = useState<LandRecord | null>(null);
+
+  // Selection state for Merge / Split
+  const [selectedRecordCodes, setSelectedRecordCodes] = useState<Set<string>>(new Set());
+  const [isMergeModalOpen, setIsMergeModalOpen] = useState<boolean>(false);
+  const [isSplitModalOpen, setIsSplitModalOpen] = useState<boolean>(false);
+  const [isQuickPickerOpen, setIsQuickPickerOpen] = useState<boolean>(false);
+  const [quickPickerMode, setQuickPickerMode] = useState<'MERGE' | 'SPLIT'>('MERGE');
+  const [mergePair, setMergePair] = useState<[LandRecord, LandRecord] | null>(null);
+  const [splitTarget, setSplitTarget] = useState<LandRecord | null>(null);
+  const [recordToDelete, setRecordToDelete] = useState<LandRecord | null>(null);
+
+  // Toggle selection for a record
+  const toggleSelectRecord = (record: LandRecord) => {
+    setSelectedRecordCodes(prev => {
+      const next = new Set(prev);
+      if (next.has(record.CODE)) {
+        next.delete(record.CODE);
+      } else {
+        // Max 2 items can be selected at a time
+        if (next.size >= 2) {
+          const first = Array.from(next)[0];
+          next.delete(first);
+        }
+        next.add(record.CODE);
+      }
+      return next;
+    });
+  };
+
+  const handleQuickMergeClick = (record: LandRecord) => {
+    if (selectedRecordCodes.size === 0) {
+      setSelectedRecordCodes(new Set([record.CODE]));
+    } else if (selectedRecordCodes.size === 1) {
+      const existingCode = Array.from(selectedRecordCodes)[0];
+      if (existingCode === record.CODE) {
+        setSelectedRecordCodes(new Set());
+        return;
+      }
+      const existingRec = records.find(r => r.CODE === existingCode);
+      if (existingRec) {
+        if (existingRec.DESA !== record.DESA || existingRec.SPAN !== record.SPAN) {
+          alert('Kedua bidang yang digabung harus berada di Desa dan Span yang sama!');
+          return;
+        }
+        setMergePair([existingRec, record]);
+        setIsMergeModalOpen(true);
+      }
+    } else {
+      setSelectedRecordCodes(new Set([record.CODE]));
+    }
+  };
 
   // Extract unique Desas
   const availableDesas = useMemo(() => {
@@ -423,20 +484,79 @@ export default function DaftarNominatifPanel({
           </div>
 
           {/* Top Action Buttons */}
-          <div className="flex items-center gap-2.5 self-start md:self-auto shrink-0">
+          <div className="flex flex-wrap items-center gap-2 self-start md:self-auto shrink-0">
+            {/* Tombol Gabung Bidang (Merge) */}
+            <button
+              onClick={() => {
+                if (selectedRecordCodes.size === 2) {
+                  const codes = Array.from(selectedRecordCodes);
+                  const recA = records.find(r => r.CODE === codes[0]);
+                  const recB = records.find(r => r.CODE === codes[1]);
+                  if (recA && recB) {
+                    if (recA.DESA !== recB.DESA || recA.SPAN !== recB.SPAN) {
+                      alert('Kedua bidang yang digabung harus berada di Desa dan Span yang sama!');
+                      return;
+                    }
+                    setMergePair([recA, recB]);
+                    setIsMergeModalOpen(true);
+                    return;
+                  }
+                }
+                setQuickPickerMode('MERGE');
+                setIsQuickPickerOpen(true);
+              }}
+              className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-emerald-700/20 border border-emerald-500/30 flex items-center gap-2 cursor-pointer"
+              title="Gabung 2 Bidang Tanah dan sesuaikan nomor urut n+1"
+            >
+              <GitMerge className="w-4 h-4" />
+              <span>Gabung Bidang</span>
+              {selectedRecordCodes.size === 2 && (
+                <span className="w-4 h-4 rounded-full bg-white text-emerald-800 text-[10px] font-black flex items-center justify-center">
+                  2
+                </span>
+              )}
+            </button>
+
+            {/* Tombol Pecah Bidang (Split) */}
+            <button
+              onClick={() => {
+                if (selectedRecordCodes.size === 1) {
+                  const code = Array.from(selectedRecordCodes)[0];
+                  const rec = records.find(r => r.CODE === code);
+                  if (rec) {
+                    setSplitTarget(rec);
+                    setIsSplitModalOpen(true);
+                    return;
+                  }
+                }
+                setQuickPickerMode('SPLIT');
+                setIsQuickPickerOpen(true);
+              }}
+              className="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-amber-600/20 border border-amber-500/30 flex items-center gap-2 cursor-pointer"
+              title="Pecah 1 Bidang Tanah menjadi nomor-nomor berurutan"
+            >
+              <Scissors className="w-4 h-4" />
+              <span>Pecah Bidang</span>
+              {selectedRecordCodes.size === 1 && (
+                <span className="w-4 h-4 rounded-full bg-white text-amber-800 text-[10px] font-black flex items-center justify-center">
+                  1
+                </span>
+              )}
+            </button>
+
             <button
               onClick={handlePrint}
               className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-all shadow-md border border-white/10 flex items-center gap-2 cursor-pointer"
             >
               <Printer className="w-4 h-4 text-sky-400" />
-              Cetak / Save PDF
+              Cetak / PDF
             </button>
             <button
               onClick={handleExportCSV}
-              className="px-3.5 py-2 bg-emerald-600/90 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-emerald-600/20 flex items-center gap-2 cursor-pointer"
+              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-all shadow-md border border-white/10 flex items-center gap-2 cursor-pointer"
             >
-              <Download className="w-4 h-4" />
-              Ekspor Nominatif (CSV)
+              <Download className="w-4 h-4 text-emerald-400" />
+              CSV
             </button>
           </div>
         </div>
@@ -748,6 +868,9 @@ export default function DaftarNominatifPanel({
             <thead className="sticky top-0 z-20 bg-slate-900 border-b border-white/10 shadow-lg">
               {/* HEADER ROW 1 */}
               <tr className="bg-slate-900 border-b border-white/10 text-[10px] font-black uppercase text-slate-300 text-center font-mono tracking-wider">
+                <th rowSpan={2} className="py-2.5 px-2 border-r border-white/10 w-10 text-center no-print">
+                  <span className="text-[9px] block">PILIH</span>
+                </th>
                 <th rowSpan={2} className="py-2.5 px-2 border-r border-white/10 w-10">NO</th>
                 <th rowSpan={2} className="py-2.5 px-2 border-r border-white/10 min-w-[100px]">SPAN</th>
                 <th rowSpan={2} className="py-2.5 px-2 border-r border-white/10 w-14">NO BIDANG</th>
@@ -770,7 +893,7 @@ export default function DaftarNominatifPanel({
                 <th rowSpan={2} className="py-2.5 px-2 border-r border-white/10 min-w-[90px]">UPLOAD TRABAS</th>
                 <th rowSpan={2} className="py-2.5 px-2 border-r border-white/10 min-w-[120px]">KEKURANGAN BERKAS</th>
                 <th rowSpan={2} className="py-2.5 px-3 border-r border-white/10 min-w-[160px]">KETERANGAN</th>
-                <th rowSpan={2} className="py-2.5 px-2 w-16 no-print">AKSI</th>
+                <th rowSpan={2} className="py-2.5 px-2 w-28 no-print">AKSI</th>
               </tr>
 
               {/* HEADER ROW 2 (SUB-HEADERS) */}
@@ -798,7 +921,7 @@ export default function DaftarNominatifPanel({
             <tbody className="divide-y divide-white/5 font-sans">
               {filteredRecords.length === 0 ? (
                 <tr>
-                  <td colSpan={24} className="py-12 text-center text-slate-400 space-y-2">
+                  <td colSpan={26} className="py-12 text-center text-slate-400 space-y-2">
                     <FileSpreadsheet className="w-8 h-8 text-slate-600 mx-auto" />
                     <p className="text-sm font-semibold text-slate-300">Belum ada data nominatif yang sesuai filter</p>
                     <p className="text-xs text-slate-500">Silakan ubah filter Desa/Span atau masukkan data bidang baru melalui menu Input Lahan.</p>
@@ -834,11 +957,37 @@ export default function DaftarNominatifPanel({
                     subRows.push(
                       <tr 
                         key={`nom-rec-${idx}-sub-${sIdx}`} 
-                        className={`hover:bg-white/5 transition-all text-xs ${!isFirstSub ? 'bg-slate-900/30' : ''} ${sIdx === subRowsCount - 1 ? 'border-b border-white/10' : 'border-b border-white/5'}`}
+                        className={`hover:bg-white/5 transition-all text-xs ${!isFirstSub ? 'bg-slate-900/30' : ''} ${sIdx === subRowsCount - 1 ? 'border-b border-white/10' : 'border-b border-white/5'} ${
+                          selectedRecordCodes.has(r.CODE) ? 'bg-emerald-950/20' : ''
+                        }`}
                       >
                         {/* MAIN PARCEL COLUMNS (RowSpan for first sub-row) */}
                         {isFirstSub && (
                           <>
+                            {/* CHECKBOX PILIH UNTUK MUTASI (PECAH / GABUNG) */}
+                            <td rowSpan={subRowsCount} className="py-3 px-2 text-center border-r border-white/5 align-top no-print">
+                              <button
+                                type="button"
+                                onClick={() => toggleSelectRecord(r)}
+                                className={`p-1 rounded-md transition-all cursor-pointer inline-flex items-center justify-center ${
+                                  selectedRecordCodes.has(r.CODE)
+                                    ? 'text-emerald-300 bg-emerald-500/20 ring-1 ring-emerald-500/50 scale-105'
+                                    : 'text-slate-600 hover:text-slate-300 hover:bg-white/5'
+                                }`}
+                                title={
+                                  selectedRecordCodes.has(r.CODE)
+                                    ? 'Batalkan pilihan bidang ini'
+                                    : 'Pilih bidang ini untuk digabung atau dipecah'
+                                }
+                              >
+                                {selectedRecordCodes.has(r.CODE) ? (
+                                  <CheckSquare className="w-4 h-4 text-emerald-400" />
+                                ) : (
+                                  <Square className="w-4 h-4" />
+                                )}
+                              </button>
+                            </td>
+
                             {/* NO */}
                             <td rowSpan={subRowsCount} className="py-3 px-2 text-center border-r border-white/5 font-mono text-slate-400 align-top">
                               {idx + 1}
@@ -849,11 +998,23 @@ export default function DaftarNominatifPanel({
                               {r.SPAN || '-'}
                             </td>
 
-                            {/* NO BIDANG */}
+                            {/* NO BIDANG DENGAN BADGE MUTASI */}
                             <td rowSpan={subRowsCount} className="py-3 px-2 text-center border-r border-white/5 align-top">
-                              <span className="px-1.5 py-0.5 bg-slate-900 border border-white/10 rounded font-mono font-bold text-white">
-                                {r.NOBID || '-'}
-                              </span>
+                              <div className="flex flex-col items-center gap-1">
+                                <span className="px-1.5 py-0.5 bg-slate-900 border border-white/10 rounded font-mono font-bold text-white">
+                                  {r.NOBID || '-'}
+                                </span>
+                                {r.KETERANGAN?.includes('Penggabungan Bidang') && (
+                                  <span className="px-1.5 py-0.5 rounded text-[8px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 whitespace-nowrap" title={r.KETERANGAN}>
+                                    GABUNG
+                                  </span>
+                                )}
+                                {r.KETERANGAN?.includes('pecahan') && (
+                                  <span className="px-1.5 py-0.5 rounded text-[8px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 whitespace-nowrap" title={r.KETERANGAN}>
+                                    PECAH
+                                  </span>
+                                )}
+                              </div>
                             </td>
 
                             {/* PIHAK YANG BERHAK ATAS TANAH */}
@@ -901,7 +1062,7 @@ export default function DaftarNominatifPanel({
 
                             {/* BUKTI PENGUASAAN / KEPEMILIKAN */}
                             <td rowSpan={subRowsCount} className="py-3 px-3 border-r border-white/5 space-y-0.5 align-top">
-                              <span className="text-[10px] font-extrabold uppercase text-indigo-400 block font-mono">
+                              <span className="text-[10px] font-extrabold uppercase text-amber-400 block font-mono">
                                 {r.JENIS_ALAS_HAK || 'LAINNYA'}
                               </span>
                               {r.NOMER_HAK && (
@@ -1049,6 +1210,37 @@ export default function DaftarNominatifPanel({
                             {/* AKSI */}
                             <td rowSpan={subRowsCount} className="py-3 px-2 text-center no-print align-top">
                               <div className="flex items-center justify-center gap-1">
+                                {/* Tombol Pecah Bidang (Split) */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSplitTarget(r);
+                                    setIsSplitModalOpen(true);
+                                  }}
+                                  className="p-1.5 bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white rounded-lg transition-all cursor-pointer border border-amber-500/30"
+                                  title={`Pecah Bidang No. ${r.NOBID} (Split)`}
+                                >
+                                  <Scissors className="w-3.5 h-3.5" />
+                                </button>
+
+                                {/* Tombol Gabung Bidang (Merge) */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuickMergeClick(r)}
+                                  className={`p-1.5 rounded-lg transition-all cursor-pointer border ${
+                                    selectedRecordCodes.has(r.CODE)
+                                      ? 'bg-emerald-600 text-white border-emerald-400 ring-2 ring-emerald-500/50'
+                                      : 'bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border-emerald-500/30'
+                                  }`}
+                                  title={
+                                    selectedRecordCodes.has(r.CODE)
+                                      ? `Bidang No. ${r.NOBID} sedang dipilih. Klik bidang lain untuk digabung.`
+                                      : `Pilih Bidang No. ${r.NOBID} untuk digabung`
+                                  }
+                                >
+                                  <GitMerge className="w-3.5 h-3.5" />
+                                </button>
+
                                 {onNavigateToInput && (
                                   <button
                                     onClick={() => onNavigateToInput(r)}
@@ -1060,11 +1252,22 @@ export default function DaftarNominatifPanel({
                                 )}
                                 <button
                                   onClick={() => setSelectedRecordDetail(r)}
-                                  className="p-1.5 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded-lg transition-all cursor-pointer border border-indigo-500/30"
+                                  className="p-1.5 bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 font-bold rounded-lg transition-all cursor-pointer border border-amber-500/30"
                                   title="Lihat Detil Modal"
                                 >
                                   <Eye className="w-3.5 h-3.5" />
                                 </button>
+                                {/* Tombol Hapus Bidang (Khusus Admin) */}
+                                {role === 'ADMIN' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setRecordToDelete(r)}
+                                    className="p-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-lg transition-all cursor-pointer border border-rose-500/30"
+                                    title={`Hapus Bidang No. ${r.NOBID} (Khusus Admin)`}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </>
@@ -1076,8 +1279,8 @@ export default function DaftarNominatifPanel({
                   if (idx < filteredRecords.length - 1) {
                     subRows.push(
                       <tr key={`nom-rec-${idx}-sep`} className="bg-slate-950/90 border-t border-b border-white/10 h-3">
-                        <td colSpan={25} className="py-1 px-0 bg-slate-900/40 text-center font-mono text-[9px] text-slate-600 border-none">
-                          <div className="h-0.5 bg-gradient-to-r from-transparent via-indigo-500/30 to-transparent w-full" />
+                        <td colSpan={26} className="py-1 px-0 bg-slate-900/40 text-center font-mono text-[9px] text-slate-600 border-none">
+                          <div className="h-0.5 bg-gradient-to-r from-transparent via-amber-500/30 to-transparent w-full" />
                         </td>
                       </tr>
                     );
@@ -1159,15 +1362,213 @@ export default function DaftarNominatifPanel({
 
             <div className="p-4 bg-slate-950 border-t border-white/10 flex items-center justify-between">
               <span className="text-[10px] text-slate-500 font-mono">Kode Record: {selectedRecordDetail.CODE}</span>
-              <button
-                onClick={() => setSelectedRecordDetail(null)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition-all cursor-pointer"
-              >
-                Tutup
-              </button>
+              <div className="flex items-center gap-2">
+                {role === 'ADMIN' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const rec = selectedRecordDetail;
+                      setSelectedRecordDetail(null);
+                      setRecordToDelete(rec);
+                    }}
+                    className="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white text-xs font-bold rounded-xl transition-all border border-rose-500/30 flex items-center gap-1.5 cursor-pointer"
+                    title="Hapus data bidang ini secara permanen"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Hapus Bidang</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSelectedRecordDetail(null)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
             </div>
           </div>
         </div>
+      )}
+
+      {/* FLOATING ACTION BANNER UNTUK PECAH & GABUNG BIDANG */}
+      {selectedRecordCodes.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 border border-emerald-500/30 shadow-2xl backdrop-blur-xl px-5 py-3 rounded-2xl flex items-center gap-4 text-xs animate-fadeIn max-w-xl w-11/12 sm:w-auto">
+          <div className="flex items-center gap-2 text-white">
+            <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-xs border border-emerald-500/30 shrink-0">
+              {selectedRecordCodes.size}
+            </span>
+            <div>
+              <div className="font-bold flex items-center gap-1.5">
+                <span>{selectedRecordCodes.size === 1 ? '1 Bidang Dipilih' : '2 Bidang Dipilih'}</span>
+                <span className="text-slate-400 font-mono text-[11px]">
+                  ({Array.from(selectedRecordCodes).map(c => records.find(r => r.CODE === c)?.NOBID).filter(Boolean).map(n => `No. ${n}`).join(' & ')})
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-400">
+                {selectedRecordCodes.size === 1 
+                  ? 'Pilih 1 bidang lagi untuk digabung, atau pecah bidang ini.' 
+                  : 'Siap untuk digabungkan menjadi 1 nomor induk.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="h-6 w-px bg-white/10 shrink-0 hidden sm:block" />
+
+          <div className="flex items-center gap-2 shrink-0">
+            {selectedRecordCodes.size === 1 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const code = Array.from(selectedRecordCodes)[0];
+                  const rec = records.find(r => r.CODE === code);
+                  if (rec) {
+                    setSplitTarget(rec);
+                    setIsSplitModalOpen(true);
+                  }
+                }}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-md shadow-amber-600/20 cursor-pointer"
+              >
+                <Scissors className="w-3.5 h-3.5" />
+                <span>Pecah Bidang Ini</span>
+              </button>
+            )}
+
+            {role === 'ADMIN' && selectedRecordCodes.size === 1 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const code = Array.from(selectedRecordCodes)[0];
+                  const rec = records.find(r => r.CODE === code);
+                  if (rec) setRecordToDelete(rec);
+                }}
+                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-md shadow-rose-600/20 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Hapus Bidang</span>
+              </button>
+            )}
+
+            {selectedRecordCodes.size === 2 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const codes = Array.from(selectedRecordCodes);
+                  const recA = records.find(r => r.CODE === codes[0]);
+                  const recB = records.find(r => r.CODE === codes[1]);
+                  if (recA && recB) {
+                    if (recA.DESA !== recB.DESA || recA.SPAN !== recB.SPAN) {
+                      alert('Penggabungan bidang harus berada dalam Desa dan Span yang sama!');
+                      return;
+                    }
+                    setMergePair([recA, recB]);
+                    setIsMergeModalOpen(true);
+                  }
+                }}
+                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
+              >
+                <GitMerge className="w-3.5 h-3.5" />
+                <span>Gabung 2 Bidang Ini</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setSelectedRecordCodes(new Set())}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 text-xs cursor-pointer"
+              title="Batalkan pilihan"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL GABUNG BIDANG (MERGE) */}
+      {isMergeModalOpen && mergePair && (
+        <MergeParcelModal
+          isOpen={isMergeModalOpen}
+          onClose={() => {
+            setIsMergeModalOpen(false);
+            setMergePair(null);
+          }}
+          recordA={mergePair[0]}
+          recordB={mergePair[1]}
+          allRecords={records}
+          onConfirmMerge={async (updatedRecords, logMsg) => {
+            setSelectedRecordCodes(new Set());
+            setIsMergeModalOpen(false);
+            setMergePair(null);
+            if (onBatchUpdateRecords) {
+              await onBatchUpdateRecords(updatedRecords, logMsg);
+            }
+          }}
+        />
+      )}
+
+      {/* MODAL PECAH BIDANG (SPLIT) */}
+      {isSplitModalOpen && splitTarget && (
+        <SplitParcelModal
+          isOpen={isSplitModalOpen}
+          onClose={() => {
+            setIsSplitModalOpen(false);
+            setSplitTarget(null);
+          }}
+          targetRecord={splitTarget}
+          allRecords={records}
+          onConfirmSplit={async (updatedRecords, logMsg) => {
+            setSelectedRecordCodes(new Set());
+            setIsSplitModalOpen(false);
+            setSplitTarget(null);
+            if (onBatchUpdateRecords) {
+              await onBatchUpdateRecords(updatedRecords, logMsg);
+            }
+          }}
+        />
+      )}
+
+      {/* MODAL QUICK PICKER (DARI TOMBOL HEADER) */}
+      {isQuickPickerOpen && (
+        <QuickParcelPickerModal
+          isOpen={isQuickPickerOpen}
+          onClose={() => setIsQuickPickerOpen(false)}
+          mode={quickPickerMode}
+          allRecords={records}
+          initialDesa={selectedDesa !== '__ALL__' ? selectedDesa : ''}
+          initialSpan={selectedSpan !== '__ALL__' ? selectedSpan : ''}
+          onSelectForMerge={(recA, recB) => {
+            setMergePair([recA, recB]);
+            setIsMergeModalOpen(true);
+          }}
+          onSelectForSplit={(target) => {
+            setSplitTarget(target);
+            setIsSplitModalOpen(true);
+          }}
+        />
+      )}
+
+      {/* MODAL HAPUS BIDANG (KHUSUS ADMIN) */}
+      {recordToDelete && (
+        <DeleteParcelModal
+          isOpen={!!recordToDelete}
+          onClose={() => setRecordToDelete(null)}
+          targetRecord={recordToDelete}
+          allRecords={records}
+          onConfirmDelete={async (updatedRecords, logMsg) => {
+            const target = recordToDelete;
+            setSelectedRecordCodes(prev => {
+              const next = new Set(prev);
+              next.delete(target.CODE);
+              return next;
+            });
+            setRecordToDelete(null);
+            if (onDeleteRecord) {
+              await onDeleteRecord(target, true);
+            } else if (onBatchUpdateRecords) {
+              await onBatchUpdateRecords(updatedRecords, logMsg);
+            }
+          }}
+        />
       )}
     </div>
   );

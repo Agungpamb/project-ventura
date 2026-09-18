@@ -151,7 +151,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
       <div className="glass-card p-6 rounded-2xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-white tracking-tight flex items-center gap-2 font-sans">
-            <ShieldCheck className="w-6 h-6 text-indigo-400" />
+            <ShieldCheck className="w-6 h-6 text-amber-400" />
             Verifikasi & Quality Control (QC)
           </h1>
           <p className="text-xs text-slate-400 mt-1">
@@ -163,9 +163,9 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
           {onNavigateToSanding && (
             <button
               onClick={onNavigateToSanding}
-              className="px-3.5 py-1.5 bg-indigo-600/90 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-indigo-600/20 flex items-center gap-1.5 cursor-pointer border border-indigo-400/30"
+              className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs font-bold rounded-xl transition-all shadow-md shadow-amber-600/20 flex items-center gap-1.5 cursor-pointer border border-amber-400/30"
             >
-              <GitCompare className="w-4 h-4 text-indigo-300" />
+              <GitCompare className="w-4 h-4 text-amber-300" />
               Menu 3.1: Sanding Peta
             </button>
           )}
@@ -189,7 +189,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                   onClick={() => setFilterStatus(s)}
                   className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
                     filterStatus === s 
-                      ? 'bg-white/10 text-indigo-300 shadow-inner border border-white/5' 
+                      ? 'bg-white/10 text-amber-300 shadow-inner border border-white/5' 
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
@@ -213,7 +213,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                 onClick={() => setSearchMethod('dropdown')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                   searchMethod === 'dropdown'
-                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-600/10'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -225,7 +225,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                 onClick={() => setSearchMethod('manual')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                   searchMethod === 'manual'
-                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-600/10'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -243,11 +243,11 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
             <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 gap-3 items-end animate-fadeIn">
               {/* Select DESA */}
               <div className="space-y-1">
-                <span className="text-[10px] font-extrabold text-indigo-300 uppercase tracking-wider block">1. Desa</span>
+                <span className="text-[10px] font-extrabold text-amber-300 uppercase tracking-wider block">1. Desa</span>
                 <select
                   value={selectedDesa}
                   onChange={(e) => setSelectedDesa(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-indigo-400 cursor-pointer"
+                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
                 >
                   <option value="">-- Pilih Desa --</option>
                   {uniqueDesas.map(desa => (
@@ -258,12 +258,12 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
 
               {/* Select SPAN */}
               <div className="space-y-1">
-                <span className="text-[10px] font-extrabold text-indigo-300 uppercase tracking-wider block">2. Span</span>
+                <span className="text-[10px] font-extrabold text-amber-300 uppercase tracking-wider block">2. Span</span>
                 <select
                   value={selectedSpan}
                   onChange={(e) => setSelectedSpan(e.target.value)}
                   disabled={!selectedDesa}
-                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-indigo-400 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-amber-400 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
                   <option value="">{selectedDesa ? '-- Pilih Span --' : '-- Pilih Desa Dulu --'}</option>
                   {uniqueSpansForDesa.map(span => (
@@ -274,12 +274,12 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
 
               {/* Select NOBID */}
               <div className="space-y-1">
-                <span className="text-[10px] font-extrabold text-indigo-300 uppercase tracking-wider block">3. No. Bidang</span>
+                <span className="text-[10px] font-extrabold text-amber-300 uppercase tracking-wider block">3. No. Bidang</span>
                 <select
                   value={selectedNobid}
                   onChange={(e) => setSelectedNobid(e.target.value)}
                   disabled={!selectedSpan}
-                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-indigo-400 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-amber-400 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
                   <option value="">{selectedSpan ? '-- Pilih No. Bidang --' : '-- Pilih Span Dulu --'}</option>
                   {uniqueNobidsForDesaAndSpan.map(nobid => (
@@ -314,7 +314,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Cari CODE, NAMA, atau NIK..."
-                className="w-full pl-9 pr-3 py-2.5 bg-slate-900/50 border border-white/10 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white"
+                className="w-full pl-9 pr-3 py-2.5 bg-slate-900/50 border border-white/10 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 text-white"
               />
             </div>
           )}
@@ -335,7 +335,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                 onClick={() => setTableHeightMode('compact')}
                 className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                   tableHeightMode === 'compact'
-                    ? 'bg-indigo-600 text-white shadow-sm'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
                     : 'text-slate-400 hover:text-white'
                 }`}
                 title="Tinggi Ringkas (380px)"
@@ -347,7 +347,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                 onClick={() => setTableHeightMode('standard')}
                 className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                   tableHeightMode === 'standard'
-                    ? 'bg-indigo-600 text-white shadow-sm'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
                     : 'text-slate-400 hover:text-white'
                 }`}
                 title="Tinggi Standar (550px)"
@@ -359,7 +359,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                 onClick={() => setTableHeightMode('tall')}
                 className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                   tableHeightMode === 'tall'
-                    ? 'bg-indigo-600 text-white shadow-sm'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
                     : 'text-slate-400 hover:text-white'
                 }`}
                 title="Layar Penuh"
@@ -401,7 +401,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                   const docCount = [r.LINK_KTP, r.LINK_KK, r.LINK_ALAS_HAK, r.LINK_PERALIHAN_HAK].filter(Boolean).length;
                   return (
                     <tr key={`${r.ID_UNIK || r.CODE || 'row'}-${idx}`} className="hover:bg-white/5 transition-colors">
-                      <td className="px-6 py-4 font-mono font-bold text-indigo-300">{r.CODE}</td>
+                      <td className="px-6 py-4 font-mono font-bold text-amber-300">{r.CODE}</td>
                       <td className="px-6 py-4">
                         <p className="font-bold text-white">{r.NAMA}</p>
                         <p className="text-[10px] text-slate-400 font-mono">NIK: {r.NIK}</p>
@@ -436,7 +436,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-900 text-slate-400 text-[10px] font-bold rounded-full border border-white/5">
-                            <AlertCircle className="w-3.5 h-3.5 animate-pulse text-indigo-400" />
+                            <AlertCircle className="w-3.5 h-3.5 animate-pulse text-amber-400" />
                             Pending QC
                           </span>
                         )}
@@ -444,7 +444,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                       <td className="px-6 py-4 text-right">
                         <button
                           onClick={() => handleInspect(r)}
-                          className="p-1.5 hover:bg-indigo-500/15 text-indigo-300 hover:text-indigo-200 rounded-lg border border-white/5 hover:border-indigo-500/30 transition-all inline-flex items-center gap-1 font-bold cursor-pointer"
+                          className="p-1.5 hover:bg-amber-500/15 text-amber-300 hover:text-amber-200 rounded-lg border border-white/5 hover:border-amber-500/30 transition-all inline-flex items-center gap-1 font-bold cursor-pointer"
                           title="Periksa data Lahan"
                         >
                           <Eye className="w-4 h-4" />
@@ -468,7 +468,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
             {/* Modal Header */}
             <div className="bg-slate-900/60 text-white p-6 flex justify-between items-center shrink-0 border-b border-white/10">
               <div className="flex items-center gap-2.5">
-                <UserCheck className="w-5 h-5 text-indigo-400" />
+                <UserCheck className="w-5 h-5 text-amber-400" />
                 <div>
                   <h3 className="text-md font-extrabold text-white">Inspeksi Lahan & Keputusan QC</h3>
                   <p className="text-xs text-slate-400 font-mono mt-0.5">CODE: {selectedRecord.CODE}</p>
@@ -496,7 +496,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                 {/* 1. Lahan & Owner (General) */}
                 <div className="p-4 rounded-2xl border border-white/5 space-y-3 bg-white/5 shadow-inner">
                   <h4 className="text-xs font-extrabold text-white uppercase tracking-wider flex items-center gap-1.5 border-b border-white/10 pb-2">
-                    <MapPin className="w-4 h-4 text-indigo-400" />
+                    <MapPin className="w-4 h-4 text-amber-400" />
                     Detail Bidang & Identitas Pemilik
                   </h4>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
@@ -520,7 +520,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                     </p>
 
                     <p className="text-slate-400 font-medium">Luas Terdaftar:</p>
-                    <p className="font-bold text-indigo-300 text-right">{selectedRecord.LUAS} m²</p>
+                    <p className="font-bold text-amber-300 text-right">{selectedRecord.LUAS} m²</p>
 
                     <p className="text-slate-400 font-medium">Penutup Lahan:</p>
                     <p className="text-slate-300 text-right">{selectedRecord.PENUTUP_LAHAN || '-'}</p>
@@ -545,7 +545,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                 <div className="p-4 rounded-2xl border border-white/5 space-y-3 bg-white/5 flex flex-col justify-between shadow-inner">
                   <div className="space-y-3">
                     <h4 className="text-xs font-extrabold text-white uppercase tracking-wider flex items-center gap-1.5 border-b border-white/10 pb-2">
-                      <Home className="w-4 h-4 text-indigo-400" />
+                      <Home className="w-4 h-4 text-amber-400" />
                       Alas Hak & Data Bangunan
                     </h4>
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
@@ -559,7 +559,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                       <p className="text-slate-300 text-right">{selectedRecord.LUAS_YANG_ADA_PADA_ALAS_HAK || '-'} m²</p>
 
                       <p className="text-slate-400 font-medium">Jenis Peralihan:</p>
-                      <p className="text-indigo-300 font-bold text-right text-[11px] bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/10 inline-block align-middle self-end">{selectedRecord.JENIS_PERALIHAN_HAK || 'SESUAI'}</p>
+                      <p className="text-amber-300 font-bold text-right text-[11px] bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/10 inline-block align-middle self-end">{selectedRecord.JENIS_PERALIHAN_HAK || 'SESUAI'}</p>
                     </div>
 
                     {/* Populated Buildings */}
@@ -587,7 +587,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                 {/* 3. Plants List */}
                 <div className="p-4 rounded-2xl border border-white/5 space-y-3 bg-white/5 md:col-span-2 shadow-inner">
                   <h4 className="text-xs font-extrabold text-white uppercase tracking-wider flex items-center gap-1.5 border-b border-white/10 pb-2">
-                    <Sprout className="w-4 h-4 text-indigo-400" />
+                    <Sprout className="w-4 h-4 text-amber-400" />
                     Pohon & Tanaman Produktif Terdata
                   </h4>
                   {selectedRecord.plants?.filter(p => p.jenis).length === 0 ? (
@@ -603,7 +603,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                           <div key={idx} className="bg-slate-900 p-2.5 rounded-xl border border-white/5 text-[11px] space-y-1.5 text-slate-300">
                             <div className="flex justify-between items-center border-b border-white/5 pb-1">
                               <span className="font-bold text-white truncate">{p.jenis}</span>
-                              <span className="font-extrabold text-indigo-300 font-mono">{total} Pohon</span>
+                              <span className="font-extrabold text-amber-300 font-mono">{total} Pohon</span>
                             </div>
                             <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-400">
                               <p>Mghasilkan: <strong className="text-white">{sm}</strong></p>
@@ -623,7 +623,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                 <div className="p-4 rounded-2xl border border-white/5 space-y-3 bg-white/5 md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4 shadow-inner">
                   <div>
                     <h4 className="text-xs font-extrabold text-white uppercase tracking-wider flex items-center gap-1.5 border-b border-white/10 pb-2">
-                      <Landmark className="w-4 h-4 text-indigo-400" />
+                      <Landmark className="w-4 h-4 text-amber-400" />
                       Administrasi & Progress
                     </h4>
                     <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] pt-1.5 text-slate-300">
@@ -646,7 +646,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
 
                   <div>
                     <h4 className="text-xs font-extrabold text-white uppercase tracking-wider flex items-center gap-1.5 border-b border-white/10 pb-2">
-                      <FileText className="w-4 h-4 text-indigo-400" />
+                      <FileText className="w-4 h-4 text-amber-400" />
                       Tinjau Dokumen Drive
                     </h4>
                     <div className="space-y-2 pt-2.5 max-h-[250px] overflow-y-auto pr-1 scrollbar-thin">
@@ -675,7 +675,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                               target="_blank" 
                               referrerPolicy="no-referrer"
                               rel="noopener noreferrer" 
-                              className="px-2 py-1 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 text-[10px] font-bold rounded-md flex items-center gap-1 shrink-0 transition-colors"
+                              className="px-2 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-[10px] font-bold rounded-md flex items-center gap-1 shrink-0 transition-colors"
                             >
                               Buka File
                               <ExternalLink className="w-3 h-3" />
@@ -694,7 +694,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
             {/* Assessment Footer Form */}
             <form onSubmit={handleSaveAssessment} className="bg-slate-900/40 p-6 border-t border-white/10 shrink-0">
               <h4 className="text-xs font-extrabold text-slate-200 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <UserCheck className="w-5 h-5 text-indigo-400" />
+                <UserCheck className="w-5 h-5 text-amber-400" />
                 Lembar Hasil Quality Control (QC)
               </h4>
 
@@ -704,7 +704,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                   <select
                     value={qcStatus}
                     onChange={(e) => setQcStatus(e.target.value as any)}
-                    className="w-full px-4 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs font-bold text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                    className="w-full px-4 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs font-bold text-white focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer"
                   >
                     <option value="APPROVED" className="bg-slate-900 text-white">Setujui (APPROVED)</option>
                     <option value="REJECTED" className="bg-slate-900 text-white">Tolak (REJECTED)</option>
@@ -718,7 +718,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                     value={kekuranganBerkas}
                     onChange={(e) => setKekuranganBerkas(e.target.value)}
                     placeholder="Contoh: Kurang FC KK"
-                    className="w-full px-4 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    className="w-full px-4 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
                   />
                 </div>
 
@@ -729,7 +729,7 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
                     value={qcNotes}
                     onChange={(e) => setQcNotes(e.target.value)}
                     placeholder="Masukkan alasan penolakan atau catatan..."
-                    className="w-full px-4 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    className="w-full px-4 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
                   />
                 </div>
 

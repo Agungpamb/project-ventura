@@ -53,7 +53,7 @@ interface ResumeProjectPanelProps {
 }
 
 const STAGES_CONFIG = [
-  { key: 'baSosialisasiAwal', label: '1. BA Sos Awal', fullName: 'BA Sosialisasi Awal', hasPdf: true, hasPhoto: true, color: 'text-indigo-400' },
+  { key: 'baSosialisasiAwal', label: '1. BA Sos Awal', fullName: 'BA Sosialisasi Awal', hasPdf: true, hasPhoto: true, color: 'text-amber-400' },
   { key: 'baPengumuman', label: '2. BA Pengumuman', fullName: 'BA Pengumuman & Penetapan', hasPdf: true, hasPhoto: true, color: 'text-sky-400' },
   { key: 'lampiranBapt', label: '3. Lampiran BAPT', fullName: 'Lampiran Berita Acara Pembayaran (BAPT)', hasPdf: true, hasPhoto: false, color: 'text-amber-400' },
   { key: 'baPenyampaianNilai', label: '4. BA Penyampaian Nilai', fullName: 'BA Penyampaian Nilai Kompensasi', hasPdf: true, hasPhoto: true, color: 'text-purple-400' },
@@ -79,7 +79,7 @@ export default function ResumeProjectPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'COMPLETED' | 'IN_PROGRESS' | 'NOT_STARTED'>('ALL');
   const [activeTab, setActiveTab] = useState<'table' | 'cards'>('table');
-  const [tableHeightMode, setTableHeightMode] = useState<'compact' | 'normal' | 'full'>('full');
+  const [tableHeightMode, setTableHeightMode] = useState<'compact' | 'standard' | 'tall'>('standard');
 
   // Modals
   const [editingDesa, setEditingDesa] = useState<VillageResume | null>(null);
@@ -375,17 +375,17 @@ export default function ResumeProjectPanel({
   return (
     <div className="space-y-6 animate-fadeIn font-sans" id="resume_project_panel">
       {/* 1. Header Banner & Resume KPI */}
-      <div className="glass-card p-6 rounded-3xl border border-indigo-500/20 shadow-xl space-y-6 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20"></div>
+      <div className="glass-card p-6 rounded-3xl border border-amber-500/20 shadow-xl space-y-6 relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20"></div>
 
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 relative z-10">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/30">
                 Menu 1.4
               </span>
               <h2 className="text-xl font-extrabold text-white tracking-tight flex items-center gap-2">
-                <Landmark className="w-5 h-5 text-indigo-400" />
+                <Landmark className="w-5 h-5 text-amber-400" />
                 Resume Proyek: Progres Administrasi & Lapangan Per Desa
               </h2>
             </div>
@@ -401,14 +401,14 @@ export default function ResumeProjectPanel({
               className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-white/10 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-sm"
               title="Unduh Rekap CSV / Excel"
             >
-              <Download className="w-3.5 h-3.5 text-indigo-400" />
+              <Download className="w-3.5 h-3.5 text-amber-400" />
               <span>Ekspor Rekap</span>
             </button>
 
             {!isGuest && (
               <button
                 onClick={() => setIsAddingDesaModal(true)}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-lg shadow-indigo-600/25 cursor-pointer"
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-lg shadow-amber-600/20 cursor-pointer"
                 title="Tambah Desa Baru ke Resume"
               >
                 <Plus className="w-4 h-4" />
@@ -439,7 +439,7 @@ export default function ResumeProjectPanel({
                 </div>
                 <div className="w-full bg-slate-800 h-1 rounded-full overflow-hidden">
                   <div 
-                    className="bg-indigo-500 h-full rounded-full transition-all duration-500"
+                    className="bg-amber-500 h-full rounded-full transition-all duration-500"
                     style={{ width: `${pct}%` }}
                   />
                 </div>
@@ -449,9 +449,9 @@ export default function ResumeProjectPanel({
         </div>
 
         {/* Global Overall Status Banner */}
-        <div className="bg-indigo-950/40 border border-indigo-500/20 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="bg-amber-950/40 border border-amber-500/20 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3 w-full sm:w-auto">
-            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-black text-sm shrink-0 border border-indigo-500/30">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-black text-sm shrink-0 border border-amber-500/30">
               {metrics.avgProgress}%
             </div>
             <div>
@@ -484,7 +484,7 @@ export default function ResumeProjectPanel({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Cari desa atau kecamatan..."
-              className="w-full pl-10 pr-4 py-2 bg-slate-900/90 border border-white/10 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="w-full pl-10 pr-4 py-2 bg-slate-900/90 border border-white/10 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
             />
           </div>
         </div>
@@ -495,7 +495,7 @@ export default function ResumeProjectPanel({
             <button
               onClick={() => setStatusFilter('ALL')}
               className={`px-3 py-1 rounded-lg font-bold text-[11px] transition-all cursor-pointer ${
-                statusFilter === 'ALL' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                statusFilter === 'ALL' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
               }`}
             >
               Semua ({resumes.length})
@@ -517,75 +517,92 @@ export default function ResumeProjectPanel({
               On Progress
             </button>
           </div>
-
-          {/* Table Height Size Switcher */}
-          <div className="flex items-center gap-1 bg-slate-900/80 p-1 rounded-xl border border-white/10 text-xs">
-            <button
-              onClick={() => setTableHeightMode('compact')}
-              className={`px-2 py-1 rounded-lg font-bold text-[10px] cursor-pointer ${
-                tableHeightMode === 'compact' ? 'bg-white/20 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Tinggi Ringkas (Scroll mandiri 420px)"
-            >
-              Ringkas
-            </button>
-            <button
-              onClick={() => setTableHeightMode('normal')}
-              className={`px-2 py-1 rounded-lg font-bold text-[10px] cursor-pointer ${
-                tableHeightMode === 'normal' ? 'bg-white/20 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Tinggi Standar (Scroll mandiri 620px)"
-            >
-              Standar
-            </button>
-            <button
-              onClick={() => setTableHeightMode('full')}
-              className={`px-2 py-1 rounded-lg font-bold text-[10px] cursor-pointer ${
-                tableHeightMode === 'full' ? 'bg-white/20 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Layar Penuh (Semua data)"
-            >
-              Semua
-            </button>
-          </div>
         </div>
       </div>
 
-      {/* 3. Table Resume View (Self-contained scroll container) */}
-      <div className="glass-card rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
-        {/* Horizontal scroll hint bar */}
-        <div className="bg-slate-900/80 px-4 py-2.5 border-b border-white/10 flex items-center justify-between text-[11px] text-slate-300">
-          <div className="flex items-center gap-2">
+      {/* 3. Table Resume View (Self-contained scroll container like 3.1) */}
+      <div className="glass-card rounded-2xl border border-white/10 shadow-xl overflow-hidden flex flex-col">
+        {/* Scroll Control Bar */}
+        <div className="px-4 py-2.5 bg-slate-900/90 border-b border-white/10 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 text-slate-400">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
-            <span>
-              <strong>Tip Scroll:</strong> {tableHeightMode === 'full' ? 'Tabel ditampilkan penuh (halaman bebas di-scroll ke bawah). Geser ke samping untuk melihat seluruh tahapan BA & progres.' : 'Geser kursor atau touchpad ke samping untuk melihat seluruh tahapan dokumen.'}
+            <span className="text-[11px] font-bold text-slate-300">Tampilan Scroll:</span>
+            <span className="text-[10px] text-slate-400 font-mono">
+              {tableHeightMode === 'tall' 
+                ? 'Layar Penuh (Scroll mandiri luas viewport)' 
+                : 'Scroll mandiri dalam tabel (halaman tidak memanjang)'}
+            </span>
+            <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono hidden md:inline">
+              Shift + Scroll untuk geser samping
             </span>
           </div>
-          <span className="font-mono text-emerald-400 font-bold shrink-0">{filteredResumes.length} Desa Terdata</span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-emerald-400 font-bold text-[11px] mr-1 hidden sm:inline">
+              {filteredResumes.length} Desa Terdata
+            </span>
+            <div className="flex items-center gap-1.5 bg-slate-950/80 p-1 rounded-xl border border-white/10">
+              <button
+                type="button"
+                onClick={() => setTableHeightMode('compact')}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                  tableHeightMode === 'compact'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Tinggi Ringkas (380px)"
+              >
+                Ringkas (380px)
+              </button>
+              <button
+                type="button"
+                onClick={() => setTableHeightMode('standard')}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                  tableHeightMode === 'standard'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Tinggi Standar (550px)"
+              >
+                Standar (550px)
+              </button>
+              <button
+                type="button"
+                onClick={() => setTableHeightMode('tall')}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                  tableHeightMode === 'tall'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Layar Penuh"
+              >
+                Layar Penuh
+              </button>
+            </div>
+          </div>
         </div>
 
         <div 
-          className="table-scroll-container overflow-x-auto transition-all scroll-smooth"
-          style={{
-            maxHeight: tableHeightMode === 'compact' ? '460px' : tableHeightMode === 'normal' ? '680px' : 'none',
-            overflowY: tableHeightMode === 'full' ? 'visible' : 'auto',
-            overscrollBehavior: 'auto',
-            WebkitOverflowScrolling: 'touch'
-          }}
+          className={`table-scroll-container overflow-auto scrollbar-thin bg-slate-950/80 ${
+            tableHeightMode === 'compact'
+              ? 'max-h-[380px]'
+              : tableHeightMode === 'standard'
+              ? 'max-h-[550px]'
+              : 'max-h-[calc(100vh-250px)]'
+          }`}
         >
           <table className="w-full text-left border-collapse min-w-[1100px]">
-            <thead className="sticky top-0 z-20 bg-slate-950/95 backdrop-blur-md border-b border-white/10 text-[10px] font-extrabold text-slate-300 uppercase tracking-wider shadow-sm">
-              <tr>
-                <th className="py-3.5 px-4 w-12 text-center">No</th>
-                <th className="py-3.5 px-4 w-48">Desa & Info Lahan</th>
-                <th className="py-3.5 px-3">1. BA Sos Awal</th>
-                <th className="py-3.5 px-3">2. BA Pengumuman</th>
-                <th className="py-3.5 px-3">3. Lampiran BAPT</th>
-                <th className="py-3.5 px-3">4. BA Nilai</th>
-                <th className="py-3.5 px-3">5. BA Rekening</th>
-                <th className="py-3.5 px-3">6. Bush Clearing</th>
-                <th className="py-3.5 px-3 w-28 text-center">Progres</th>
-                <th className="py-3.5 px-4 w-32 text-center">Aksi Dokumen</th>
+            <thead className="sticky top-0 z-20 bg-slate-950/95 backdrop-blur border-b border-white/10 shadow-md">
+              <tr className="bg-slate-950/90 border-b border-white/10 text-[10px] font-black uppercase tracking-wider text-slate-400 font-mono">
+                <th className="py-3 px-3 w-12 text-center">No</th>
+                <th className="py-3 px-3 w-48">Desa & Info Lahan</th>
+                <th className="py-3 px-3">1. BA Sos Awal</th>
+                <th className="py-3 px-3">2. BA Pengumuman</th>
+                <th className="py-3 px-3">3. Lampiran BAPT</th>
+                <th className="py-3 px-3">4. BA Nilai</th>
+                <th className="py-3 px-3">5. BA Rekening</th>
+                <th className="py-3 px-3">6. Bush Clearing</th>
+                <th className="py-3 px-3 w-28 text-center">Progres</th>
+                <th className="py-3 px-4 w-32 text-center">Aksi Dokumen</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5 text-xs font-medium">
@@ -615,7 +632,7 @@ export default function ResumeProjectPanel({
                       <td className="py-3.5 px-4">
                         <div className="space-y-1">
                           <div className="font-extrabold text-white text-sm tracking-tight flex items-center gap-1.5">
-                            <Landmark className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                            <Landmark className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                             {res.desaName}
                           </div>
                           {res.kecamatan && (
@@ -646,7 +663,7 @@ export default function ResumeProjectPanel({
                                   title: `BA Sosialisasi Awal - Desa ${res.desaName}`,
                                   pdfUrl: res.baSosialisasiAwal.pdfUrl
                                 })}
-                                className="p-1 rounded bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
+                                className="p-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
                                 title="Buka PDF BA Sosialisasi Awal"
                               >
                                 <FileText className="w-3 h-3" /> PDF
@@ -681,7 +698,7 @@ export default function ResumeProjectPanel({
                                   title: `BA Pengumuman - Desa ${res.desaName}`,
                                   pdfUrl: res.baPengumuman.pdfUrl
                                 })}
-                                className="p-1 rounded bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
+                                className="p-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
                                 title="Buka PDF BA Pengumuman"
                               >
                                 <FileText className="w-3 h-3" /> PDF
@@ -715,7 +732,7 @@ export default function ResumeProjectPanel({
                                 title: `Lampiran BAPT - Desa ${res.desaName}`,
                                 pdfUrl: res.lampiranBapt.pdfUrl
                               })}
-                              className="p-1 rounded bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
+                              className="p-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
                               title="Buka PDF Lampiran BAPT"
                             >
                               <FileText className="w-3 h-3" /> PDF
@@ -736,7 +753,7 @@ export default function ResumeProjectPanel({
                                   title: `BA Penyampaian Nilai - Desa ${res.desaName}`,
                                   pdfUrl: res.baPenyampaianNilai.pdfUrl
                                 })}
-                                className="p-1 rounded bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
+                                className="p-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
                                 title="Buka PDF Penyampaian Nilai"
                               >
                                 <FileText className="w-3 h-3" /> PDF
@@ -771,7 +788,7 @@ export default function ResumeProjectPanel({
                                   title: `BA Serah Terima Rekening - Desa ${res.desaName}`,
                                   pdfUrl: res.baSerahTerimaRekening.pdfUrl
                                 })}
-                                className="p-1 rounded bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
+                                className="p-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
                                 title="Buka PDF Serah Terima Rekening"
                               >
                                 <FileText className="w-3 h-3" /> PDF
@@ -825,7 +842,7 @@ export default function ResumeProjectPanel({
                           <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
                             <div 
                               className={`h-full rounded-full transition-all duration-300 ${
-                                progress === 100 ? 'bg-emerald-500' : progress > 50 ? 'bg-indigo-500' : 'bg-amber-500'
+                                progress === 100 ? 'bg-emerald-500' : progress > 50 ? 'bg-amber-500' : 'bg-amber-500'
                               }`}
                               style={{ width: `${progress}%` }}
                             />
@@ -841,7 +858,7 @@ export default function ResumeProjectPanel({
                               setEditingDesa(res);
                               setActiveStageTab('baSosialisasiAwal');
                             }}
-                            className="px-3 py-1.5 bg-indigo-600/90 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm w-full"
+                            className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm w-full"
                             title="Kelola & Upload Dokumen Desa"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
@@ -877,7 +894,7 @@ export default function ResumeProjectPanel({
             {/* Modal Header */}
             <div className="p-5 border-b border-white/10 flex items-center justify-between bg-slate-900/90">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-indigo-500/20 text-indigo-400 rounded-xl border border-indigo-500/30">
+                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30">
                   <Landmark className="w-5 h-5" />
                 </div>
                 <div>
@@ -909,7 +926,7 @@ export default function ResumeProjectPanel({
                     onClick={() => setActiveStageTab(stage.key)}
                     className={`py-3 px-3.5 text-xs font-bold border-b-2 transition-all shrink-0 flex items-center gap-2 cursor-pointer ${
                       isActive 
-                        ? 'border-indigo-500 text-indigo-300 bg-white/5' 
+                        ? 'border-amber-500 text-amber-300 bg-white/5' 
                         : 'border-transparent text-slate-400 hover:text-white'
                     }`}
                   >
@@ -959,7 +976,7 @@ export default function ResumeProjectPanel({
                               };
                             });
                           }}
-                          className="bg-slate-950 border border-white/15 rounded-xl px-3 py-1.5 text-xs font-bold text-white focus:outline-none focus:border-indigo-500 cursor-pointer disabled:opacity-50"
+                          className="bg-slate-950 border border-white/15 rounded-xl px-3 py-1.5 text-xs font-bold text-white focus:outline-none focus:border-amber-500 cursor-pointer disabled:opacity-50"
                         >
                           <option value="BELUM">Belum Dilaksanakan</option>
                           <option value="PROSES">Sedang Proses</option>
@@ -971,7 +988,7 @@ export default function ResumeProjectPanel({
                     {/* Date & Manual Notes */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-1.5">
-                        <label className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider block">
+                        <label className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block">
                           Tanggal Pelaksanaan
                         </label>
                         <input
@@ -988,12 +1005,12 @@ export default function ResumeProjectPanel({
                               };
                             });
                           }}
-                          className="w-full px-3.5 py-2.5 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
+                          className="w-full px-3.5 py-2.5 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:opacity-50"
                         />
                       </div>
 
                       <div className="space-y-1.5">
-                        <label className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider block">
+                        <label className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block">
                           Catatan / Keterangan Khusus
                         </label>
                         <input
@@ -1011,7 +1028,7 @@ export default function ResumeProjectPanel({
                             });
                           }}
                           placeholder="Contoh: Telah dihadiri Kepala Desa dan perwakilan warga..."
-                          className="w-full px-3.5 py-2.5 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
+                          className="w-full px-3.5 py-2.5 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:opacity-50"
                         />
                       </div>
                     </div>
@@ -1021,7 +1038,7 @@ export default function ResumeProjectPanel({
                       <div className="space-y-3 bg-slate-900/40 p-4 rounded-2xl border border-white/5">
                         <div className="flex items-center justify-between">
                           <h5 className="text-xs font-bold text-white flex items-center gap-1.5 uppercase tracking-wider">
-                            <FileText className="w-4 h-4 text-indigo-400" />
+                            <FileText className="w-4 h-4 text-amber-400" />
                             Dokumen Berita Acara (PDF)
                           </h5>
                           {stageData.pdfUrl && (
@@ -1031,7 +1048,7 @@ export default function ResumeProjectPanel({
                                 title: `${currentStageConfig.fullName} - ${editingDesa.desaName}`,
                                 pdfUrl: stageData.pdfUrl
                               })}
-                              className="text-xs text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 cursor-pointer"
+                              className="text-xs text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1 cursor-pointer"
                             >
                               <ExternalLink className="w-3.5 h-3.5" /> Buka PDF
                             </button>
@@ -1039,9 +1056,9 @@ export default function ResumeProjectPanel({
                         </div>
 
                         {stageData.pdfUrl ? (
-                          <div className="flex items-center justify-between p-3 bg-slate-950/80 rounded-xl border border-indigo-500/20">
+                          <div className="flex items-center justify-between p-3 bg-slate-950/80 rounded-xl border border-amber-500/20">
                             <div className="flex items-center gap-2.5 overflow-hidden">
-                              <FileText className="w-5 h-5 text-indigo-400 shrink-0" />
+                              <FileText className="w-5 h-5 text-amber-400 shrink-0" />
                               <span className="text-xs font-bold text-white truncate">
                                 {stageData.pdfName || 'Dokumen_Berita_Acara.pdf'}
                               </span>
@@ -1070,8 +1087,8 @@ export default function ResumeProjectPanel({
                           </div>
                         ) : (
                           !isGuest ? (
-                            <label className="border-2 border-dashed border-white/10 hover:border-indigo-500/50 rounded-2xl p-6 flex flex-col items-center justify-center gap-2 text-center cursor-pointer transition-all bg-white/[0.01] hover:bg-indigo-500/5">
-                              <UploadCloud className="w-8 h-8 text-indigo-400" />
+                            <label className="border-2 border-dashed border-white/10 hover:border-amber-500/50 rounded-2xl p-6 flex flex-col items-center justify-center gap-2 text-center cursor-pointer transition-all bg-white/[0.01] hover:bg-amber-500/5">
+                              <UploadCloud className="w-8 h-8 text-amber-400" />
                               <span className="text-xs font-bold text-white">Unggah Berkas PDF</span>
                               <span className="text-[10px] text-slate-400">Klik atau seret file PDF berita acara ke sini</span>
                               <input
@@ -1199,7 +1216,7 @@ export default function ResumeProjectPanel({
                     type="button"
                     onClick={handleSaveVillageChanges}
                     disabled={isSaving}
-                    className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-indigo-600/25 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                    className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs font-bold transition-all shadow-lg shadow-amber-600/20 flex items-center gap-2 cursor-pointer disabled:opacity-50"
                   >
                     <Save className="w-4 h-4" />
                     <span>{isSaving ? 'Menyimpan...' : 'Simpan Perubahan'}</span>
@@ -1217,7 +1234,7 @@ export default function ResumeProjectPanel({
           <div className="glass-card rounded-3xl w-full max-w-5xl max-h-[92vh] flex flex-col border border-white/20 shadow-2xl overflow-hidden">
             <div className="p-4 border-b border-white/10 flex items-center justify-between bg-slate-900">
               <h4 className="text-sm font-extrabold text-white flex items-center gap-2">
-                <FileText className="w-4 h-4 text-indigo-400" />
+                <FileText className="w-4 h-4 text-amber-400" />
                 {previewModal.title}
               </h4>
               <button
@@ -1266,7 +1283,7 @@ export default function ResumeProjectPanel({
           <div className="glass-card rounded-3xl w-full max-w-md border border-white/20 shadow-2xl p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
-                <Plus className="w-4 h-4 text-indigo-400" />
+                <Plus className="w-4 h-4 text-amber-400" />
                 Tambah Desa Baru ke Resume
               </h3>
               <button
@@ -1279,7 +1296,7 @@ export default function ResumeProjectPanel({
 
             <form onSubmit={handleAddManualDesa} className="space-y-4">
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider block">
+                <label className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block">
                   Nama Desa
                 </label>
                 <input
@@ -1288,12 +1305,12 @@ export default function ResumeProjectPanel({
                   value={newDesaName}
                   onChange={(e) => setNewDesaName(e.target.value)}
                   placeholder="Contoh: SOBOREJO"
-                  className="w-full px-3.5 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 uppercase font-bold"
+                  className="w-full px-3.5 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 uppercase font-bold"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider block">
+                <label className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block">
                   Kecamatan (Opsional)
                 </label>
                 <input
@@ -1301,7 +1318,7 @@ export default function ResumeProjectPanel({
                   value={newKecamatan}
                   onChange={(e) => setNewKecamatan(e.target.value)}
                   placeholder="Contoh: SUKOREJO"
-                  className="w-full px-3.5 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 uppercase font-bold"
+                  className="w-full px-3.5 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 uppercase font-bold"
                 />
               </div>
 
@@ -1315,7 +1332,7 @@ export default function ResumeProjectPanel({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/25 cursor-pointer"
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs font-bold shadow-lg shadow-amber-600/20 cursor-pointer"
                 >
                   Tambahkan Desa
                 </button>

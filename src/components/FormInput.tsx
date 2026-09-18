@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { type LandRecord, createEmptyRecord } from '../types';
 import DocUpload from './DocUpload';
+import DeleteParcelModal from './DeleteParcelModal';
 
 const PREDEFINED_PENUTUP_LAHAN = [
   'SAWAH',
@@ -30,9 +31,11 @@ const PREDEFINED_JENIS_ALAS_HAK = [
 
 interface FormInputProps {
   records: LandRecord[];
+  role?: 'ADMIN' | 'FIELD' | 'QC' | 'GUEST' | null;
   onSave: (record: LandRecord, isEdit: boolean) => Promise<void>;
   accessToken?: string;
   onUpdateRecord?: (updatedRecord: LandRecord) => Promise<void>;
+  onDeleteRecord?: (record: LandRecord, adjustNextParcels: boolean) => Promise<void>;
   uploadsFolderId?: string;
   activeProjectName?: string;
   initialSelectedRecord?: LandRecord | null;
@@ -42,9 +45,11 @@ interface FormInputProps {
 
 export default function FormInput({ 
   records, 
+  role,
   onSave, 
   accessToken, 
   onUpdateRecord, 
+  onDeleteRecord,
   uploadsFolderId, 
   activeProjectName,
   initialSelectedRecord,
@@ -53,6 +58,7 @@ export default function FormInput({
 }: FormInputProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedEditRecord, setSelectedEditRecord] = useState<LandRecord | null>(null);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   
   // Search state for cascading dropdowns
   const [searchMethod, setSearchMethod] = useState<'dropdown' | 'manual'>('dropdown');
@@ -395,7 +401,7 @@ export default function FormInput({
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
           <div>
             <h2 className="text-md font-bold text-white tracking-tight flex items-center gap-1.5">
-              <Edit3 className="w-5 h-5 text-indigo-400" />
+              <Edit3 className="w-5 h-5 text-amber-400" />
               Edit Data Terdaftar (Search)
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
@@ -421,7 +427,7 @@ export default function FormInput({
             onClick={() => setSearchMethod('dropdown')}
             className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
               searchMethod === 'dropdown'
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+                ? 'bg-amber-500 text-slate-950 font-bold text-white shadow-md shadow-amber-600/20'
                 : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
             }`}
           >
@@ -433,7 +439,7 @@ export default function FormInput({
             onClick={() => setSearchMethod('manual')}
             className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
               searchMethod === 'manual'
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+                ? 'bg-amber-500 text-slate-950 font-bold text-white shadow-md shadow-amber-600/20'
                 : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
             }`}
           >
@@ -447,13 +453,13 @@ export default function FormInput({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* Select DESA */}
               <div>
-                <label className="block text-[10px] font-extrabold text-indigo-300 uppercase tracking-wider mb-1.5">
+                <label className="block text-[10px] font-extrabold text-amber-300 uppercase tracking-wider mb-1.5">
                   1. Pilih Desa
                 </label>
                 <select
                   value={selectedDesa}
                   onChange={(e) => setSelectedDesa(e.target.value)}
-                  className="w-full px-3 py-2.5 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-indigo-400 cursor-pointer"
+                  className="w-full px-3 py-2.5 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
                 >
                   <option value="">-- Pilih Desa --</option>
                   {uniqueDesas.map(desa => (
@@ -464,14 +470,14 @@ export default function FormInput({
 
               {/* Select SPAN */}
               <div>
-                <label className="block text-[10px] font-extrabold text-indigo-300 uppercase tracking-wider mb-1.5">
+                <label className="block text-[10px] font-extrabold text-amber-300 uppercase tracking-wider mb-1.5">
                   2. Pilih Span
                 </label>
                 <select
                   value={selectedSpan}
                   onChange={(e) => setSelectedSpan(e.target.value)}
                   disabled={!selectedDesa}
-                  className="w-full px-3 py-2.5 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  className="w-full px-3 py-2.5 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-amber-400 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   <option value="">{selectedDesa ? '-- Pilih Span --' : '-- Pilih Desa Dulu --'}</option>
                   {uniqueSpansForDesa.map(span => (
@@ -482,14 +488,14 @@ export default function FormInput({
 
               {/* Select NOBID */}
               <div>
-                <label className="block text-[10px] font-extrabold text-indigo-300 uppercase tracking-wider mb-1.5">
+                <label className="block text-[10px] font-extrabold text-amber-300 uppercase tracking-wider mb-1.5">
                   3. Pilih No. Bidang (NOBID)
                 </label>
                 <select
                   value={selectedNobid}
                   onChange={(e) => setSelectedNobid(e.target.value)}
                   disabled={!selectedSpan}
-                  className="w-full px-3 py-2.5 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  className="w-full px-3 py-2.5 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-amber-400 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   <option value="">{selectedSpan ? '-- Pilih No. Bidang --' : '-- Pilih Span Dulu --'}</option>
                   {uniqueNobidsForDesaAndSpan.map(nobid => (
@@ -501,10 +507,10 @@ export default function FormInput({
 
             {/* Matched Record Preview box */}
             {matchingRecord ? (
-              <div className="p-4 bg-indigo-500/10 border border-indigo-500/30 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fadeIn">
+              <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fadeIn">
                 <div className="space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-bold font-mono text-indigo-300 bg-indigo-500/20 px-2.5 py-0.5 rounded-lg border border-indigo-500/30">
+                    <span className="text-xs font-bold font-mono text-amber-300 bg-amber-500/20 px-2.5 py-0.5 rounded-lg border border-amber-500/30">
                       {matchingRecord.CODE}
                     </span>
                     <span className="text-sm font-extrabold text-slate-100">{matchingRecord.NAMA}</span>
@@ -522,7 +528,7 @@ export default function FormInput({
                     setSelectedSpan('');
                     setSelectedNobid('');
                   }}
-                  className="px-4.5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-white-keep font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/10 hover:shadow-indigo-600/20 active:scale-98 transition-all cursor-pointer border border-indigo-400/30 shrink-0"
+                  className="px-4.5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-white text-white-keep font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-md shadow-amber-600/10 hover:shadow-amber-600/20 active:scale-98 transition-all cursor-pointer border border-amber-400/30 shrink-0"
                 >
                   <Check className="w-4 h-4 text-emerald-300" />
                   Muat Data ke Formulir Edit
@@ -547,7 +553,7 @@ export default function FormInput({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Ketik CODE, NAMA, atau NIK..."
-                className="w-full pl-11 pr-4 py-2.5 bg-slate-900/50 border border-white/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/25 focus:border-indigo-500 transition-all text-white placeholder-slate-400"
+                className="w-full pl-11 pr-4 py-2.5 bg-slate-900/50 border border-white/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/25 focus:border-amber-500 transition-all text-white placeholder-slate-400"
               />
             </div>
 
@@ -558,10 +564,10 @@ export default function FormInput({
                     key={`${rec.ID_UNIK || rec.CODE || 'row'}-${idx}`}
                     type="button"
                     onClick={() => handleSelectForEdit(rec)}
-                    className="w-full text-left px-4 py-3 hover:bg-indigo-500/10 rounded-lg transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-white cursor-pointer"
+                    className="w-full text-left px-4 py-3 hover:bg-amber-500/10 rounded-lg transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-white cursor-pointer"
                   >
                     <div>
-                      <span className="text-xs font-bold font-mono text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-md">
+                      <span className="text-xs font-bold font-mono text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md">
                         {rec.CODE}
                       </span>
                       <span className="ml-3 text-sm font-semibold text-slate-200">{rec.NAMA}</span>
@@ -582,19 +588,35 @@ export default function FormInput({
       <div className="glass-card rounded-2xl shadow-xl overflow-hidden" id="sip_form_card">
         {/* Banner Indicator for Mode */}
         {selectedEditRecord ? (
-          <div className="bg-indigo-600/40 text-white px-6 py-4 flex items-center justify-between border-b border-white/10">
-            <div className="flex items-center gap-2">
-              <span className="p-1 rounded-md bg-white/10 text-white">
+          <div className="bg-amber-500/10 text-white px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-500/20">
+            <div className="flex items-center gap-2.5">
+              <span className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
                 <Edit3 className="w-4 h-4" />
               </span>
               <div>
-                <p className="text-[10px] font-medium text-indigo-200 uppercase tracking-wider">Mode Edit Data</p>
-                <h3 className="text-sm font-bold mt-0.5">Mengedit Data Lahan: <span className="font-mono text-amber-300">{selectedEditRecord.CODE}</span></h3>
+                <p className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">Mode Edit Data Lahan</p>
+                <h3 className="text-sm font-bold mt-0.5 text-white">
+                  Mengedit: <span className="font-mono text-amber-300 font-extrabold">{selectedEditRecord.CODE}</span>
+                  {selectedEditRecord.NAMA && <span className="text-slate-300 font-normal"> · {selectedEditRecord.NAMA}</span>}
+                </h3>
               </div>
             </div>
-            <span className="text-xs font-mono bg-white/10 px-2.5 py-1 rounded-md border border-white/10">
-              Baris spreadsheet akan otomatis diperbarui
-            </span>
+            <div className="flex items-center gap-2.5">
+              {role === 'ADMIN' && (
+                <button
+                  type="button"
+                  onClick={() => setIsDeleteModalOpen(true)}
+                  className="px-3.5 py-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-xl text-xs font-bold border border-rose-500/30 flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                  title="Hapus data bidang ini dari database (Khusus Admin)"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Hapus Bidang (Admin)</span>
+                </button>
+              )}
+              <span className="text-xs font-mono bg-white/10 px-2.5 py-1 rounded-md border border-white/10 hidden sm:inline-block">
+                Baris spreadsheet otomatis diperbarui
+              </span>
+            </div>
           </div>
         ) : (
           <div className="bg-slate-900/60 text-white px-6 py-4 flex items-center justify-between border-b border-white/10">
@@ -679,7 +701,7 @@ export default function FormInput({
                       }
                     }}
                     disabled={isRefreshingAuth || isSubmitting}
-                    className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-xl font-bold text-xs shadow-lg flex items-center justify-center gap-2 shrink-0 cursor-pointer disabled:opacity-50 transition-all"
+                    className="px-4 py-2 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-bold text-white rounded-xl font-bold text-xs shadow-lg flex items-center justify-center gap-2 shrink-0 cursor-pointer disabled:opacity-50 transition-all"
                   >
                     {isRefreshingAuth || isSubmitting ? (
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -725,7 +747,7 @@ export default function FormInput({
               onClick={() => setActiveTab('lahan_pemilik')}
               className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
                 activeTab === 'lahan_pemilik' 
-                  ? 'border-indigo-400 text-indigo-300 font-extrabold' 
+                  ? 'border-amber-400 text-amber-300 font-extrabold' 
                   : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -737,7 +759,7 @@ export default function FormInput({
               onClick={() => setActiveTab('alas_bangunan')}
               className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
                 activeTab === 'alas_bangunan' 
-                  ? 'border-indigo-400 text-indigo-300 font-extrabold' 
+                  ? 'border-amber-400 text-amber-300 font-extrabold' 
                   : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -749,7 +771,7 @@ export default function FormInput({
               onClick={() => setActiveTab('tanaman')}
               className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
                 activeTab === 'tanaman' 
-                  ? 'border-indigo-400 text-indigo-300 font-extrabold' 
+                  ? 'border-amber-400 text-amber-300 font-extrabold' 
                   : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -761,7 +783,7 @@ export default function FormInput({
               onClick={() => setActiveTab('administrasi')}
               className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
                 activeTab === 'administrasi' 
-                  ? 'border-indigo-400 text-indigo-300 font-extrabold' 
+                  ? 'border-amber-400 text-amber-300 font-extrabold' 
                   : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -773,7 +795,7 @@ export default function FormInput({
               onClick={() => setActiveTab('cetak_unggah')}
               className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
                 activeTab === 'cetak_unggah' 
-                  ? 'border-indigo-400 text-indigo-300 font-extrabold' 
+                  ? 'border-amber-400 text-amber-300 font-extrabold' 
                   : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -796,8 +818,8 @@ export default function FormInput({
                     value={formData.DESA}
                     onChange={(e) => handleChange('DESA', e.target.value)}
                     disabled={!!selectedEditRecord}
-                    className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
-                      errors.DESA ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-indigo-500'
+                    className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 ${
+                      errors.DESA ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-amber-500'
                     }`}
                     placeholder="Contoh: KUTA"
                   />
@@ -811,8 +833,8 @@ export default function FormInput({
                     value={formData.SPAN}
                     onChange={(e) => handleChange('SPAN', e.target.value)}
                     disabled={!!selectedEditRecord}
-                    className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
-                      errors.SPAN ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-indigo-500'
+                    className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 ${
+                      errors.SPAN ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-amber-500'
                     }`}
                     placeholder="Contoh: SPAN_A"
                   />
@@ -826,8 +848,8 @@ export default function FormInput({
                     value={formData.NOBID}
                     onChange={(e) => handleChange('NOBID', e.target.value)}
                     disabled={!!selectedEditRecord}
-                    className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
-                      errors.NOBID ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-indigo-500'
+                    className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 ${
+                      errors.NOBID ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-amber-500'
                     }`}
                     placeholder="Contoh: 0014"
                   />
@@ -842,8 +864,8 @@ export default function FormInput({
                     type="text"
                     value={formData.LUAS}
                     onChange={(e) => handleChange('LUAS', e.target.value)}
-                    className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
-                      errors.LUAS ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-indigo-500'
+                    className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 ${
+                      errors.LUAS ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-amber-500'
                     }`}
                     placeholder="Contoh: 1540"
                   />
@@ -868,7 +890,7 @@ export default function FormInput({
                         handleChange('PENUTUP_LAHAN', val);
                       }
                     }}
-                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white text-slate-800 font-medium"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                   >
                     <option value="SAWAH" className="text-slate-800 bg-white">SAWAH</option>
                     <option value="LADANG ATAU TEGALAN" className="text-slate-800 bg-white">LADANG ATAU TEGALAN</option>
@@ -883,7 +905,7 @@ export default function FormInput({
 
                   {(!PREDEFINED_PENUTUP_LAHAN.includes((formData.PENUTUP_LAHAN || '').toUpperCase())) && (
                     <div className="mt-2 animate-fadeIn">
-                      <label className="block text-[10px] font-bold text-indigo-600 uppercase mb-1">
+                      <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">
                         Ketik Spesifikasi Penutup Lahan (misal: MAKAM, TAMAN, FASUM):
                       </label>
                       <input
@@ -891,7 +913,7 @@ export default function FormInput({
                         value={formData.PENUTUP_LAHAN || ''}
                         onChange={(e) => handleChange('PENUTUP_LAHAN', e.target.value.toUpperCase())}
                         placeholder="Contoh: MAKAM"
-                        className="w-full px-3 py-2 border border-indigo-300 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/30 bg-indigo-50/30 text-indigo-900 placeholder:text-slate-400 placeholder:font-normal"
+                        className="w-full px-3 py-2 border border-amber-400/30 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500/30 bg-amber-500/10 text-amber-200 placeholder:text-slate-400 placeholder:font-normal"
                       />
                     </div>
                   )}
@@ -902,7 +924,7 @@ export default function FormInput({
                   <select
                     value={formData.STATUS_PENUTUP_LAHAN}
                     onChange={(e) => handleChange('STATUS_PENUTUP_LAHAN', e.target.value)}
-                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white text-slate-800 font-medium"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                   >
                     <option value="TANAH MASYARAKAT" className="text-slate-800 bg-white">TANAH MASYARAKAT</option>
                     <option value="KAWASAN HUTAN" className="text-slate-800 bg-white">KAWASAN HUTAN</option>
@@ -920,7 +942,7 @@ export default function FormInput({
                   <select
                     value={formData.STATUS_KEPEMILIKAN}
                     onChange={(e) => handleChange('STATUS_KEPEMILIKAN', e.target.value)}
-                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white text-slate-800 font-medium"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                   >
                     <option value="PEMILIK DIKETAHUI" className="text-slate-800 bg-white">PEMILIK DIKETAHUI</option>
                     <option value="PEMILIK TIDAK DIKETAHUI KEBERADAANNYA" className="text-slate-800 bg-white">PEMILIK TIDAK DIKETAHUI KEBERADAANNYA</option>
@@ -943,8 +965,8 @@ export default function FormInput({
                       type="text"
                       value={formData.NAMA}
                       onChange={(e) => handleChange('NAMA', e.target.value)}
-                      className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
-                        errors.NAMA ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-indigo-500'
+                      className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 ${
+                        errors.NAMA ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-amber-500'
                       }`}
                       placeholder="Contoh: AHMAD SUBAGJO"
                     />
@@ -958,8 +980,8 @@ export default function FormInput({
                       value={formData.NIK}
                       onChange={(e) => handleChange('NIK', e.target.value)}
                       maxLength={16}
-                      className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
-                        errors.NIK ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-indigo-500'
+                      className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 ${
+                        errors.NIK ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-amber-500'
                       }`}
                       placeholder="Contoh: 3501xxxxxxxxxxxx"
                     />
@@ -971,7 +993,7 @@ export default function FormInput({
                     <select
                       value={formData.JENIS_KELAMIN}
                       onChange={(e) => handleChange('JENIS_KELAMIN', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white text-slate-800 font-medium"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                     >
                       <option value="Laki-laki" className="text-slate-800 bg-white">Laki-laki</option>
                       <option value="Perempuan" className="text-slate-800 bg-white">Perempuan</option>
@@ -986,7 +1008,7 @@ export default function FormInput({
                       type="text"
                       value={formData.TTL}
                       onChange={(e) => handleChange('TTL', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                       placeholder="Contoh: Sleman, 12-05-1980"
                     />
                   </div>
@@ -997,7 +1019,7 @@ export default function FormInput({
                       type="text"
                       value={formData.PEKERJAAN}
                       onChange={(e) => handleChange('PEKERJAAN', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                       placeholder="Contoh: PETANI"
                     />
                   </div>
@@ -1013,7 +1035,7 @@ export default function FormInput({
                         type="text"
                         value={formData.ALAMAT_KTP_BARIS_1}
                         onChange={(e) => handleChange('ALAMAT_KTP_BARIS_1', e.target.value)}
-                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                         placeholder="RT 03 RW 01, Dusun Krajan"
                       />
                     </div>
@@ -1023,7 +1045,7 @@ export default function FormInput({
                         type="text"
                         value={formData.ALAMAT_KTP_BARIS_2}
                         onChange={(e) => handleChange('ALAMAT_KTP_BARIS_2', e.target.value)}
-                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                         placeholder="Desa Kuta"
                       />
                     </div>
@@ -1033,7 +1055,7 @@ export default function FormInput({
                         type="text"
                         value={formData.ALAMAT_KTP_BARIS_3}
                         onChange={(e) => handleChange('ALAMAT_KTP_BARIS_3', e.target.value)}
-                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                         placeholder="Kecamatan Baturaden"
                       />
                     </div>
@@ -1043,7 +1065,7 @@ export default function FormInput({
                         type="text"
                         value={formData.ALAMAT_KTP_BARIS_4}
                         onChange={(e) => handleChange('ALAMAT_KTP_BARIS_4', e.target.value)}
-                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                         placeholder="Banyumas, Jawa Tengah"
                       />
                     </div>
@@ -1063,7 +1085,7 @@ export default function FormInput({
                       type="text"
                       value={formData.BATAS_UTARA || ''}
                       onChange={(e) => handleChange('BATAS_UTARA', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white"
                       placeholder="Nama Tetangga / Fasilitas (contoh: Sri Suyani)"
                     />
                   </div>
@@ -1073,7 +1095,7 @@ export default function FormInput({
                       type="text"
                       value={formData.BATAS_SELATAN || ''}
                       onChange={(e) => handleChange('BATAS_SELATAN', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white"
                       placeholder="Nama Tetangga / Fasilitas (contoh: Sri Suyani)"
                     />
                   </div>
@@ -1083,7 +1105,7 @@ export default function FormInput({
                       type="text"
                       value={formData.BATAS_TIMUR || ''}
                       onChange={(e) => handleChange('BATAS_TIMUR', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white"
                       placeholder="Nama Tetangga / Fasilitas (contoh: Sri Suyani)"
                     />
                   </div>
@@ -1093,7 +1115,7 @@ export default function FormInput({
                       type="text"
                       value={formData.BATAS_BARAT || ''}
                       onChange={(e) => handleChange('BATAS_BARAT', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white"
                       placeholder="Nama Tetangga / Fasilitas (contoh: Tumirah)"
                     />
                   </div>
@@ -1101,11 +1123,24 @@ export default function FormInput({
               </div>
 
               {/* Navigation button */}
-              <div className="flex justify-end pt-2">
+              <div className="flex items-center justify-between pt-2">
+                <div>
+                  {role === 'ADMIN' && selectedEditRecord && (
+                    <button
+                      type="button"
+                      onClick={() => setIsDeleteModalOpen(true)}
+                      className="px-4 py-2 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-xl text-xs font-bold flex items-center gap-1.5 border border-rose-500/30 transition-all cursor-pointer"
+                      title="Hapus bidang data ini (Khusus Admin)"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Hapus Bidang</span>
+                    </button>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => setActiveTab('alas_bangunan')}
-                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold flex items-center gap-2 shadow-xs transition-all"
+                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-sm font-semibold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
                 >
                   Tab Berikutnya
                   <ArrowRight className="w-4 h-4" />
@@ -1142,7 +1177,7 @@ export default function FormInput({
                           handleChange('JENIS_ALAS_HAK', val);
                         }
                       }}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white text-slate-800 font-medium"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                     >
                       <option value="SERTIPIKAT HAK MILIK" className="text-slate-800 bg-white">SERTIPIKAT HAK MILIK</option>
                       <option value="SERTIPIKAT HAK GUNA BANGUNAN" className="text-slate-800 bg-white">SERTIPIKAT HAK GUNA BANGUNAN</option>
@@ -1157,7 +1192,7 @@ export default function FormInput({
 
                     {(!PREDEFINED_JENIS_ALAS_HAK.includes((formData.JENIS_ALAS_HAK || '').toUpperCase())) && (
                       <div className="mt-2 animate-fadeIn">
-                        <label className="block text-[10px] font-bold text-indigo-600 uppercase mb-1">
+                        <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">
                           Ketik Jenis Alas Hak Lainnya:
                         </label>
                         <input
@@ -1165,7 +1200,7 @@ export default function FormInput({
                           value={formData.JENIS_ALAS_HAK || ''}
                           onChange={(e) => handleChange('JENIS_ALAS_HAK', e.target.value.toUpperCase())}
                           placeholder="Contoh: KETERANGAN DESA / GIRIK"
-                          className="w-full px-3 py-2 border border-indigo-300 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/30 bg-indigo-50/30 text-indigo-900 placeholder:text-slate-400 placeholder:font-normal"
+                          className="w-full px-3 py-2 border border-amber-400/30 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500/30 bg-amber-500/10 text-amber-200 placeholder:text-slate-400 placeholder:font-normal"
                         />
                       </div>
                     )}
@@ -1177,7 +1212,7 @@ export default function FormInput({
                       type="text"
                       value={formData.NOMER_HAK}
                       onChange={(e) => handleChange('NOMER_HAK', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 text-slate-800"
                       placeholder="Contoh: No. 1205"
                     />
                   </div>
@@ -1188,7 +1223,7 @@ export default function FormInput({
                       type="text"
                       value={formData.NAMA_ALAS_HAK}
                       onChange={(e) => handleChange('NAMA_ALAS_HAK', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 text-slate-800"
                       placeholder="Contoh: H. SUBUR"
                     />
                   </div>
@@ -1199,7 +1234,7 @@ export default function FormInput({
                       type="text"
                       value={formData.LUAS_YANG_ADA_PADA_ALAS_HAK}
                       onChange={(e) => handleChange('LUAS_YANG_ADA_PADA_ALAS_HAK', e.target.value)}
-                      className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800 ${
+                      className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 text-slate-800 ${
                         errors.LUAS_YANG_ADA_PADA_ALAS_HAK ? 'border-rose-300 font-medium' : 'border-slate-200 font-medium'
                       }`}
                       placeholder="Contoh: 1500"
@@ -1212,7 +1247,7 @@ export default function FormInput({
                     <select
                       value={formData.JENIS_PERALIHAN_HAK || 'JUAL-BELI'}
                       onChange={(e) => handleChange('JENIS_PERALIHAN_HAK', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white font-medium text-slate-800"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white font-medium text-slate-800"
                     >
                       <option value="SESUAI" className="text-slate-800 bg-white">SESUAI</option>
                       <option value="JUAL-BELI" className="text-slate-800 bg-white">JUAL-BELI</option>
@@ -1232,7 +1267,7 @@ export default function FormInput({
               <div className="space-y-4">
                 <div className="border-b border-white/10 pb-2">
                   <h3 className="text-sm font-bold text-slate-100 tracking-tight flex items-center gap-1.5">
-                    <Home className="w-4 h-4 text-indigo-400" />
+                    <Home className="w-4 h-4 text-amber-400" />
                     Data Bangunan Di Atas Lahan (Maksimal 8 Bangunan)
                   </h3>
                   <p className="text-xs text-slate-400 mt-0.5">Isi rincian bangunan yang berdiri di atas lahan ini.</p>
@@ -1242,7 +1277,7 @@ export default function FormInput({
                   {Array.from({ length: activeBuildingsCount }).map((_, i) => {
                     const b = formData.buildings?.[i] || { luas: '', bentuk: '', jenis: '' };
                     return (
-                      <div key={i} className="p-5 rounded-2xl border border-indigo-500/20 bg-slate-900/60 relative space-y-4 shadow-lg shadow-black/10">
+                      <div key={i} className="p-5 rounded-2xl border border-amber-500/20 bg-slate-900/60 relative space-y-4 shadow-lg shadow-black/10">
                         {/* Close button to reset */}
                         <button
                           type="button"
@@ -1262,7 +1297,7 @@ export default function FormInput({
                               type="text"
                               value={b.jenis}
                               onChange={(e) => handleBuildingChange(i, 'jenis', e.target.value)}
-                              className="w-full px-3 py-2 bg-slate-950 border border-white/20 rounded-xl text-xs focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/30 font-semibold text-white placeholder:text-slate-500"
+                              className="w-full px-3 py-2 bg-slate-950 border border-white/20 rounded-xl text-xs focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 font-semibold text-white placeholder:text-slate-500"
                               placeholder="Contoh: RUMAH / TOKO / GUDANG"
                             />
                           </div>
@@ -1275,7 +1310,7 @@ export default function FormInput({
                               type="text"
                               value={b.bentuk}
                               onChange={(e) => handleBuildingChange(i, 'bentuk', e.target.value)}
-                              className="w-full px-3 py-2 bg-slate-950 border border-white/20 rounded-xl text-xs focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/30 font-semibold text-white placeholder:text-slate-500"
+                              className="w-full px-3 py-2 bg-slate-950 border border-white/20 rounded-xl text-xs focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 font-semibold text-white placeholder:text-slate-500"
                               placeholder="Contoh: PERMANEN / SEMI PERMANEN"
                             />
                           </div>
@@ -1289,7 +1324,7 @@ export default function FormInput({
                               value={b.luas}
                               onChange={(e) => handleBuildingChange(i, 'luas', e.target.value)}
                               className={`w-full px-3 py-2 bg-slate-950 border rounded-xl text-xs focus:outline-none focus:ring-1 font-semibold text-white placeholder:text-slate-500 ${
-                                errors[`building_luas_${i}`] ? 'border-rose-500/40 bg-rose-500/10 focus:border-rose-500 focus:ring-rose-500/30' : 'border-white/20 focus:border-indigo-400 focus:ring-indigo-400/30'
+                                errors[`building_luas_${i}`] ? 'border-rose-500/40 bg-rose-500/10 focus:border-rose-500 focus:ring-rose-500/30' : 'border-white/20 focus:border-amber-400 focus:ring-amber-400/30'
                               }`}
                               placeholder="Contoh: 120"
                             />
@@ -1303,7 +1338,7 @@ export default function FormInput({
                     <button
                       type="button"
                       onClick={() => setActiveBuildingsCount(prev => prev + 1)}
-                      className="w-full py-3 bg-indigo-500/10 hover:bg-indigo-500/15 text-indigo-300 rounded-xl text-xs font-extrabold border border-dashed border-indigo-500/30 hover:border-indigo-500/40 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="w-full py-3 bg-amber-500/10 hover:bg-amber-500/15 text-amber-300 rounded-xl text-xs font-extrabold border border-dashed border-amber-500/30 hover:border-amber-500/40 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       <Plus className="w-4 h-4" />
                       Tambah Kolom Bangunan (Maksimal 8 Bangunan)
@@ -1313,7 +1348,7 @@ export default function FormInput({
               </div>
 
               {/* Navigation buttons */}
-              <div className="flex justify-between pt-2">
+              <div className="flex items-center justify-between pt-2">
                 <button
                   type="button"
                   onClick={() => setActiveTab('lahan_pemilik')}
@@ -1322,14 +1357,27 @@ export default function FormInput({
                   <ArrowLeft className="w-4 h-4" />
                   Sebelumnya
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('tanaman')}
-                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
-                >
-                  Tab Berikutnya
-                  <ArrowRight className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-3">
+                  {role === 'ADMIN' && selectedEditRecord && (
+                    <button
+                      type="button"
+                      onClick={() => setIsDeleteModalOpen(true)}
+                      className="px-4 py-2 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-xl text-xs font-bold flex items-center gap-1.5 border border-rose-500/30 transition-all cursor-pointer"
+                      title="Hapus bidang data ini (Khusus Admin)"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Hapus Bidang</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('tanaman')}
+                    className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-sm font-semibold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
+                  >
+                    Tab Berikutnya
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1460,7 +1508,7 @@ export default function FormInput({
               </div>
 
               {/* Navigation buttons */}
-              <div className="flex justify-between pt-2">
+              <div className="flex items-center justify-between pt-2">
                 <button
                   type="button"
                   onClick={() => setActiveTab('alas_bangunan')}
@@ -1469,14 +1517,27 @@ export default function FormInput({
                   <ArrowLeft className="w-4 h-4" />
                   Sebelumnya
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('administrasi')}
-                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
-                >
-                  Tab Berikutnya
-                  <ArrowRight className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-3">
+                  {role === 'ADMIN' && selectedEditRecord && (
+                    <button
+                      type="button"
+                      onClick={() => setIsDeleteModalOpen(true)}
+                      className="px-4 py-2 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-xl text-xs font-bold flex items-center gap-1.5 border border-rose-500/30 transition-all cursor-pointer"
+                      title="Hapus bidang data ini (Khusus Admin)"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Hapus Bidang</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('administrasi')}
+                    className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-sm font-semibold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
+                  >
+                    Tab Berikutnya
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1496,7 +1557,7 @@ export default function FormInput({
                       type="text"
                       value={formData.STATUS_DESA}
                       onChange={(e) => handleChange('STATUS_DESA', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                       placeholder="Contoh: AKTIF / PERSUASIF"
                     />
                   </div>
@@ -1507,7 +1568,7 @@ export default function FormInput({
                       type="text"
                       value={formData.STATUS_KEPALA}
                       onChange={(e) => handleChange('STATUS_KEPALA', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                       placeholder="Contoh: PLT / DEFINITIF"
                     />
                   </div>
@@ -1518,7 +1579,7 @@ export default function FormInput({
                       type="text"
                       value={formData.NAMA_KADES}
                       onChange={(e) => handleChange('NAMA_KADES', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                       placeholder="Contoh: SUPRAYITNO"
                     />
                   </div>
@@ -1531,7 +1592,7 @@ export default function FormInput({
                       type="text"
                       value={formData.NAMA_SAKSI_1}
                       onChange={(e) => handleChange('NAMA_SAKSI_1', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                       placeholder="Contoh: SAKSI_A"
                     />
                   </div>
@@ -1542,7 +1603,7 @@ export default function FormInput({
                       type="text"
                       value={formData.NAMA_SAKSI_2}
                       onChange={(e) => handleChange('NAMA_SAKSI_2', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                       placeholder="Contoh: SAKSI_B"
                     />
                   </div>
@@ -1555,7 +1616,7 @@ export default function FormInput({
                       type="text"
                       value={formData.nama_tim_1}
                       onChange={(e) => handleChange('nama_tim_1', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                       placeholder="Contoh: TIM_1"
                     />
                   </div>
@@ -1566,7 +1627,7 @@ export default function FormInput({
                       type="text"
                       value={formData.nama_tim_2}
                       onChange={(e) => handleChange('nama_tim_2', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                       placeholder="Contoh: TIM_2"
                     />
                   </div>
@@ -1586,7 +1647,7 @@ export default function FormInput({
                       type="text"
                       value={formData.KECAMATAN}
                       onChange={(e) => handleChange('KECAMATAN', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                       placeholder="Contoh: BATURADEN"
                     />
                   </div>
@@ -1597,7 +1658,7 @@ export default function FormInput({
                       type="text"
                       value={formData.KABUPATEN}
                       onChange={(e) => handleChange('KABUPATEN', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                       placeholder="Contoh: BANYUMAS"
                     />
                   </div>
@@ -1608,7 +1669,7 @@ export default function FormInput({
                       type="date"
                       value={formData.TANGGAL_PELAKSANAAN}
                       onChange={(e) => handleChange('TANGGAL_PELAKSANAAN', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                     />
                   </div>
                 </div>
@@ -1619,7 +1680,7 @@ export default function FormInput({
                     <select
                       value={formData.KONFIRMASI_BPN || 'TIDAK'}
                       onChange={(e) => handleChange('KONFIRMASI_BPN', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white text-slate-800 font-medium"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                     >
                       <option value="IYA" className="text-slate-800 bg-white">IYA</option>
                       <option value="TIDAK" className="text-slate-800 bg-white">TIDAK</option>
@@ -1631,7 +1692,7 @@ export default function FormInput({
                     <select
                       value={formData.PROGRES_PEMBERKASAN || 'BELUM SELESAI'}
                       onChange={(e) => handleChange('PROGRES_PEMBERKASAN', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white text-slate-800 font-medium"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                     >
                       <option value="BELUM SELESAI" className="text-slate-800 bg-white">BELUM SELESAI</option>
                       <option value="SELESAI" className="text-slate-800 bg-white">SELESAI</option>
@@ -1644,7 +1705,7 @@ export default function FormInput({
                     <select
                       value={formData.PROGRES_UPLOAD_TRABAS || 'BELUM'}
                       onChange={(e) => handleChange('PROGRES_UPLOAD_TRABAS', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white text-slate-800 font-medium"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                     >
                       <option value="SUDAH" className="text-slate-800 bg-white">SUDAH</option>
                       <option value="BELUM" className="text-slate-800 bg-white">BELUM</option>
@@ -1658,14 +1719,14 @@ export default function FormInput({
                     value={formData.KETERANGAN}
                     onChange={(e) => handleChange('KETERANGAN', e.target.value)}
                     rows={2}
-                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                     placeholder="Masukkan catatan tambahan mengenai kondisi lahan atau pemilik..."
                   />
                 </div>
               </div>
 
               {/* Navigation and Submit Buttons */}
-              <div className="flex justify-between pt-2">
+              <div className="flex items-center justify-between pt-2">
                 <button
                   type="button"
                   onClick={() => setActiveTab('tanaman')}
@@ -1674,23 +1735,36 @@ export default function FormInput({
                   <ArrowLeft className="w-4 h-4" />
                   Sebelumnya
                 </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold flex items-center gap-2 shadow-sm transition-all disabled:opacity-50"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                      Menyimpan...
-                    </>
-                  ) : (
-                    <>
-                      <Save className="w-4 h-4" />
-                      {selectedEditRecord ? 'Simpan Perubahan Lahan' : 'Daftarkan Lahan Baru'}
-                    </>
+                <div className="flex items-center gap-3">
+                  {role === 'ADMIN' && selectedEditRecord && (
+                    <button
+                      type="button"
+                      onClick={() => setIsDeleteModalOpen(true)}
+                      className="px-4 py-2.5 bg-rose-600/10 hover:bg-rose-600 text-rose-600 hover:text-white rounded-xl text-sm font-bold flex items-center gap-2 border border-rose-300 hover:border-rose-600 transition-all cursor-pointer"
+                      title="Hapus data bidang ini dari basis data (Khusus Admin)"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>Hapus Bidang</span>
+                    </button>
                   )}
-                </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold flex items-center gap-2 shadow-sm transition-all disabled:opacity-50"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        Menyimpan...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-4 h-4" />
+                        {selectedEditRecord ? 'Simpan Perubahan Lahan' : 'Daftarkan Lahan Baru'}
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1709,7 +1783,7 @@ export default function FormInput({
               />
             ) : (
               <div className="p-8 bg-slate-900/50 border border-white/5 rounded-2xl text-center space-y-4">
-                <ShieldAlert className="w-8 h-8 text-indigo-400 mx-auto" />
+                <ShieldAlert className="w-8 h-8 text-amber-400 mx-auto" />
                 <h3 className="text-sm font-bold text-white">Koneksi Google Drive Belum Aktif</h3>
                 <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
                   Hubungkan Google Drive Anda menggunakan tombol <strong>Hubungkan Drive</strong> di bagian atas layar untuk mengaktifkan cetak dokumen resmi dan unggah lampiran berkas langsung ke Google Drive.
@@ -1718,7 +1792,7 @@ export default function FormInput({
             )
           ) : (
             <div className="p-10 bg-slate-900/40 rounded-2xl border border-white/5 text-center space-y-4">
-              <ShieldAlert className="w-8 h-8 text-indigo-400 mx-auto" />
+              <ShieldAlert className="w-8 h-8 text-amber-400 mx-auto" />
               <h3 className="text-sm font-bold text-white">Data Lahan Belum Dipilih / Dimuat</h3>
               <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
                 Silakan cari dan muat data lahan terlebih dahulu menggunakan panel pencarian di bagian atas, atau simpan data lahan baru untuk mencetak Formulir Inventarisasi resmi (PDF) atau mengunggah lampiran berkas ke Google Drive.
@@ -1726,6 +1800,24 @@ export default function FormInput({
             </div>
           )}
         </div>
+      )}
+
+      {/* MODAL HAPUS BIDANG (KHUSUS ADMIN) */}
+      {isDeleteModalOpen && selectedEditRecord && (
+        <DeleteParcelModal
+          isOpen={isDeleteModalOpen}
+          onClose={() => setIsDeleteModalOpen(false)}
+          targetRecord={selectedEditRecord}
+          allRecords={records}
+          onConfirmDelete={async (updatedRecords, logMsg) => {
+            const target = selectedEditRecord;
+            setIsDeleteModalOpen(false);
+            handleCancelEdit();
+            if (onDeleteRecord) {
+              await onDeleteRecord(target, true);
+            }
+          }}
+        />
       )}
     </div>
   </div>

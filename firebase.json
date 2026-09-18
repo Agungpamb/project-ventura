@@ -9,6 +9,13 @@
       "**/.*",
       "**/node_modules/**"
     ],
+    "redirects": [
+      {
+        "source": "/:path*",
+        "destination": "https://project-ventura.vercel.app/:path*",
+        "type": 301
+      }
+    ],
     "rewrites": [
       {
         "source": "**",

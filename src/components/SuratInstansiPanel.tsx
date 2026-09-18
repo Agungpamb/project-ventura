@@ -79,7 +79,7 @@ export default function SuratInstansiPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | AgencyLetterStatus>('ALL');
   const [selectedInstansiFilter, setSelectedInstansiFilter] = useState<string>('ALL');
-  const [tableHeightMode, setTableHeightMode] = useState<'compact' | 'normal' | 'full'>('full');
+  const [tableHeightMode, setTableHeightMode] = useState<'compact' | 'standard' | 'tall'>('standard');
 
   // Deletion Confirmation Modal State
   const [letterToDelete, setLetterToDelete] = useState<AgencyLetter | null>(null);
@@ -611,70 +611,90 @@ export default function SuratInstansiPanel({
               Selesai
             </button>
           </div>
-
-          {/* Height Switcher */}
-          <div className="flex items-center gap-1 bg-slate-900/80 p-1 rounded-xl border border-white/10 text-xs">
-            <button
-              onClick={() => setTableHeightMode('compact')}
-              className={`px-2 py-1 rounded-lg font-bold text-[10px] cursor-pointer ${
-                tableHeightMode === 'compact' ? 'bg-white/20 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Ringkas
-            </button>
-            <button
-              onClick={() => setTableHeightMode('normal')}
-              className={`px-2 py-1 rounded-lg font-bold text-[10px] cursor-pointer ${
-                tableHeightMode === 'normal' ? 'bg-white/20 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Standar
-            </button>
-            <button
-              onClick={() => setTableHeightMode('full')}
-              className={`px-2 py-1 rounded-lg font-bold text-[10px] cursor-pointer ${
-                tableHeightMode === 'full' ? 'bg-white/20 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Semua
-            </button>
-          </div>
         </div>
       </div>
 
-      {/* 3. Table Surat Instansi View */}
-      <div className="glass-card rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
-        {/* Horizontal scroll hint bar */}
-        <div className="bg-slate-900/80 px-4 py-2.5 border-b border-white/10 flex items-center justify-between text-[11px] text-slate-300">
-          <div className="flex items-center gap-2">
+      {/* 3. Table Surat Instansi View (Self-contained scroll container like 3.1) */}
+      <div className="glass-card rounded-2xl border border-white/10 shadow-xl overflow-hidden flex flex-col">
+        {/* Scroll Control Bar */}
+        <div className="px-4 py-2.5 bg-slate-900/90 border-b border-white/10 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 text-slate-400">
             <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse shrink-0"></span>
-            <span>
-              <strong>Tip Scroll:</strong> {tableHeightMode === 'full' ? 'Tabel ditampilkan penuh (halaman bebas di-scroll ke bawah). Geser ke samping untuk melihat kolom lengkap.' : 'Geser kursor atau touchpad ke samping untuk melihat seluruh kolom status & catatan.'}
+            <span className="text-[11px] font-bold text-slate-300">Tampilan Scroll:</span>
+            <span className="text-[10px] text-slate-400 font-mono">
+              {tableHeightMode === 'tall' 
+                ? 'Layar Penuh (Scroll mandiri luas viewport)' 
+                : 'Scroll mandiri dalam tabel (halaman tidak memanjang)'}
+            </span>
+            <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono hidden md:inline">
+              Shift + Scroll untuk geser samping
             </span>
           </div>
-          <span className="font-mono text-sky-400 font-bold shrink-0">{filteredLetters.length} Surat Terdata</span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sky-400 font-bold text-[11px] mr-1 hidden sm:inline">
+              {filteredLetters.length} Surat Terdata
+            </span>
+            <div className="flex items-center gap-1.5 bg-slate-950/80 p-1 rounded-xl border border-white/10">
+              <button
+                type="button"
+                onClick={() => setTableHeightMode('compact')}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                  tableHeightMode === 'compact'
+                    ? 'bg-sky-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Tinggi Ringkas (380px)"
+              >
+                Ringkas (380px)
+              </button>
+              <button
+                type="button"
+                onClick={() => setTableHeightMode('standard')}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                  tableHeightMode === 'standard'
+                    ? 'bg-sky-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Tinggi Standar (550px)"
+              >
+                Standar (550px)
+              </button>
+              <button
+                type="button"
+                onClick={() => setTableHeightMode('tall')}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                  tableHeightMode === 'tall'
+                    ? 'bg-sky-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Layar Penuh"
+              >
+                Layar Penuh
+              </button>
+            </div>
+          </div>
         </div>
 
         <div 
-          className="table-scroll-container overflow-x-auto transition-all scroll-smooth"
-          style={{
-            maxHeight: tableHeightMode === 'compact' ? '460px' : tableHeightMode === 'normal' ? '680px' : 'none',
-            overflowY: tableHeightMode === 'full' ? 'visible' : 'auto',
-            overscrollBehavior: 'auto',
-            WebkitOverflowScrolling: 'touch'
-          }}
+          className={`table-scroll-container overflow-auto scrollbar-thin bg-slate-950/80 ${
+            tableHeightMode === 'compact'
+              ? 'max-h-[380px]'
+              : tableHeightMode === 'standard'
+              ? 'max-h-[550px]'
+              : 'max-h-[calc(100vh-250px)]'
+          }`}
         >
           <table className="w-full text-left border-collapse min-w-[1150px]">
-            <thead className="sticky top-0 z-20 bg-slate-950/95 backdrop-blur-md border-b border-white/10 text-[10px] font-extrabold text-slate-300 uppercase tracking-wider shadow-sm">
-              <tr>
-                <th className="py-3.5 px-4 w-12 text-center">No</th>
-                <th className="py-3.5 px-4 w-64">Instansi Tujuan & PIC</th>
-                <th className="py-3.5 px-4 w-52">No. Surat & Tanggal</th>
-                <th className="py-3.5 px-4">Perihal Surat</th>
-                <th className="py-3.5 px-3 w-36 text-center">Dokumen & Bukti</th>
-                <th className="py-3.5 px-3 w-36 text-center">Status</th>
-                <th className="py-3.5 px-4 w-64">Catatan Tindak Lanjut</th>
-                <th className="py-3.5 px-4 w-28 text-center">Aksi</th>
+            <thead className="sticky top-0 z-20 bg-slate-950/95 backdrop-blur border-b border-white/10 shadow-md">
+              <tr className="bg-slate-950/90 border-b border-white/10 text-[10px] font-black uppercase tracking-wider text-slate-400 font-mono">
+                <th className="py-3 px-3 w-12 text-center">No</th>
+                <th className="py-3 px-3 w-64">Instansi Tujuan & PIC</th>
+                <th className="py-3 px-3 w-52">No. Surat & Tanggal</th>
+                <th className="py-3 px-3">Perihal Surat</th>
+                <th className="py-3 px-3 w-36 text-center">Dokumen & Bukti</th>
+                <th className="py-3 px-3 w-36 text-center">Status</th>
+                <th className="py-3 px-3 w-64">Catatan Tindak Lanjut</th>
+                <th className="py-3 px-4 w-28 text-center">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5 text-xs font-medium">

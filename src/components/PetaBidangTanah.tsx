@@ -4,8 +4,9 @@ import { toPng } from 'html-to-image';
 import { 
   Map as MapIcon, Layers, Compass, RotateCw, Printer, Search, 
   ChevronDown, Info, Shield, CheckCircle2, FileText, ArrowUp, Download, Image as ImageIcon, Loader2,
-  Edit3, ExternalLink
+  Edit3, ExternalLink, Trash2
 } from 'lucide-react';
+import DeleteParcelModal from "./DeleteParcelModal";
 import type { LandRecord } from '../types';
 
 interface LoadedGeoJSON {
@@ -33,6 +34,7 @@ interface PetaBidangTanahProps {
   activeProjectName?: string;
   activeProjectId?: string;
   onNavigateToInput?: (record: LandRecord) => void;
+  onDeleteRecord?: (record: LandRecord, adjustNextParcels: boolean) => Promise<void>;
 }
 
 // Utility functions
@@ -85,7 +87,8 @@ export default function PetaBidangTanah({
   role,
   activeProjectName,
   activeProjectId,
-  onNavigateToInput
+  onNavigateToInput,
+  onDeleteRecord
 }: PetaBidangTanahProps) {
   // Map Container Refs
   const topMapContainerRef = useRef<HTMLDivElement | null>(null);
@@ -97,6 +100,7 @@ export default function PetaBidangTanah({
   const isSyncingRef = useRef(false);
 
   // State for Custom Rotation Offset, Dynamic Scale & PNG Exporting
+  const [recordToDelete, setRecordToDelete] = useState<LandRecord | null>(null);
   const [selectedDesa, setSelectedDesa] = useState<string>('');
   const [selectedSpan, setSelectedSpan] = useState<string>('');
   const [rotasiOffset, setRotasiOffset] = useState<number>(0); // Custom +/- rotation adjustment (UserRotationOffset)
@@ -944,7 +948,7 @@ export default function PetaBidangTanah({
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <span className="px-2.5 py-0.5 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full text-[11px] font-bold">
+              <span className="px-2.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full text-[11px] font-bold">
                 1.3. Peta Bidang Tanah
               </span>
               <span className="px-2.5 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full text-[11px] font-bold">
@@ -952,11 +956,11 @@ export default function PetaBidangTanah({
               </span>
             </div>
             <h1 className="text-xl font-black text-white tracking-tight mt-1 flex items-center gap-2">
-              <Layers className="w-5 h-5 text-indigo-400" />
+              <Layers className="w-5 h-5 text-amber-400" />
               PETA BIDANG TANAH PER SPAN & DESA
             </h1>
             <p className="text-xs text-slate-400 mt-0.5">
-              Visualisasi 2 muka peta (Sketsa biasa & Citra Satelit/Drone) berbasis kode kombinasi <span className="font-mono text-indigo-300 font-bold">DESA_SPAN</span>
+              Visualisasi 2 muka peta (Sketsa biasa & Citra Satelit/Drone) berbasis kode kombinasi <span className="font-mono text-amber-300 font-bold">DESA_SPAN</span>
             </p>
           </div>
 
@@ -998,7 +1002,7 @@ export default function PetaBidangTanah({
             <select
               value={selectedDesa}
               onChange={(e) => setSelectedDesa(e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-indigo-500"
+              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-amber-500"
             >
               {desaOptions.map(d => (
                 <option key={d} value={d}>Desa {d}</option>
@@ -1014,7 +1018,7 @@ export default function PetaBidangTanah({
             <select
               value={selectedSpan}
               onChange={(e) => setSelectedSpan(e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-indigo-500"
+              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-amber-500"
             >
               {spanOptions.map(s => (
                 <option key={s} value={s}>Span {s}</option>
@@ -1027,9 +1031,9 @@ export default function PetaBidangTanah({
             <label className="text-[11px] font-bold text-slate-300 block mb-1">
               Kode Identifikasi Span & Desa:
             </label>
-            <div className="w-full bg-indigo-950/60 border border-indigo-500/30 rounded-xl px-3 py-2 text-xs font-mono font-bold text-indigo-300 truncate flex items-center justify-between">
+            <div className="w-full bg-amber-950/40 border border-amber-500/30 rounded-xl px-3 py-2 text-xs font-mono font-bold text-amber-300 truncate flex items-center justify-between">
               <span>📍 {desaSpanCode}</span>
-              <span className="text-[10px] bg-indigo-500/20 px-1.5 py-0.5 rounded text-indigo-200">AUTO</span>
+              <span className="text-[10px] bg-amber-500/20 px-1.5 py-0.5 rounded text-amber-200">AUTO</span>
             </div>
           </div>
 
@@ -1062,7 +1066,7 @@ export default function PetaBidangTanah({
                   type="number"
                   value={rotasiOffset}
                   onChange={(e) => setRotasiOffset(Number(e.target.value) || 0)}
-                  className="w-14 bg-slate-800 border border-slate-700 rounded-lg px-1.5 py-1 text-xs text-center font-bold text-white focus:outline-none focus:border-indigo-500"
+                  className="w-14 bg-slate-800 border border-slate-700 rounded-lg px-1.5 py-1 text-xs text-center font-bold text-white focus:outline-none focus:border-amber-500"
                   placeholder="Offset"
                 />
               </div>
@@ -1108,7 +1112,7 @@ export default function PetaBidangTanah({
               PETA LOKASI BIDANG TANAH & KORIDOR JALUR TRANSMISI
             </h2>
             <p className="text-xs font-semibold text-slate-600">
-              DESA: <span className="font-bold text-slate-900">{selectedDesa || '-'}</span> | SPAN: <span className="font-bold text-slate-900">{selectedSpan || '-'}</span> | KODE: <span className="font-mono text-indigo-700 font-bold">{desaSpanCode}</span>
+              DESA: <span className="font-bold text-slate-900">{selectedDesa || '-'}</span> | SPAN: <span className="font-bold text-slate-900">{selectedSpan || '-'}</span> | KODE: <span className="font-mono text-amber-600 font-bold">{desaSpanCode}</span>
             </p>
           </div>
           <div className="text-right">
@@ -1123,7 +1127,7 @@ export default function PetaBidangTanah({
           <div className="border-2 border-slate-800 rounded-xl overflow-hidden bg-slate-50">
             <div className="bg-slate-100 px-3 py-1.5 border-b border-slate-800 flex items-center justify-between">
               <span className="text-xs font-extrabold uppercase tracking-wide text-slate-800 flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5 text-indigo-600" />
+                <FileText className="w-3.5 h-3.5 text-amber-400" />
                 MUKA PETA 1: SKETSA LAYOUT VEKTOR (DESA {selectedDesa})
               </span>
               <span className="text-[10px] font-mono text-slate-500">Sket Kontur & Batas Tanah</span>
@@ -1293,18 +1297,33 @@ export default function PetaBidangTanah({
                       <tr 
                         key={r.ID_UNIK || `parent-${i}`} 
                         onClick={() => onNavigateToInput && onNavigateToInput(r)}
-                        className="hover:bg-indigo-50/90 transition font-medium cursor-pointer group"
+                        className="hover:bg-amber-50/70 transition font-medium cursor-pointer group"
                         title="Klik untuk langsung mengedit bidang tanah ini di menu Input & Edit Lahan"
                       >
-                        <td className="py-2 px-3 border-r border-slate-300 text-center font-bold bg-slate-50 group-hover:bg-indigo-100 group-hover:text-indigo-900 transition">
+                        <td className="py-2 px-3 border-r border-slate-300 text-center font-bold bg-slate-50 group-hover:bg-amber-100 group-hover:text-amber-900 transition">
                           {parentNoBid}
                         </td>
-                        <td className="py-2 px-3 border-r border-slate-300 font-bold text-slate-900 uppercase group-hover:text-indigo-700 transition">
+                        <td className="py-2 px-3 border-r border-slate-300 font-bold text-slate-900 uppercase group-hover:text-amber-600 transition">
                           <div className="flex items-center justify-between gap-2">
                             <span>{r.NAMA || '-'}</span>
-                            <span className="opacity-0 group-hover:opacity-100 bg-indigo-600 text-white text-[9px] px-2 py-0.5 rounded font-sans font-bold flex items-center gap-1 shadow-sm shrink-0 transition-opacity">
-                              <Edit3 className="w-2.5 h-2.5" /> Edit Lahan
-                            </span>
+                            <div className="flex items-center gap-1">
+                              <span className="opacity-0 group-hover:opacity-100 bg-amber-500 text-slate-950 font-bold text-[9px] px-2 py-0.5 rounded font-sans flex items-center gap-1 shadow-sm shrink-0 transition-opacity">
+                                <Edit3 className="w-2.5 h-2.5" /> Edit
+                              </span>
+                              {role === 'ADMIN' && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setRecordToDelete(r);
+                                  }}
+                                  className="opacity-0 group-hover:opacity-100 bg-rose-600 hover:bg-rose-700 text-white text-[9px] px-2 py-0.5 rounded font-sans font-bold flex items-center gap-1 shadow-sm shrink-0 transition-opacity cursor-pointer"
+                                  title="Hapus bidang ini dari spreadsheet & database (Khusus Admin)"
+                                >
+                                  <Trash2 className="w-2.5 h-2.5" /> Hapus
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </td>
                         <td className="py-2 px-3 border-r border-slate-300 text-slate-700 uppercase font-semibold">
@@ -1357,7 +1376,7 @@ export default function PetaBidangTanah({
                     <td colSpan={3} className="py-2 px-3 border-r border-slate-800 text-right uppercase">
                       Total Luas Teridentifikasi ({filteredRecords.length} Bidang):
                     </td>
-                    <td className="py-2 px-3 text-right font-mono text-sm text-indigo-900">
+                    <td className="py-2 px-3 text-right font-mono text-sm text-amber-900">
                       {totalLuas.toLocaleString('id-ID')} m²
                     </td>
                   </tr>
@@ -1373,6 +1392,23 @@ export default function PetaBidangTanah({
           <span>Halaman Layout Peta Span & Desa: {selectedDesa}</span>
         </div>
       </div>
+
+      {/* Modal Hapus Bidang untuk Admin */}
+      {recordToDelete && (
+        <DeleteParcelModal
+          isOpen={!!recordToDelete}
+          onClose={() => setRecordToDelete(null)}
+          targetRecord={recordToDelete}
+          allRecords={records}
+          onConfirmDelete={async (updatedRecords, logMsg) => {
+            const target = recordToDelete;
+            setRecordToDelete(null);
+            if (onDeleteRecord) {
+              await onDeleteRecord(target, true);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

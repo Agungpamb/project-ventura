@@ -230,7 +230,7 @@ export default function CacheDiffModal({
         {/* MODAL HEADER */}
         <div className="p-4 sm:p-5 border-b border-white/10 bg-slate-800/80 flex items-center justify-between gap-4 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 rounded-xl shrink-0">
+            <div className="p-2.5 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-xl shrink-0">
               <GitCompare className="w-6 h-6" />
             </div>
             <div>
@@ -275,8 +275,8 @@ export default function CacheDiffModal({
           </div>
 
           {/* CACHE COUNT */}
-          <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl">
-            <div className="flex items-center justify-between text-indigo-400 text-xs font-semibold">
+          <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+            <div className="flex items-center justify-between text-amber-400 text-xs font-semibold">
               <span className="flex items-center gap-1.5">
                 <Database className="w-3.5 h-3.5" />
                 Data di Cache
@@ -403,7 +403,7 @@ export default function CacheDiffModal({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Cari nama, no bidang, desa..."
-              className="w-full pl-9 pr-3 py-1.5 bg-black/40 border border-white/10 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              className="w-full pl-9 pr-3 py-1.5 bg-black/40 border border-white/10 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
             />
           </div>
         </div>
@@ -484,7 +484,7 @@ export default function CacheDiffModal({
                         {/* DESA / SPAN */}
                         <td className="py-3 px-3">
                           <div className="font-semibold text-slate-200">{s?.DESA || c?.DESA || '-'}</div>
-                          <div className="text-[10px] font-mono text-indigo-300 mt-0.5">Span: {s?.SPAN || c?.SPAN || '-'}</div>
+                          <div className="text-[10px] font-mono text-amber-300 mt-0.5">Span: {s?.SPAN || c?.SPAN || '-'}</div>
                         </td>
 
                         {/* SPREADSHEET DATA CELL */}
@@ -510,7 +510,7 @@ export default function CacheDiffModal({
                           {c ? (
                             <div className="space-y-1">
                               <div className="font-bold text-white flex items-center gap-1.5">
-                                <span className="text-indigo-400 font-mono text-[11px]">[Cache]</span>
+                                <span className="text-amber-400 font-mono text-[11px]">[Cache]</span>
                                 {c.NAMA || '-'}
                               </div>
                               <div className="text-[11px] text-slate-300 flex items-center gap-2">
@@ -548,7 +548,7 @@ export default function CacheDiffModal({
           <div className="p-4 border-t border-white/10 bg-slate-950/90 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="text-xs">
               <span className="font-bold text-white flex items-center gap-2">
-                <Eye className="w-4 h-4 text-indigo-400" />
+                <Eye className="w-4 h-4 text-amber-400" />
                 Rincian Perbedaan: {selectedItemDetail.sheetRecord?.NOBID || selectedItemDetail.cacheRecord?.NOBID} - {selectedItemDetail.sheetRecord?.NAMA || selectedItemDetail.cacheRecord?.NAMA}
               </span>
               {selectedItemDetail.differences.length > 0 ? (
@@ -605,7 +605,7 @@ export default function CacheDiffModal({
               type="button"
               onClick={onApplyCache}
               disabled={isApplying || cachedRecords.length === 0}
-              className="px-4 py-2.5 bg-indigo-600/80 hover:bg-indigo-600 border border-indigo-500/40 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              className="px-4 py-2.5 bg-amber-500 hover:bg-amber-400 border border-amber-500/40 text-slate-950 font-bold text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
             >
               <Database className="w-4 h-4" />
               {isApplying ? 'Sedang Memproses...' : `Gunakan Data Cache (${cachedRecords.length} Baris)`}

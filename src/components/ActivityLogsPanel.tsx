@@ -250,7 +250,7 @@ export default function ActivityLogsPanel({
       case 'UPDATE':
       default:
         return {
-          bg: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20',
+          bg: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
           label: 'EDIT',
           icon: <RefreshCw className="w-3.5 h-3.5" />
         };
@@ -261,7 +261,7 @@ export default function ActivityLogsPanel({
   const getRoleBadge = (role: string) => {
     switch (role?.toUpperCase()) {
       case 'ADMIN':
-        return 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/20';
+        return 'bg-amber-500/15 text-amber-300 border border-amber-500/20';
       case 'FIELD':
         return 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20';
       case 'QC':
@@ -291,7 +291,7 @@ export default function ActivityLogsPanel({
             onClick={() => setActiveTab('activity')}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
               activeTab === 'activity'
-                ? 'bg-indigo-600 text-white shadow-md'
+                ? 'bg-amber-500 text-slate-950 font-bold shadow-md'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -327,7 +327,7 @@ export default function ActivityLogsPanel({
                   Audit Integritas Data: Google Sheets (Master) vs Firestore Cache
                 </span>
                 <p className="text-xs text-slate-300">
-                  Sistem otomatis mencatat perbandingan jumlah baris data saat fungsi <code className="text-indigo-300 bg-white/5 px-1.5 py-0.5 rounded font-mono">fetchSpreadsheetRecords</code> dieksekusi.
+                  Sistem otomatis mencatat perbandingan jumlah baris data saat fungsi <code className="text-amber-300 bg-white/5 px-1.5 py-0.5 rounded font-mono">fetchSpreadsheetRecords</code> dieksekusi.
                 </p>
               </div>
 
@@ -337,7 +337,7 @@ export default function ActivityLogsPanel({
                     id="open_diff_modal_from_logs_btn"
                     type="button"
                     onClick={onOpenDiffModal}
-                    className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-600/20 border border-indigo-400/30 transition-all flex items-center gap-2 cursor-pointer shrink-0"
+                    className="px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs font-bold rounded-xl shadow-lg shadow-amber-600/20 border border-amber-400/30 transition-all flex items-center gap-2 cursor-pointer shrink-0"
                   >
                     <GitCompare className="w-4 h-4" />
                     Bandingkan Cache vs Spreadsheet
@@ -430,7 +430,7 @@ export default function ActivityLogsPanel({
                           <td className="py-3.5 px-4 font-semibold text-slate-200 truncate max-w-[200px]" title={projName}>
                             {projName}
                           </td>
-                          <td className="py-3.5 px-4 font-mono font-bold text-indigo-300">
+                          <td className="py-3.5 px-4 font-mono font-bold text-amber-300">
                             {log.spreadsheetCount} Baris
                           </td>
                           <td className="py-3.5 px-4 font-mono font-bold text-slate-300">
@@ -476,7 +476,7 @@ export default function ActivityLogsPanel({
         <div className="space-y-6 animate-fadeIn">
           {/* 2. Filters Grid */}
           <div className="glass-card p-5 rounded-2xl border border-white/10 space-y-4 shadow-lg">
-            <span className="text-[10px] font-extrabold text-indigo-400 uppercase tracking-wider flex items-center gap-1.5 mb-1">
+            <span className="text-[10px] font-extrabold text-amber-400 uppercase tracking-wider flex items-center gap-1.5 mb-1">
               <ListFilter className="w-4 h-4" />
               Filter & Pencarian Log
             </span>
@@ -492,7 +492,7 @@ export default function ActivityLogsPanel({
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Cari CODE, email, detail..."
-                  className="w-full pl-9 pr-3 py-2 bg-slate-900/50 border border-white/10 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white placeholder-slate-400"
+                  className="w-full pl-9 pr-3 py-2 bg-slate-900/50 border border-white/10 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 text-white placeholder-slate-400"
                 />
               </div>
 
@@ -501,7 +501,7 @@ export default function ActivityLogsPanel({
                 <select
                   value={projectFilter}
                   onChange={(e) => setProjectFilter(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-indigo-400 cursor-pointer"
+                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
                 >
                   <option value="active">Jalur Aktif Saja</option>
                   <option value="all">Semua Jalur Proyek</option>
@@ -516,7 +516,7 @@ export default function ActivityLogsPanel({
                 <select
                   value={operatorFilter}
                   onChange={(e) => setOperatorFilter(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-indigo-400 cursor-pointer"
+                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
                 >
                   <option value="ALL">Semua Operator ({uniqueOperators.length})</option>
                   {uniqueOperators.map((op) => (
@@ -530,7 +530,7 @@ export default function ActivityLogsPanel({
                 <select
                   value={actionFilter}
                   onChange={(e) => setActionFilter(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-indigo-400 cursor-pointer"
+                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
                 >
                   <option value="ALL">Semua Jenis Tindakan</option>
                   <option value="ESDM_APPROVAL">CROSSCHECK / APPROVAL ESDM</option>
@@ -547,7 +547,7 @@ export default function ActivityLogsPanel({
                 onClick={() => setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')}
                 className="px-4 py-2 bg-slate-900 hover:bg-slate-950 border border-white/10 rounded-xl text-xs font-bold text-slate-200 flex items-center justify-center gap-2 transition-all cursor-pointer"
               >
-                <ArrowUpDown className="w-4 h-4 text-indigo-400" />
+                <ArrowUpDown className="w-4 h-4 text-amber-400" />
                 Urutan: {sortOrder === 'desc' ? 'Terbaru' : 'Terlama'}
               </button>
             </div>
@@ -556,7 +556,7 @@ export default function ActivityLogsPanel({
           {/* 3. Log Output */}
           {isLoading ? (
             <div className="glass-card p-12 rounded-2xl flex flex-col items-center justify-center text-center space-y-4 min-h-[300px]">
-              <div className="w-8 h-8 border-3 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+              <div className="w-8 h-8 border-3 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
               <p className="text-xs font-semibold text-slate-300">Menghubungkan ke database log aktivitas...</p>
             </div>
           ) : error ? (
@@ -594,7 +594,7 @@ export default function ActivityLogsPanel({
                         <tr key={log.id} className="hover:bg-white/2 transition-colors">
                           {/* Timestamp */}
                           <td className="py-3.5 px-4 whitespace-nowrap font-semibold font-mono text-slate-300 flex items-center gap-2">
-                            <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+                            <Calendar className="w-3.5 h-3.5 text-amber-400" />
                             {formatLogDate(log.timestamp)}
                           </td>
 
@@ -640,7 +640,7 @@ export default function ActivityLogsPanel({
 
                           {/* Project Name (if in all-project view) */}
                           {projectFilter === 'all' && (
-                            <td className="py-3.5 px-4 text-[10px] font-bold text-indigo-300 max-w-[150px] truncate" title={log.projectName}>
+                            <td className="py-3.5 px-4 text-[10px] font-bold text-amber-300 max-w-[150px] truncate" title={log.projectName}>
                               {log.projectName || '-'}
                             </td>
                           )}

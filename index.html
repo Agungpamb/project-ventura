@@ -7,6 +7,12 @@
     <meta name="description" content="Sistem Informasi Geografis & Pertanahan Desa (GIS) untuk inventarisasi lahan, bidang tanah, jalur transmisi ROW, dan QC." />
     <meta property="og:title" content="Project Ventura - Land GIS & Management" />
     <meta property="og:description" content="Sistem Informasi Geografis & Pertanahan Desa (GIS) untuk inventarisasi lahan, bidang tanah, jalur transmisi ROW, dan QC." />
+    <script>
+      // Otomatis redirect jika pengunjung mengakses domain lama di Firebase Hosting
+      if (window.location.hostname.includes('firebaseapp.com') || window.location.hostname.includes('web.app')) {
+        window.location.replace('https://project-ventura.vercel.app' + window.location.pathname + window.location.search + window.location.hash);
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -1040,7 +1040,7 @@ export default function Dashboard({
           )}
           <button
             onClick={handleExportPDF}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold rounded-xl transition-all shadow-md shadow-indigo-600/10 cursor-pointer"
+            className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] font-bold rounded-xl transition-all shadow-md shadow-amber-600/10 cursor-pointer"
             title="Ekspor Ringkasan Dashboard ke PDF untuk WhatsApp"
           >
             <FileDown className="w-4 h-4" />
@@ -1076,9 +1076,9 @@ export default function Dashboard({
       <div className="glass-card p-4 rounded-2xl border border-white/10 shadow-lg space-y-3 bg-slate-900/60 backdrop-blur-md">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-indigo-400 shrink-0" />
+            <Filter className="w-4 h-4 text-amber-400 shrink-0" />
             <span className="text-xs font-bold text-white uppercase tracking-wider">Filter Dashboard:</span>
-            <span className="text-[11px] text-slate-300 bg-indigo-500/10 border border-indigo-500/20 px-2.5 py-0.5 rounded-full font-mono">
+            <span className="text-[11px] text-slate-300 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-full font-mono">
               Menampilkan {activeFilteredRecords.length} Bidang
             </span>
           </div>
@@ -1090,7 +1090,7 @@ export default function Dashboard({
               <select
                 value={selectedDesa}
                 onChange={(e) => setSelectedDesa(e.target.value)}
-                className="bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
+                className="bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-amber-500 font-sans"
               >
                 <option value="ALL">Semua Desa ({uniqueDesaList.length})</option>
                 {uniqueDesaList.map(d => (
@@ -1106,7 +1106,7 @@ export default function Dashboard({
                 <select
                   value={selectedSpan}
                   onChange={(e) => setSelectedSpan(e.target.value)}
-                  className="bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
+                  className="bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-amber-500 font-sans"
                 >
                   <option value="ALL">Semua SPAN</option>
                   {uniqueSpanList.map(s => (
@@ -1191,11 +1191,11 @@ export default function Dashboard({
       </div>
 
       {/* SECTION: JENIS ALAS HAK CLASSIFICATION (PIE CHART & RESUME DATA) */}
-      <div className="glass-card p-6 rounded-2xl shadow-xl space-y-5 border border-indigo-500/20 bg-slate-900/80">
+      <div className="glass-card p-6 rounded-2xl shadow-xl space-y-5 border border-amber-500/20 bg-slate-900/80">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-white/10 pb-4">
           <div>
             <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-indigo-400" />
+              <ShieldCheck className="w-5 h-5 text-amber-400" />
               Klasifikasi Jenis Alas Hak (Bukti Kepemilikan Lahan)
             </h2>
             <p className="text-xs text-slate-300 mt-0.5">
@@ -1237,7 +1237,7 @@ export default function Dashboard({
                           const data = payload[0].payload;
                           return (
                             <div className="bg-slate-900 border border-slate-700 p-3 rounded-xl shadow-xl text-xs text-white space-y-1">
-                              <p className="font-bold text-indigo-300">{data.name}</p>
+                              <p className="font-bold text-amber-300">{data.name}</p>
                               <p className="text-slate-200">
                                 Jumlah: <strong className="text-emerald-400">{data.value} Bidang</strong>
                               </p>
@@ -1278,7 +1278,7 @@ export default function Dashboard({
               </div>
               <div className="bg-slate-950/70 p-3.5 rounded-xl border border-white/5 space-y-1">
                 <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Kategori Dominan</p>
-                <p className="text-xs font-bold text-indigo-300 truncate" title={alasHakAnalysis.dominant.label}>
+                <p className="text-xs font-bold text-amber-300 truncate" title={alasHakAnalysis.dominant.label}>
                   {alasHakAnalysis.dominant.code}. {alasHakAnalysis.dominant.label}
                 </p>
                 <p className="text-[10px] text-slate-400 font-mono">{alasHakAnalysis.dominant.count} bidang ({alasHakAnalysis.dominant.percentage}%)</p>
@@ -1309,7 +1309,7 @@ export default function Dashboard({
                         </div>
                         <div className="flex items-center gap-2 shrink-0 font-mono text-[11px]">
                           <span className="font-extrabold text-white">{item.count} <span className="text-[9px] font-normal text-slate-400">bidang</span></span>
-                          <span className="text-indigo-300 font-semibold bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">{item.percentage}%</span>
+                          <span className="text-amber-300 font-semibold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">{item.percentage}%</span>
                         </div>
                       </div>
                       {/* Visual mini bar */}
@@ -1486,7 +1486,7 @@ export default function Dashboard({
 
         {/* Interactive Data Table for Guest view with Search */}
         {selectedCategory && (
-          <div className="glass-card p-6 rounded-2xl border border-indigo-500/20 shadow-xl space-y-4 animate-fadeIn">
+          <div className="glass-card p-6 rounded-2xl border border-amber-500/20 shadow-xl space-y-4 animate-fadeIn">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-4">
               <div>
                 <h3 className="text-sm font-bold text-white tracking-tight flex items-center gap-2">
@@ -1522,7 +1522,7 @@ export default function Dashboard({
                 placeholder="Ketik nama desa, span, no bidang, nama pemilik, alas hak, atau keterangan..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-8 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans transition-all shadow-inner"
+                className="w-full pl-9 pr-8 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-500 font-sans transition-all shadow-inner"
               />
               {searchQuery && (
                 <button
@@ -1564,7 +1564,7 @@ export default function Dashboard({
                         <td className="px-4 py-3 font-medium text-slate-200 font-sans whitespace-nowrap">{r.NAMA || '-'}</td>
                         <td className="px-4 py-3 font-sans text-slate-300 text-xs whitespace-nowrap">
                           {r.JENIS_ALAS_HAK ? (
-                            <span className="px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 font-mono text-[11px] text-indigo-300 font-semibold">
+                            <span className="px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 font-mono text-[11px] text-amber-300 font-semibold">
                               {r.JENIS_ALAS_HAK}
                             </span>
                           ) : (
@@ -1665,7 +1665,7 @@ export default function Dashboard({
       <div className="glass-card p-6 rounded-2xl shadow-lg space-y-5">
         <div className="space-y-1">
           <h2 className="text-sm font-bold text-slate-200 tracking-tight flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-indigo-400" />
+            <TrendingUp className="w-4 h-4 text-amber-400" />
             Grafik Komparasi Capaian per Desa (Pemberkasan vs Upload TRABAS)
           </h2>
           <p className="text-[11px] text-slate-400">
@@ -1694,7 +1694,7 @@ export default function Dashboard({
                   {/* Left Column: Village Info */}
                   <div className="md:w-36 flex-shrink-0 flex flex-row md:flex-col items-baseline md:items-start justify-between md:justify-center border-b md:border-b-0 md:border-r border-white/5 pb-2 md:pb-0 md:pr-4">
                     <span className="text-xs font-bold text-white flex items-center gap-1.5 truncate max-w-[140px] md:max-w-none" title={desa.name}>
-                      <MapPin className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
+                      <MapPin className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
                       {desa.name}
                     </span>
                     <div className="flex items-center gap-1.5 mt-0.5">
@@ -1787,13 +1787,13 @@ export default function Dashboard({
       {/* SECTION D: METRIK PROYEK FISIK & TANAMAN */}
       <div className="space-y-4">
         <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
-          <Map className="w-5 h-5 text-indigo-400" />
+          <Map className="w-5 h-5 text-amber-400" />
           Metrik Penghitungan Fisik & Tanaman Lapangan
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           <div className="glass-card p-5 rounded-2xl flex items-center justify-between shadow-lg hover:border-white/15 transition-all duration-300">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shadow-inner">
+              <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-inner">
                 <Home className="w-5 h-5" />
               </div>
               <div>
@@ -1801,7 +1801,7 @@ export default function Dashboard({
                 <p className="text-xs text-slate-400">Jumlah bangunan berdiri di atas lahan proyek</p>
               </div>
             </div>
-            <span className="text-xl font-bold text-indigo-300 bg-indigo-500/15 border border-indigo-500/25 px-3.5 py-1 rounded-xl shadow-inner font-mono">
+            <span className="text-xl font-bold text-amber-300 bg-amber-500/15 border border-amber-500/25 px-3.5 py-1 rounded-xl shadow-inner font-mono">
               {stats.totalBuildings} <span className="text-xs font-normal">Unit</span>
             </span>
           </div>
@@ -1828,7 +1828,7 @@ export default function Dashboard({
         {/* Village Lahan Distribution Chart */}
         <div className="glass-card p-6 rounded-2xl shadow-lg space-y-4">
           <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-            <Map className="w-5 h-5 text-indigo-400" />
+            <Map className="w-5 h-5 text-amber-400" />
             Distribusi Jumlah Bidang & Luas per Desa
           </h2>
           {desaChartData.length === 0 ? (
@@ -1935,7 +1935,7 @@ export default function Dashboard({
                   {/* Visual bar */}
                   <div className="w-full h-1.5 bg-slate-800 rounded-full mt-3 overflow-hidden border border-white/5">
                     <div 
-                      className="h-full bg-indigo-500 rounded-full transition-all duration-500 glow-indigo"
+                      className="h-full bg-amber-500 rounded-full transition-all duration-500 glow-amber"
                       style={{ width: `${item.Persentase}%` }}
                     ></div>
                   </div>

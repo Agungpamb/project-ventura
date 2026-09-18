@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import L from 'leaflet';
 import { 
   Map as MapIcon, Layers, Radio, Globe, UploadCloud, Info, CheckCircle2, Clock, 
-  XCircle, MapPin, Search, FileText, ChevronRight, Eye, Trash2, HelpCircle, X
+  XCircle, MapPin, Search, FileText, ChevronRight, Eye, Trash2, HelpCircle, X,
+  Navigation, ExternalLink
 } from 'lucide-react';
 import type { LandRecord } from '../types';
 import { db } from '../lib/firebase';
@@ -14,8 +15,10 @@ import {
   saveLayerToLocalStorage,
   loadDeployedDefaultGeoJSONs
 } from '../lib/geojsonStorage';
+import DeleteParcelModal from './DeleteParcelModal';
 
 interface InteractiveMapProps {
+  onDeleteRecord?: (record: LandRecord, adjustNextParcels: boolean) => Promise<void>;
   records: LandRecord[];
   role?: string | null;
   activeProjectName?: string;
@@ -289,7 +292,7 @@ const checkRecordMatch = (featProps: any, record: LandRecord, layer?: LoadedGeoJ
   return false;
 };
 
-export default function InteractiveMap({ records, role, activeProjectName, activeProjectId, loadedGeoJSONs: propLoadedGeoJSONs }: InteractiveMapProps) {
+export default function InteractiveMap({ records, role, activeProjectName, activeProjectId, loadedGeoJSONs: propLoadedGeoJSONs, onDeleteRecord }: InteractiveMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const geojsonLayersRef = useRef<{ [key: string]: L.GeoJSON }>({});
@@ -310,6 +313,7 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
     }
   }, [propLoadedGeoJSONs]);
   const [selectedRecord, setSelectedRecord] = useState<LandRecord | null>(null);
+  const [recordToDelete, setRecordToDelete] = useState<LandRecord | null>(null);
   const [selectedFeatureProps, setSelectedFeatureProps] = useState<any | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDesa, setSelectedDesa] = useState<string>('ALL');
@@ -317,6 +321,29 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
   const [tempMapping, setTempMapping] = useState<any>({});
   const [activeSubTab, setActiveSubTab] = useState<'peta' | 'geojson'>('peta');
   const fittedLayersRef = useRef<string[]>([]);
+  const [selectedCoordinates, setSelectedCoordinates] = useState<{ lat: number; lng: number } | null>(null);
+
+  // Link URL to open Google Maps with precise pin
+  const googleMapsUrl = useMemo(() => {
+    if (selectedCoordinates && selectedCoordinates.lat && selectedCoordinates.lng) {
+      return `https://www.google.com/maps?q=${selectedCoordinates.lat},${selectedCoordinates.lng}&z=19`;
+    }
+    if (selectedRecord) {
+      const q = [
+        selectedRecord.DESA ? `Desa ${selectedRecord.DESA}` : '',
+        selectedRecord.KECAMATAN ? `Kecamatan ${selectedRecord.KECAMATAN}` : '',
+        'Jawa Tengah, Indonesia'
+      ].filter(Boolean).join(', ');
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+    }
+    if (selectedFeatureProps) {
+      const desa = selectedFeatureProps.DESA || selectedFeatureProps.Desa || selectedFeatureProps.desa;
+      if (desa) {
+        return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Desa ${desa}, Indonesia`)}`;
+      }
+    }
+    return null;
+  }, [selectedCoordinates, selectedRecord, selectedFeatureProps]);
 
   // Unique list of Desas for filtering
   const desas = useMemo(() => {
@@ -770,7 +797,7 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
               const label = getTowerNum(feature.properties, layer) || 'T';
               const towerHtml = `
                 <div class="flex flex-col items-center">
-                  <div class="w-7 h-7 rounded-full bg-indigo-600 border-2 border-white text-white font-bold text-[10px] flex items-center justify-center shadow-lg glow-indigo hover:scale-110 transition-transform">
+                  <div class="w-7 h-7 rounded-full bg-amber-500 border-2 border-slate-950 text-slate-950 text-white font-bold text-[10px] flex items-center justify-center shadow-lg glow-amber hover:scale-110 transition-transform">
                     🗼
                   </div>
                   <div class="mt-0.5 px-1 bg-slate-900/90 text-white font-mono text-[9px] font-bold rounded border border-white/20 whitespace-nowrap shadow-md">
@@ -805,6 +832,18 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
               tooltipText = `<strong>Tapak Tower: ${name}</strong>`;
               if (properties.KETERANGAN) tooltipText += `<br/><span class="text-xs">${properties.KETERANGAN}</span>`;
               fLayer.bindTooltip(tooltipText, { permanent: false, direction: 'top', className: 'custom-map-tooltip' });
+
+              fLayer.on('click', (e) => {
+                if (e) {
+                  L.DomEvent.stopPropagation(e);
+                }
+                setSelectedFeatureProps(properties);
+                const anyFLayer = fLayer as any;
+                if (typeof anyFLayer.getLatLng === 'function') {
+                  const latlng = anyFLayer.getLatLng();
+                  setSelectedCoordinates({ lat: Number(latlng.lat.toFixed(6)), lng: Number(latlng.lng.toFixed(6)) });
+                }
+              });
             } else if (layer.type === 'jalur') {
               const lineName = getJalurName(properties, layer) || 'Jalur ROW';
               tooltipText = `<strong>${lineName}</strong>`;
@@ -819,7 +858,7 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
 
               tooltipText = `
                 <div class="p-1 text-slate-100 font-sans">
-                  <p class="font-bold text-xs border-b border-white/20 pb-1 mb-1 text-indigo-300">Bidang No. ${nobid}</p>
+                  <p class="font-bold text-xs border-b border-white/20 pb-1 mb-1 text-amber-300">Bidang No. ${nobid}</p>
                   <p class="text-[10px]"><span class="text-slate-400">Pemilik:</span> ${owner}</p>
                   <p class="text-[10px]"><span class="text-slate-400">Desa:</span> ${desa}</p>
                   <p class="text-[10px]"><span class="text-slate-400">Span:</span> ${span}</p>
@@ -835,9 +874,33 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
                 }
                 setSelectedFeatureProps(properties);
 
+                // Determine coordinates of the clicked feature (centroid / point)
+                let coords: { lat: number; lng: number } | null = null;
+                const anyFLayer = fLayer as any;
+                try {
+                  if (typeof anyFLayer.getBounds === 'function') {
+                    const bounds = anyFLayer.getBounds();
+                    if (bounds && bounds.isValid()) {
+                      const center = bounds.getCenter();
+                      coords = { lat: Number(center.lat.toFixed(6)), lng: Number(center.lng.toFixed(6)) };
+                    }
+                  } else if (typeof anyFLayer.getLatLng === 'function') {
+                    const latlng = anyFLayer.getLatLng();
+                    coords = { lat: Number(latlng.lat.toFixed(6)), lng: Number(latlng.lng.toFixed(6)) };
+                  }
+                } catch (err) {}
+
+                if (!coords && e && (e as any).latlng) {
+                  const evll = (e as any).latlng;
+                  coords = { lat: Number(evll.lat.toFixed(6)), lng: Number(evll.lng.toFixed(6)) };
+                }
+
+                if (coords) {
+                  setSelectedCoordinates(coords);
+                }
+
                 // Auto-zoom closely to the clicked bidang
                 if (mapRef.current) {
-                  const anyFLayer = fLayer as any;
                   try {
                     if (anyFLayer.getBounds) {
                       mapRef.current.fitBounds(anyFLayer.getBounds(), { padding: [40, 40], maxZoom: 20 });
@@ -925,10 +988,14 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
                   if (bounds && bounds.isValid()) {
                     mapRef.current.flyToBounds(bounds, { padding: [60, 60], maxZoom: 19, duration: 0.8 });
                     centered = true;
+                    const center = bounds.getCenter();
+                    setSelectedCoordinates({ lat: Number(center.lat.toFixed(6)), lng: Number(center.lng.toFixed(6)) });
                   }
                 } else if (typeof subLayer.getLatLng === 'function') {
                   mapRef.current.flyTo(subLayer.getLatLng(), 19, { duration: 0.8 });
                   centered = true;
+                  const latlng = subLayer.getLatLng();
+                  setSelectedCoordinates({ lat: Number(latlng.lat.toFixed(6)), lng: Number(latlng.lng.toFixed(6)) });
                 }
               } catch (e) {}
             }
@@ -962,6 +1029,7 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
             const lat = parseFloat(data[0].lat);
             const lon = parseFloat(data[0].lon);
             mapRef.current.flyTo([lat, lon], 16, { duration: 0.8 });
+            setSelectedCoordinates({ lat: Number(lat.toFixed(6)), lng: Number(lon.toFixed(6)) });
           }
         })
         .catch(() => {});
@@ -1001,7 +1069,7 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 glass-card p-6 rounded-2xl shadow-xl">
         <div>
           <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2 font-sans">
-            <MapIcon className="w-6 h-6 text-indigo-400" />
+            <MapIcon className="w-6 h-6 text-amber-400" />
             Sistem Informasi Geografis & Peta Spasial (GIS)
           </h1>
           <p className="text-slate-300 text-sm mt-1 font-sans">
@@ -1015,7 +1083,7 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
             onClick={() => setBasemap('google')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
               basemap === 'google'
-                ? 'bg-indigo-600 text-white shadow-md'
+                ? 'bg-amber-500 text-slate-950 font-bold shadow-md'
                 : 'text-slate-400 hover:text-white'
             }`}
             title="Google Satellite Hybrid (Mendukung Zoom Sangat Detail)"
@@ -1027,7 +1095,7 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
             onClick={() => setBasemap('satelit')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
               basemap === 'satelit'
-                ? 'bg-indigo-600 text-white shadow-md'
+                ? 'bg-amber-500 text-slate-950 font-bold shadow-md'
                 : 'text-slate-400 hover:text-white'
             }`}
             title="Esri World Imagery"
@@ -1039,7 +1107,7 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
             onClick={() => setBasemap('osm')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
               basemap === 'osm'
-                ? 'bg-indigo-600 text-white shadow-md'
+                ? 'bg-amber-500 text-slate-950 font-bold shadow-md'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -1065,6 +1133,64 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
                 style={{ minHeight: '500px' }}
               />
 
+              {/* Floating Quick Action Card: Menuju Lokasi via Google Maps (Tab Baru) */}
+              {(selectedRecord || selectedFeatureProps || selectedCoordinates) && (
+                <div className="absolute top-4 right-4 z-[400] glass-card-dark p-3 rounded-2xl shadow-2xl border border-amber-500/40 space-y-2.5 max-w-[280px] sm:max-w-xs animate-fadeIn backdrop-blur-md">
+                  <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-1.5">
+                    <div className="flex items-center gap-1.5 text-xs font-black text-amber-400 min-w-0">
+                      <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0 animate-pulse" />
+                      <span className="truncate">
+                        {selectedRecord?.CODE 
+                          ? `Bidang ${selectedRecord.CODE}` 
+                          : (selectedFeatureProps?.NOBID ? `Bidang No. ${selectedFeatureProps.NOBID}` : 'Bidang Terpilih')}
+                      </span>
+                    </div>
+                    <button 
+                      type="button" 
+                      onClick={() => { 
+                        setSelectedRecord(null); 
+                        setSelectedFeatureProps(null); 
+                        setSelectedCoordinates(null);
+                      }}
+                      className="text-slate-400 hover:text-white p-0.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer"
+                      title="Tutup Pilihan"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  
+                  <div className="text-[11px] text-slate-300 space-y-0.5">
+                    <p className="font-bold truncate text-white">
+                      {selectedRecord?.NAMA || selectedFeatureProps?.NAMA || selectedFeatureProps?.PEMILIK || 'Pemilik Terpilih'}
+                    </p>
+                    <p className="text-[10px] text-slate-400 truncate">
+                      Desa {selectedRecord?.DESA || selectedFeatureProps?.DESA || '-'} &bull; Span {selectedRecord?.SPAN || selectedFeatureProps?.SPAN || '-'}
+                    </p>
+                    {selectedCoordinates && (
+                      <p className="text-[10px] font-mono text-emerald-400 font-semibold pt-0.5 flex items-center gap-1">
+                        <span>📍</span>
+                        <span>{selectedCoordinates.lat.toFixed(6)}, {selectedCoordinates.lng.toFixed(6)}</span>
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Tombol Khusus Menuju Lokasi Google Maps */}
+                  {googleMapsUrl && (
+                    <a
+                      href={googleMapsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-3 rounded-xl shadow-md shadow-emerald-600/30 transition-all cursor-pointer active:scale-95 text-center"
+                      title="Buka titik pin bidang ini di Google Maps (Buka Tab Baru)"
+                    >
+                      <Navigation className="w-3.5 h-3.5 shrink-0" />
+                      <span>Buka di Google Maps</span>
+                      <ExternalLink className="w-3 h-3 shrink-0 opacity-80" />
+                    </a>
+                  )}
+                </div>
+              )}
+
               {/* Float Legend/Overlay on the bottom-left */}
               <div className="absolute bottom-4 left-4 z-[400] glass-card-dark p-3.5 rounded-xl shadow-lg border border-white/10 space-y-2 max-w-xs text-xs">
                 <h3 className="font-bold text-white mb-1">Legenda Peta</h3>
@@ -1081,7 +1207,7 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
                   <span className="text-slate-300">Jalur Transmisi ROW</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="w-4 h-4 rounded-full bg-indigo-600 border border-white flex items-center justify-center text-[8px]">🗼</span>
+                  <span className="w-4 h-4 rounded-full bg-amber-500 border border-slate-900 flex items-center justify-center text-[8px]">🗼</span>
                   <span className="text-slate-300">Tapak Tower (Point)</span>
                 </div>
               </div>
@@ -1094,7 +1220,7 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
             <div className="glass-card p-5 rounded-2xl shadow-xl border border-white/10 space-y-4 flex flex-col h-[550px]">
               <h2 className="text-base font-bold text-white flex items-center justify-between">
                 <span className="flex items-center gap-2">
-                  <Search className="w-5 h-5 text-indigo-400" />
+                  <Search className="w-5 h-5 text-amber-400" />
                   Navigator Bidang
                 </span>
                 <span className="text-slate-400 font-mono text-xs">({filteredRecords.length})</span>
@@ -1109,14 +1235,14 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
                     placeholder="Cari Pemilik, No Bidang, Span..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-9 pr-4 py-1.5 bg-slate-950 border border-white/10 text-white placeholder-slate-500 rounded-xl text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                    className="w-full pl-9 pr-4 py-1.5 bg-slate-950 border border-white/10 text-white placeholder-slate-500 rounded-xl text-xs focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
                   />
                 </div>
 
                 <select
                   value={selectedDesa}
                   onChange={(e) => setSelectedDesa(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                  className="w-full px-3 py-1.5 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-amber-500"
                 >
                   {desas.map((d) => (
                     <option key={d} value={d}>
@@ -1139,7 +1265,7 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
                       onClick={() => handleSelectRecord(r)}
                       className={`w-full text-left p-2 rounded-xl text-xs flex items-center justify-between border transition-all cursor-pointer ${
                         selectedRecord?.ID_UNIK === r.ID_UNIK
-                          ? 'bg-indigo-600/35 border-indigo-500 text-white'
+                          ? 'bg-amber-500/20 border-amber-500 text-white'
                           : 'bg-white/2.5 hover:bg-white/5 border-transparent text-slate-300'
                       }`}
                     >
@@ -1149,9 +1275,23 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
                           Desa {r.DESA} &bull; Span {r.SPAN} &bull; No. {r.NOBID}
                         </p>
                       </div>
-                      <ChevronRight className={`w-4 h-4 shrink-0 transition-transform ${
-                        selectedRecord?.ID_UNIK === r.ID_UNIK ? 'rotate-90 text-indigo-300' : 'text-slate-500'
-                      }`} />
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {selectedRecord?.ID_UNIK === r.ID_UNIK && googleMapsUrl && (
+                          <a
+                            href={googleMapsUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-all shadow-sm active:scale-95"
+                            title="Buka titik koordinat bidang ini di Google Maps (Tab Baru)"
+                          >
+                            <Navigation className="w-3 h-3" />
+                          </a>
+                        )}
+                        <ChevronRight className={`w-4 h-4 shrink-0 transition-transform ${
+                          selectedRecord?.ID_UNIK === r.ID_UNIK ? 'rotate-90 text-amber-300' : 'text-slate-500'
+                        }`} />
+                      </div>
                     </button>
                   ))
                 )}
@@ -1164,7 +1304,7 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
         {/* Detailed Inspector Card (Full Width below map & navigator) */}
         <div className="glass-card p-6 rounded-2xl shadow-xl border border-white/10 space-y-4">
           <h2 className="text-base font-bold text-white flex items-center gap-2 border-b border-white/10 pb-2.5">
-            <Info className="w-5 h-5 text-indigo-400" />
+            <Info className="w-5 h-5 text-amber-400" />
             Inspektur Detail Bidang
           </h2>
 
@@ -1172,9 +1312,9 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fadeIn">
               {/* Col 1: Header Info & Mini details */}
               <div className="space-y-4">
-                <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-xl space-y-2">
+                <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-mono text-indigo-300 font-bold bg-indigo-500/15 px-2 py-0.5 rounded-full">
+                    <span className="text-[10px] font-mono text-amber-300 font-bold bg-amber-500/15 px-2 py-0.5 rounded-full">
                       CODE: {selectedRecord.CODE || '-'}
                     </span>
                     
@@ -1197,6 +1337,42 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
                   <p className="text-xs text-slate-300">
                     Desa {selectedRecord.DESA} &bull; Span {selectedRecord.SPAN} &bull; Bidang No. {selectedRecord.NOBID}
                   </p>
+
+                  {/* Google Maps Pin & Rute Navigasi Action */}
+                  {googleMapsUrl && (
+                    <div className="pt-2 border-t border-white/10 flex flex-col gap-1.5">
+                      <a
+                        href={googleMapsUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-3 rounded-xl shadow-md shadow-emerald-600/25 transition-all cursor-pointer active:scale-95 text-center"
+                        title="Buka titik bidang ini di Google Maps (Buka Tab Baru)"
+                      >
+                        <Navigation className="w-3.5 h-3.5 shrink-0" />
+                        <span>Buka di Google Maps</span>
+                        <ExternalLink className="w-3 h-3 shrink-0 opacity-80" />
+                      </a>
+                      {selectedCoordinates && (
+                        <span className="text-[10px] font-mono text-emerald-400/80 text-center">
+                          Koordinat: {selectedCoordinates.lat.toFixed(6)}, {selectedCoordinates.lng.toFixed(6)}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {role === 'ADMIN' && (
+                    <div className="pt-2 border-t border-white/10 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setRecordToDelete(selectedRecord)}
+                        className="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-lg text-xs font-bold border border-rose-500/30 flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                        title="Hapus bidang ini dari database (Khusus Admin)"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Hapus Bidang (Admin)</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="p-3.5 bg-white/2.5 rounded-xl border border-white/5 space-y-2.5">
@@ -1243,8 +1419,8 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
                 <h4 className="text-xs font-bold text-slate-300 tracking-wider uppercase mb-1.5">Berkas Dokumen Pendukung</h4>
                 <div className="grid grid-cols-2 gap-2.5 text-[11px]">
                   {selectedRecord.LINK_KTP ? (
-                    <a href={selectedRecord.LINK_KTP} target="_blank" rel="noopener noreferrer" className="p-3 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 rounded-xl border border-indigo-500/20 flex items-center gap-1.5 transition-all truncate">
-                      <FileText className="w-3.5 h-3.5 text-indigo-400 shrink-0" /> KTP Pemilik
+                    <a href={selectedRecord.LINK_KTP} target="_blank" rel="noopener noreferrer" className="p-3 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded-xl border border-amber-500/20 flex items-center gap-1.5 transition-all truncate">
+                      <FileText className="w-3.5 h-3.5 text-amber-400 shrink-0" /> KTP Pemilik
                     </a>
                   ) : (
                     <span className="p-3 bg-slate-900/40 text-slate-500 rounded-xl border border-white/5 flex items-center gap-1.5 truncate">
@@ -1253,8 +1429,8 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
                   )}
 
                   {selectedRecord.LINK_KK ? (
-                    <a href={selectedRecord.LINK_KK} target="_blank" rel="noopener noreferrer" className="p-3 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 rounded-xl border border-indigo-500/20 flex items-center gap-1.5 transition-all truncate">
-                      <FileText className="w-3.5 h-3.5 text-indigo-400 shrink-0" /> KK Pemilik
+                    <a href={selectedRecord.LINK_KK} target="_blank" rel="noopener noreferrer" className="p-3 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded-xl border border-amber-500/20 flex items-center gap-1.5 transition-all truncate">
+                      <FileText className="w-3.5 h-3.5 text-amber-400 shrink-0" /> KK Pemilik
                     </a>
                   ) : (
                     <span className="p-3 bg-slate-900/40 text-slate-500 rounded-xl border border-white/5 flex items-center gap-1.5 truncate">
@@ -1263,8 +1439,8 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
                   )}
 
                   {selectedRecord.LINK_ALAS_HAK ? (
-                    <a href={selectedRecord.LINK_ALAS_HAK} target="_blank" rel="noopener noreferrer" className="p-3 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 rounded-xl border border-indigo-500/20 flex items-center gap-1.5 transition-all truncate">
-                      <FileText className="w-3.5 h-3.5 text-indigo-400 shrink-0" /> Alas Hak
+                    <a href={selectedRecord.LINK_ALAS_HAK} target="_blank" rel="noopener noreferrer" className="p-3 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded-xl border border-amber-500/20 flex items-center gap-1.5 transition-all truncate">
+                      <FileText className="w-3.5 h-3.5 text-amber-400 shrink-0" /> Alas Hak
                     </a>
                   ) : (
                     <span className="p-3 bg-slate-900/40 text-slate-500 rounded-xl border border-white/5 flex items-center gap-1.5 truncate">
@@ -1273,8 +1449,8 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
                   )}
 
                   {selectedRecord.LINK_DOKUMENTASI_BIDANG ? (
-                    <a href={selectedRecord.LINK_DOKUMENTASI_BIDANG} target="_blank" rel="noopener noreferrer" className="p-3 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 rounded-xl border border-indigo-500/20 flex items-center gap-1.5 transition-all truncate">
-                      <FileText className="w-3.5 h-3.5 text-indigo-400 shrink-0" /> Foto Bidang
+                    <a href={selectedRecord.LINK_DOKUMENTASI_BIDANG} target="_blank" rel="noopener noreferrer" className="p-3 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded-xl border border-amber-500/20 flex items-center gap-1.5 transition-all truncate">
+                      <FileText className="w-3.5 h-3.5 text-amber-400 shrink-0" /> Foto Bidang
                     </a>
                   ) : (
                     <span className="p-3 bg-slate-900/40 text-slate-500 rounded-xl border border-white/5 flex items-center gap-1.5 truncate">
@@ -1297,7 +1473,7 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
               
               <div className="bg-white/5 p-4 rounded-xl border border-white/5 space-y-2 text-xs">
                 <p className="font-bold text-slate-300 uppercase tracking-wider text-[10px]">Properties Atribut:</p>
-                <pre className="font-mono text-[10px] text-indigo-200 overflow-x-auto max-h-40 scrollbar-thin whitespace-pre-wrap">
+                <pre className="font-mono text-[10px] text-amber-200 overflow-x-auto max-h-40 scrollbar-thin whitespace-pre-wrap">
                   {JSON.stringify(selectedFeatureProps, null, 2)}
                 </pre>
               </div>
@@ -1311,6 +1487,24 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
           )}
         </div>
       </div>
+
+      {/* Modal Hapus Bidang untuk Admin */}
+      {recordToDelete && (
+        <DeleteParcelModal
+          isOpen={!!recordToDelete}
+          onClose={() => setRecordToDelete(null)}
+          targetRecord={recordToDelete}
+          allRecords={records}
+          onConfirmDelete={async (updatedRecords, logMsg) => {
+            const target = recordToDelete;
+            setRecordToDelete(null);
+            setSelectedRecord(null);
+            if (onDeleteRecord) {
+              await onDeleteRecord(target, true);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

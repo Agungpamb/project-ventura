@@ -333,7 +333,7 @@ export default function DocUpload({
         <div className="lg:col-span-4 glass-card p-5 rounded-2xl shadow-xl flex flex-col h-[600px]">
           <div>
             <h2 className="text-md font-bold text-white tracking-tight flex items-center gap-1.5">
-              <FolderOpen className="w-5 h-5 text-indigo-400" />
+              <FolderOpen className="w-5 h-5 text-amber-400" />
               Daftar Berkas Lahan
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">Pilih salah satu kode lahan di bawah untuk melengkapi berkas lampiran.</p>
@@ -346,7 +346,7 @@ export default function DocUpload({
               onClick={() => setSearchMethod('dropdown')}
               className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
                 searchMethod === 'dropdown'
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
                   : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
               }`}
             >
@@ -358,7 +358,7 @@ export default function DocUpload({
               onClick={() => setSearchMethod('manual')}
               className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
                 searchMethod === 'manual'
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
                   : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
               }`}
             >
@@ -376,7 +376,7 @@ export default function DocUpload({
                   <select
                     value={selectedDesa}
                     onChange={(e) => setSelectedDesa(e.target.value)}
-                    className="w-full px-2.5 py-2 bg-slate-900 border border-white/10 rounded-xl text-[11px] text-slate-200 font-semibold focus:outline-none focus:border-indigo-400 cursor-pointer"
+                    className="w-full px-2.5 py-2 bg-slate-900 border border-white/10 rounded-xl text-[11px] text-slate-200 font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
                   >
                     <option value="">-- 1. Pilih Desa --</option>
                     {uniqueDesas.map(desa => (
@@ -391,7 +391,7 @@ export default function DocUpload({
                     value={selectedSpan}
                     onChange={(e) => setSelectedSpan(e.target.value)}
                     disabled={!selectedDesa}
-                    className="w-full px-2.5 py-2 bg-slate-900 border border-white/10 rounded-xl text-[11px] text-slate-200 font-semibold focus:outline-none focus:border-indigo-400 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    className="w-full px-2.5 py-2 bg-slate-900 border border-white/10 rounded-xl text-[11px] text-slate-200 font-semibold focus:outline-none focus:border-amber-400 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                   >
                     <option value="">{selectedDesa ? '-- 2. Pilih Span --' : '-- 2. Pilih Desa Dulu --'}</option>
                     {uniqueSpansForDesa.map(span => (
@@ -406,7 +406,7 @@ export default function DocUpload({
                     value={selectedNobid}
                     onChange={(e) => setSelectedNobid(e.target.value)}
                     disabled={!selectedSpan}
-                    className="w-full px-2.5 py-2 bg-slate-900 border border-white/10 rounded-xl text-[11px] text-slate-200 font-semibold focus:outline-none focus:border-indigo-400 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    className="w-full px-2.5 py-2 bg-slate-900 border border-white/10 rounded-xl text-[11px] text-slate-200 font-semibold focus:outline-none focus:border-amber-400 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                   >
                     <option value="">{selectedSpan ? '-- 3. Pilih No. Bidang --' : '-- 3. Pilih Span Dulu --'}</option>
                     {uniqueNobidsForDesaAndSpan.map(nobid => (
@@ -440,7 +440,7 @@ export default function DocUpload({
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Cari CODE atau Nama Pemilik..."
-                  className="w-full pl-9 pr-3 py-2.5 bg-slate-900/50 border border-white/10 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white placeholder-slate-400 animate-fadeIn"
+                  className="w-full pl-9 pr-3 py-2.5 bg-slate-900/50 border border-white/10 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 text-white placeholder-slate-400 animate-fadeIn"
                 />
               </div>
             )}
@@ -473,12 +473,12 @@ export default function DocUpload({
                     }}
                     className={`w-full text-left p-3 rounded-xl border text-xs transition-all flex justify-between items-center cursor-pointer ${
                       isSelected 
-                        ? 'bg-indigo-500/15 border-indigo-500/30 ring-1 ring-indigo-500/30 text-white' 
+                        ? 'bg-amber-500/15 border-amber-500/30 ring-1 ring-amber-500/30 text-white' 
                         : 'bg-white/5 border-white/5 hover:bg-white/10 text-slate-300'
                     }`}
                   >
                     <div className="space-y-1 truncate pr-2">
-                      <p className={`font-bold font-mono truncate ${isSelected ? 'text-indigo-200' : 'text-slate-300'}`}>{r.CODE}</p>
+                      <p className={`font-bold font-mono truncate ${isSelected ? 'text-amber-200' : 'text-slate-300'}`}>{r.CODE}</p>
                       <p className="text-slate-400 font-semibold truncate">{r.NAMA}</p>
                     </div>
                     <span className={`px-2 py-1 rounded-md text-[10px] font-bold shrink-0 ${
@@ -504,7 +504,7 @@ export default function DocUpload({
             <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
                 <div>
-                  <span className="text-[10px] font-extrabold text-indigo-300 bg-indigo-500/15 border border-indigo-500/25 px-2.5 py-1 rounded-md font-mono">
+                  <span className="text-[10px] font-extrabold text-amber-300 bg-amber-500/15 border border-amber-500/25 px-2.5 py-1 rounded-md font-mono">
                     {selectedRecord.CODE}
                   </span>
                   <h3 className="text-lg font-extrabold text-white font-sans mt-2">{selectedRecord.NAMA}</h3>
@@ -517,7 +517,7 @@ export default function DocUpload({
                     href={`https://drive.google.com/drive/folders/${selectedRecord.DRIVE_FOLDER_ID}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-600/10 hover:shadow-indigo-600/20 active:scale-98 transition-all cursor-pointer border border-indigo-400/30 shrink-0 self-start sm:self-center"
+                    className="flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-bold text-xs rounded-xl shadow-md shadow-amber-600/10 hover:shadow-amber-600/20 active:scale-98 transition-all cursor-pointer border border-amber-400/30 shrink-0 self-start sm:self-center"
                   >
                     <FolderOpen className="w-4 h-4 text-emerald-300" />
                     Buka Folder Drive
@@ -527,15 +527,15 @@ export default function DocUpload({
               </div>
 
               {/* PRODUKSI FORMULIR INVENTARISASI (PDF) CARD */}
-              <div className="p-4 rounded-xl border border-indigo-500/20 bg-indigo-500/5 flex flex-col md:flex-row md:items-center justify-between gap-4 animate-fadeIn">
+              <div className="p-4 rounded-xl border border-amber-500/20 bg-amber-500/5 flex flex-col md:flex-row md:items-center justify-between gap-4 animate-fadeIn">
                 <div className="flex items-start gap-3">
-                  <div className="p-2.5 rounded-lg bg-indigo-500/10 text-indigo-400 mt-0.5">
-                    <FileText className="w-5 h-5 text-indigo-300" />
+                  <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-400 mt-0.5">
+                    <FileText className="w-5 h-5 text-amber-300" />
                   </div>
                   <div>
                     <h4 className="text-xs font-bold text-white tracking-tight flex items-center gap-1.5">
                       Cetak Formulir Inventarisasi Resmi (PDF)
-                      <span className="text-[8px] font-extrabold text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded uppercase tracking-wider">
+                      <span className="text-[8px] font-extrabold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded uppercase tracking-wider">
                         Bebas Kuota Firebase
                       </span>
                     </h4>
@@ -558,12 +558,12 @@ export default function DocUpload({
                   >
                     {isDownloadingPDF ? (
                       <>
-                        <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                        <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
                         Memproses...
                       </>
                     ) : (
                       <>
-                        <FileDown className="w-4 h-4 text-indigo-400" />
+                        <FileDown className="w-4 h-4 text-amber-400" />
                         Unduh PDF
                       </>
                     )}
@@ -576,12 +576,12 @@ export default function DocUpload({
                     className={`px-3.5 py-2 text-xs font-bold rounded-xl flex items-center gap-1.5 border transition-all cursor-pointer shadow-xs active:scale-98 ${
                       isSavingPDFToDrive
                         ? 'bg-slate-950 text-slate-500 border-white/5 cursor-not-allowed'
-                        : 'bg-indigo-600 hover:bg-indigo-500 text-white border-indigo-500/30'
+                        : 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold border-amber-500/30'
                     }`}
                   >
                     {isSavingPDFToDrive ? (
                       <>
-                        <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                        <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
                         Menyimpan...
                       </>
                     ) : (
@@ -608,7 +608,7 @@ export default function DocUpload({
 
               {/* Drive Folder structure info */}
               <div className="p-3.5 bg-white/5 rounded-xl border border-white/5 text-[11px] text-slate-300 flex items-start gap-2.5 shadow-inner">
-                <Info className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+                <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   <span className="font-bold text-white flex items-center gap-1.5">
                     Integrasi Otomatis & Kunci Folder Google Drive
@@ -621,12 +621,12 @@ export default function DocUpload({
                   <p className="text-slate-400 leading-relaxed">
                     {selectedRecord.DRIVE_FOLDER_ID ? (
                       <>
-                        Folder bidang ini telah **dikunci secara permanen** dengan Google Drive Folder ID: <code className="text-indigo-200 bg-indigo-950/40 px-1.5 py-0.5 rounded font-mono text-[10px] select-all">{selectedRecord.DRIVE_FOLDER_ID}</code>. 
+                        Folder bidang ini telah **dikunci secara permanen** dengan Google Drive Folder ID: <code className="text-amber-200 bg-amber-950/40 px-1.5 py-0.5 rounded font-mono text-[10px] select-all">{selectedRecord.DRIVE_FOLDER_ID}</code>. 
                         Meskipun Anda mengedit nomor bidang (NOBID), memindahkan baris, atau menyisipkan baris baru di antara bidang lainnya, dokumen di dalam folder ini tidak akan pernah tertukar atau salah tampil!
                       </>
                     ) : (
                       <>
-                        Sistem menggunakan <strong className="text-indigo-200">Kode Unik ({selectedRecord.ID_UNIK})</strong> yang tersambung dengan Google Drive secara permanen. 
+                        Sistem menggunakan <strong className="text-amber-200">Kode Unik ({selectedRecord.ID_UNIK})</strong> yang tersambung dengan Google Drive secara permanen. 
                         Ketika Anda pertama kali mengunggah dokumen, folder akan dibuat dan ID-nya akan dikunci secara otomatis ke baris bidang ini agar tidak pernah tertukar atau salah tampil!
                       </>
                     )}
@@ -679,7 +679,7 @@ export default function DocUpload({
                                 <ExternalLink className="w-3.5 h-3.5" />
                                 Buka File Drive
                               </a>
-                              <label className="px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 text-xs font-semibold rounded-lg border border-indigo-500/25 flex items-center gap-1.5 cursor-pointer transition-colors">
+                              <label className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-semibold rounded-lg border border-amber-500/25 flex items-center gap-1.5 cursor-pointer transition-colors">
                                 <Upload className="w-3.5 h-3.5" />
                                 Ganti
                                 <input 
@@ -695,11 +695,11 @@ export default function DocUpload({
                             <label className={`px-4 py-2 text-xs font-semibold rounded-xl flex items-center gap-1.5 cursor-pointer border shadow-xs transition-all ${
                               isSlotUploading 
                                 ? 'bg-slate-950 text-slate-500 border-white/5 cursor-not-allowed' 
-                                : 'bg-indigo-500 hover:bg-indigo-600 text-white border-indigo-500 glow-indigo'
+                                : 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold border-amber-500 glow-amber'
                             }`}>
                               {isSlotUploading ? (
                                 <>
-                                  <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                                  <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
                                   Mengunggah...
                                 </>
                               ) : (
@@ -728,7 +728,7 @@ export default function DocUpload({
                     {/* Dokumen Utama Section */}
                     <div className="space-y-3">
                       <div className="border-b border-white/5 pb-1 mb-2">
-                        <span className="text-xs font-extrabold text-indigo-300 uppercase tracking-wider">I. Dokumen Utama</span>
+                        <span className="text-xs font-extrabold text-amber-300 uppercase tracking-wider">I. Dokumen Utama</span>
                       </div>
                       {mainDocumentSlots.map(renderSlot)}
                     </div>
@@ -736,7 +736,7 @@ export default function DocUpload({
                     {/* Dokumen Peralihan Hak & Pendukung Section */}
                     <div className="space-y-3 pt-2">
                       <div className="border-b border-white/5 pb-1 mb-2">
-                        <span className="text-xs font-extrabold text-indigo-300 uppercase tracking-wider">II. Dokumen Peralihan Hak & Pendukung (Bisa Lebih Dari 1)</span>
+                        <span className="text-xs font-extrabold text-amber-300 uppercase tracking-wider">II. Dokumen Peralihan Hak & Pendukung (Bisa Lebih Dari 1)</span>
                       </div>
 
                       {/* Legacy Peralihan Link if it exists */}
@@ -764,7 +764,7 @@ export default function DocUpload({
                     {/* Foto & Dokumentasi Lapangan Section */}
                     <div className="space-y-3 pt-2">
                       <div className="border-b border-white/5 pb-1 mb-2">
-                        <span className="text-xs font-extrabold text-indigo-300 uppercase tracking-wider">III. Foto & Dokumentasi Lapangan</span>
+                        <span className="text-xs font-extrabold text-amber-300 uppercase tracking-wider">III. Foto & Dokumentasi Lapangan</span>
                       </div>
                       {photoDocumentSlots.map(renderSlot)}
                     </div>

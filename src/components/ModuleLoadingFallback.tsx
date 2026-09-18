@@ -95,7 +95,7 @@ export default function ModuleLoadingFallback({ activeMenu = 'dashboard', isLigh
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 shadow-md ${
-              isLightMode ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : 'bg-indigo-950/80 text-indigo-400 border border-indigo-500/20'
+              isLightMode ? 'bg-amber-50 text-amber-600 border border-amber-100' : 'bg-amber-950/80 text-amber-400 border border-amber-500/20'
             }`}>
               <IconComponent className="w-6 h-6 animate-pulse" />
             </div>
@@ -105,9 +105,9 @@ export default function ModuleLoadingFallback({ activeMenu = 'dashboard', isLigh
                   {currentMenu.title}
                 </h2>
                 <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase ${
-                  isLightMode ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-indigo-500/10 text-indigo-300 border border-indigo-500/20'
+                  isLightMode ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
                 }`}>
-                  <Loader2 className="w-3 h-3 animate-spin text-indigo-500" />
+                  <Loader2 className="w-3 h-3 animate-spin text-amber-500" />
                   Memuat Modul
                 </span>
               </div>
@@ -119,13 +119,13 @@ export default function ModuleLoadingFallback({ activeMenu = 'dashboard', isLigh
 
           <div className="flex items-center gap-2">
             <div className={`h-8 w-24 rounded-xl animate-pulse ${isLightMode ? 'bg-slate-200' : 'bg-white/5'}`} />
-            <div className={`h-8 w-28 rounded-xl animate-pulse ${isLightMode ? 'bg-indigo-100' : 'bg-indigo-900/20'}`} />
+            <div className={`h-8 w-28 rounded-xl animate-pulse ${isLightMode ? 'bg-amber-100' : 'bg-amber-900/20'}`} />
           </div>
         </div>
 
         {/* Animated Progress Bar */}
         <div className="mt-5 w-full bg-slate-200/40 dark:bg-white/5 h-1.5 rounded-full overflow-hidden relative">
-          <div className="absolute inset-0 bg-gradient-to-r from-indigo-500 via-emerald-400 to-indigo-500 rounded-full w-2/3 animate-[shimmer_1.5s_infinite_linear] bg-[length:200%_100%]" />
+          <div className="absolute inset-0 bg-gradient-to-r from-amber-500 via-emerald-400 to-amber-500 rounded-full w-2/3 animate-[shimmer_1.5s_infinite_linear] bg-[length:200%_100%]" />
         </div>
       </div>
 
@@ -163,7 +163,7 @@ export default function ModuleLoadingFallback({ activeMenu = 'dashboard', isLigh
         </div>
         <div className="flex items-center gap-2">
           <div className={`h-9 w-24 rounded-xl animate-pulse ${isLightMode ? 'bg-slate-200' : 'bg-white/10'}`} />
-          <div className={`h-9 w-28 rounded-xl animate-pulse ${isLightMode ? 'bg-indigo-100' : 'bg-indigo-900/30'}`} />
+          <div className={`h-9 w-28 rounded-xl animate-pulse ${isLightMode ? 'bg-amber-100' : 'bg-amber-900/30'}`} />
         </div>
       </div>
 

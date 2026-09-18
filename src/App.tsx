@@ -5,8 +5,9 @@ import {
 } from './lib/firebase';
 import { doc, getDoc, setDoc, collection, addDoc, getDocs, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { 
-  findOrCreateSpreadsheet, fetchSpreadsheetRecords, saveRecordToSpreadsheet, setupProjectDriveStructure, findOrCreateFolder, fetchWithTimeout, registerTokenRefreshHandler 
+  findOrCreateSpreadsheet, fetchSpreadsheetRecords, saveRecordToSpreadsheet, setupProjectDriveStructure, findOrCreateFolder, fetchWithTimeout, registerTokenRefreshHandler, deleteSpreadsheetRow 
 } from './lib/googleApi';
+import { executeDeleteParcel } from './lib/parcelManagement';
 import {
   saveGeoJSONLayerToFirestore,
   loadGeoJSONLayerDoc,
@@ -904,7 +905,7 @@ export default function App() {
             <p className="text-slate-300 font-normal text-[11px] leading-relaxed">
               Firebase menolak login dari domain preview container ini karena belum didaftarkan di Firebase Console.
             </p>
-            <div className="bg-slate-900/90 border border-slate-700/70 rounded-lg p-2 flex items-center justify-between gap-2 text-[11px] font-mono text-indigo-300">
+            <div className="bg-slate-900/90 border border-slate-700/70 rounded-lg p-2 flex items-center justify-between gap-2 text-[11px] font-mono text-amber-300">
               <span className="truncate select-all">{currentDomain}</span>
               <button
                 type="button"
@@ -912,7 +913,7 @@ export default function App() {
                   navigator.clipboard.writeText(currentDomain);
                   alert(`Domain "${currentDomain}" berhasil disalin! Tambahkan ke Firebase Console > Authentication > Settings > Authorized domains.`);
                 }}
-                className="bg-indigo-600/80 hover:bg-indigo-500 text-white px-2 py-1 rounded text-[10px] font-sans font-semibold shrink-0 cursor-pointer"
+                className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-2 py-1 rounded text-[10px] font-sans font-semibold shrink-0 cursor-pointer"
               >
                 Salin Domain
               </button>
@@ -929,7 +930,7 @@ export default function App() {
                 href={window.location.href} 
                 target="_blank" 
                 rel="noopener noreferrer" 
-                className="inline-flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] px-3.5 py-2 rounded-xl transition-all w-full"
+                className="inline-flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-bold text-[11px] px-3.5 py-2 rounded-xl transition-all w-full"
               >
                 <ExternalLink className="w-3.5 h-3.5" /> Buka di Tab Baru
               </a>
@@ -958,7 +959,7 @@ export default function App() {
                 href={window.location.href} 
                 target="_blank" 
                 rel="noopener noreferrer" 
-                className="inline-flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] px-3.5 py-2 rounded-xl transition-all w-full"
+                className="inline-flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-bold text-[11px] px-3.5 py-2 rounded-xl transition-all w-full"
               >
                 <ExternalLink className="w-3.5 h-3.5" /> Buka di Tab Baru
               </a>
@@ -1875,6 +1876,71 @@ export default function App() {
     logActivity(updatedRecord.CODE, actionType, details);
   };
 
+  // Handle Batch Update of Records (e.g. from Merge or Split Bidang)
+  const handleBatchUpdateRecords = async (newRecords: LandRecord[], logDetails: string) => {
+    const sorted = [...newRecords].sort(compareLandRecords);
+    setRecords(sorted);
+
+    // 1. Update localStorage cache
+    try {
+      localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(sorted));
+    } catch (e) {
+      console.warn("localStorage quota exceeded:", e);
+    }
+
+    // 2. Update Firestore cache
+    try {
+      await saveRecordsToFirestoreCache(activeProjectId, sorted);
+    } catch (e) {
+      console.warn("Gagal menyimpan cache Firestore:", e);
+    }
+
+    // 3. Log Activity
+    logActivity('MUTASI_BIDANG', 'UPDATE', logDetails);
+
+    // 4. Update integrity status if active
+    if (integrityStatus) {
+      setIntegrityStatus({
+        ...integrityStatus,
+        cacheCount: sorted.length,
+        message: `[Mutasi Bidang Sukses] ${logDetails} (Total: ${sorted.length} bidang).`
+      });
+    }
+
+    // 5. Toast Feedback
+    setSyncFeedback({
+      type: 'success',
+      message: `✅ Berhasil: ${logDetails}`,
+      timestamp: Date.now()
+    });
+  };
+
+  // Handle Delete Record (Admin Only)
+  const handleDeleteRecord = async (targetRecord: LandRecord, adjustNextParcels: boolean = true) => {
+    if (role !== 'ADMIN') {
+      alert('Akses Ditolak: Hanya akun dengan peran Administrator (ADMIN) yang diizinkan untuk menghapus data bidang.');
+      return;
+    }
+
+    const { updatedRecords, logSummary } = executeDeleteParcel(records, {
+      targetRecord,
+      adjustNextParcels
+    });
+
+    // Delete row from Google Sheets in background if connected and rowNumber is valid
+    if (targetRecord.rowNumber && targetRecord.rowNumber > 1 && spreadsheetId && token && token !== 'GUEST_BYPASS') {
+      deleteSpreadsheetRow(token, spreadsheetId, targetRecord.rowNumber).catch(e => {
+        console.warn('Gagal menghapus baris di Google Sheets:', e);
+      });
+    }
+
+    if (selectedRecordForEdit && (selectedRecordForEdit.CODE === targetRecord.CODE || selectedRecordForEdit.ID_UNIK === targetRecord.ID_UNIK)) {
+      setSelectedRecordForEdit(null);
+    }
+
+    await handleBatchUpdateRecords(updatedRecords, logSummary);
+  };
+
   // Handle Registered Operator Verification
   const handleVerifyOperator = (e: React.FormEvent) => {
     e.preventDefault();
@@ -2209,24 +2275,30 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans relative overflow-x-hidden" id="sip_root_app">
-      {/* Dynamic Background Blur Blobs */}
-      <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-indigo-600 bg-blob-indigo rounded-full blur-[130px] opacity-15 pointer-events-none z-0"></div>
-      <div className="absolute bottom-[-10%] right-[-10%] w-[600px] h-[600px] bg-emerald-600 bg-blob-emerald rounded-full blur-[150px] opacity-15 pointer-events-none z-0"></div>
-      <div className="absolute top-[40%] right-[10%] w-[350px] h-[350px] bg-purple-600 bg-blob-purple rounded-full blur-[120px] opacity-10 pointer-events-none z-0"></div>
+      {/* Dynamic Background Blur Blobs - VSS Gold & Charcoal */}
+      <div className="absolute top-[-10%] left-[-10%] w-[550px] h-[550px] bg-amber-500/10 rounded-full blur-[140px] pointer-events-none z-0"></div>
+      <div className="absolute bottom-[-10%] right-[-10%] w-[600px] h-[600px] bg-amber-600/10 rounded-full blur-[150px] pointer-events-none z-0"></div>
+      <div className="absolute top-[35%] right-[5%] w-[400px] h-[400px] bg-yellow-500/5 rounded-full blur-[120px] pointer-events-none z-0"></div>
 
       {/* 1. TOP BAR NAVBAR */}
-      <header className="glass-card border-t-0 border-x-0 sticky top-0 z-40 px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-4 shadow-xl">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-indigo-500/20 text-indigo-400 rounded-2xl border border-indigo-500/30 shadow-inner">
-            <Briefcase className="w-5 h-5 text-indigo-400" />
+      <header className="glass-card border-t-0 border-x-0 sticky top-0 z-40 px-6 py-3.5 flex flex-col md:flex-row justify-between items-center gap-4 shadow-xl border-b border-amber-500/20 bg-slate-950/80">
+        <div className="flex items-center gap-3.5">
+          {/* Compass Icon Badge reflecting VSS Geodetic/GIS Logo */}
+          <div className="p-2 bg-amber-500/15 text-amber-400 rounded-xl border border-amber-500/30 shadow-inner flex items-center justify-center">
+            <Globe className="w-5 h-5 text-amber-400" />
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-2.5 h-2.5 bg-indigo-400 rounded-full animate-pulse shadow-md shadow-indigo-400/50"></div>
+            <div className="w-2.5 h-2.5 bg-amber-400 rounded-full animate-pulse shadow-md shadow-amber-400/50"></div>
             <div>
-              <h1 className="text-md font-extrabold text-white tracking-tight leading-none font-sans uppercase">
-                PROJECT <span className="text-indigo-400 font-light">VENTURA</span>
-              </h1>
-              <p className="text-[9px] text-slate-400 font-bold tracking-wider uppercase mt-1">Sistem Informasi Pertanahan Desa</p>
+              <div className="flex items-center gap-1.5">
+                <span className="text-base font-black text-white tracking-tight leading-none font-sans uppercase">
+                  VENTURA <span className="text-amber-400 font-extrabold">SKALA SIMETRIS</span>
+                </span>
+                <span className="text-[9px] font-black bg-amber-400/20 text-amber-300 border border-amber-400/30 px-1.5 py-0.5 rounded tracking-wider">
+                  VSS
+                </span>
+              </div>
+              <p className="text-[9px] text-slate-400 font-bold tracking-wider uppercase mt-1">Sistem Informasi Pertanahan & Jalur Transmisi</p>
             </div>
           </div>
         </div>
@@ -2257,17 +2329,17 @@ export default function App() {
             <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto self-stretch md:self-auto justify-end">
               {/* Interactive Jalur / Proyek Selector Dropdown */}
               {isOperatorLocked && operatorLockedProjectId ? (
-                <div className="flex items-center gap-2 bg-indigo-500/10 border border-indigo-500/20 px-3 py-1.5 rounded-xl w-full sm:w-auto sm:max-w-[320px] lg:max-w-[420px] truncate shadow-inner" title="Jalur dikunci oleh akun operator">
+                <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-xl w-full sm:w-auto sm:max-w-[320px] lg:max-w-[420px] truncate shadow-inner" title="Jalur dikunci oleh akun operator">
                   <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span className="text-[9px] font-extrabold text-indigo-300 uppercase tracking-wider shrink-0">Jalur:</span>
+                  <span className="text-[9px] font-extrabold text-amber-300 uppercase tracking-wider shrink-0">Jalur:</span>
                   <span className="text-xs font-extrabold text-white truncate font-sans">
                     {projects.find(p => p.id === activeProjectId)?.name || 'MEMUAT...'}
                   </span>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 bg-slate-900/90 hover:bg-slate-900 border border-indigo-500/40 hover:border-indigo-400 px-3 py-1 rounded-xl w-full sm:w-auto sm:max-w-[340px] lg:max-w-[440px] shadow-sm transition-all group">
-                  <Briefcase className="w-3.5 h-3.5 text-indigo-400 shrink-0 group-hover:text-indigo-300" />
-                  <span className="text-[9px] font-extrabold text-indigo-300 uppercase tracking-wider shrink-0">Jalur:</span>
+                <div className="flex items-center gap-2 bg-slate-900/90 hover:bg-slate-900 border border-amber-500/40 hover:border-amber-400 px-3 py-1 rounded-xl w-full sm:w-auto sm:max-w-[340px] lg:max-w-[440px] shadow-sm transition-all group">
+                  <Briefcase className="w-3.5 h-3.5 text-amber-400 shrink-0 group-hover:text-amber-300" />
+                  <span className="text-[9px] font-extrabold text-amber-300 uppercase tracking-wider shrink-0">Jalur:</span>
                   <select
                     id="header_active_project_select"
                     value={activeProjectId}
@@ -2328,11 +2400,11 @@ export default function App() {
                   {operatorName && (
                     <div className="flex flex-col text-right pr-1">
                       <span className="text-[10px] font-extrabold text-slate-200 uppercase leading-none">{operatorName}</span>
-                      <span className="text-[8px] font-mono text-indigo-400 mt-0.5">Operator</span>
+                      <span className="text-[8px] font-mono text-amber-400 mt-0.5">Operator</span>
                     </div>
                   )}
                   <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-lg border uppercase tracking-wider ${
-                    role === 'ADMIN' ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30' :
+                    role === 'ADMIN' ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' :
                     role === 'FIELD' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' :
                     role === 'QC' ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' :
                     'bg-slate-500/15 text-slate-300 border-slate-500/30'
@@ -2354,7 +2426,7 @@ export default function App() {
                   {user.photoURL ? (
                     <img src={user.photoURL} alt={user.displayName} referrerPolicy="no-referrer" className="w-7 h-7 rounded-full border border-white/10" />
                   ) : (
-                    <div className="w-7 h-7 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center justify-center font-bold text-xs shrink-0">
+                    <div className="w-7 h-7 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center justify-center font-bold text-xs shrink-0">
                       {user.displayName?.charAt(0) || user.email?.charAt(0) || 'U'}
                     </div>
                   )}
@@ -2374,103 +2446,177 @@ export default function App() {
 
       {/* 2. AUTHENTICATION & PORTAL LOGINS GATE */}
       {(!user || !token) ? (
-        // A. Google Authentication Landing Card (Needs authorization first)
-        <main className="flex-1 max-w-4xl mx-auto w-full px-6 py-12 flex flex-col justify-center items-center z-10" id="sip_auth_landing">
-          <div className="glass-card rounded-3xl overflow-hidden p-8 md:p-12 text-center space-y-8 max-w-lg w-full shadow-2xl border border-white/10">
-            <div className="mx-auto w-16 h-16 bg-indigo-500/10 text-indigo-400 rounded-2xl flex items-center justify-center border border-white/10 shadow-lg">
-              <FileSpreadsheet className="w-8 h-8" />
-            </div>
+        // A. Google Authentication Landing Card (Needs authorization first) - Ventura VSS Corporate Theme
+        <main className="flex-1 max-w-5xl mx-auto w-full px-4 sm:px-6 py-8 md:py-12 flex flex-col justify-center items-center z-10" id="sip_auth_landing">
+          
+          {/* Main Hero Container */}
+          <div className="w-full max-w-2xl space-y-6">
+            
+            {/* Top Brand Header Card */}
+            <div className="bg-slate-900/95 rounded-3xl overflow-hidden p-7 sm:p-10 text-center space-y-6 shadow-2xl border border-amber-500/25 relative">
+              {/* Subtle top accent bar in VSS Gold */}
+              <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-amber-600 via-amber-400 to-yellow-500"></div>
 
-            <div className="space-y-3">
-              <span className="text-[10px] font-bold text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-3 py-1.5 rounded-full uppercase tracking-wider">
-                Desa Digital & Sertifikasi Tanah
-              </span>
-              <h2 className="text-2xl font-extrabold text-white tracking-tight font-sans uppercase">
-                PROJECT VENTURA
-              </h2>
-              <p className="text-slate-400 text-xs leading-relaxed max-w-sm mx-auto">
-                Silakan hubungkan akun Google Drive untuk menyinkronkan data lahan, berkas fisik PDF, jalur kompensasi ROW, serta administrasi quality control secara real-time.
-              </p>
-            </div>
+              <div className="mx-auto w-16 h-16 bg-amber-500/15 text-amber-400 rounded-2xl flex items-center justify-center border border-amber-500/30 shadow-lg shadow-amber-500/10">
+                <Globe className="w-8 h-8 text-amber-400" />
+              </div>
 
-            {/* Detect if inside iframe and render warning */}
-            {typeof window !== 'undefined' && window.self !== window.top && !authError && (
-              <div className="p-3.5 bg-indigo-500/10 border border-indigo-500/20 text-slate-300 text-xs rounded-xl text-left space-y-2.5 leading-relaxed">
-                <div className="flex items-center gap-2 text-indigo-400 font-bold">
-                  <Info className="w-4 h-4 shrink-0 text-indigo-400" />
-                  <span className="uppercase tracking-wider text-[10px]">Tips Penggunaan Iframe</span>
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                  <span className="text-[10px] font-black text-amber-300 uppercase tracking-widest">
+                    PT. VENTURA SKALA SIMETRIS
+                  </span>
                 </div>
-                <p className="text-[11px]">
-                  Aplikasi ini berjalan dalam iframe AI Studio. Google Sign-In memerlukan jendela popup yang mungkin diblokir browser Anda. Jika Anda mengalami kendala login, silakan buka aplikasi di tab baru:
+                <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight uppercase font-sans">
+                  Sistem Informasi Pertanahan & GIS
+                </h2>
+                <p className="text-slate-300 text-xs sm:text-sm leading-relaxed max-w-lg mx-auto font-normal">
+                  Platform terpadu inventarisasi pengadaan tanah, survei tegakan & bangunan, pemetaan spasial koridor Right of Way (RoW), serta penyusunan daftar nominatif jalur transmisi.
                 </p>
-                <a 
-                  href={window.location.href} 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
-                  className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] py-2 px-3 rounded-lg transition-all"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" /> Buka di Tab Baru & Login
-                </a>
               </div>
-            )}
 
-            {authError && (
-              <div className="p-3.5 bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs font-semibold rounded-xl flex items-start gap-2">
-                <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-                <div className="text-left flex-1">{authError}</div>
-              </div>
-            )}
-
-            <button 
-              onClick={handleLogin}
-              disabled={isLoggingIn}
-              className="w-full flex items-center justify-center gap-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 border border-indigo-500/30 rounded-xl px-5 py-3 text-sm font-semibold text-white transition-all cursor-pointer shadow-lg hover:shadow-indigo-500/20"
-            >
-              <div className="flex items-center justify-center gap-3">
-                <div className="shrink-0">
-                  <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style={{ display: 'block', width: '20px', height: '20px' }}>
-                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                    <path fill="none" d="M0 0h48v48H0z"></path>
-                  </svg>
+              {/* Quick Insight Overview Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 text-left">
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-white/5 space-y-1">
+                  <div className="flex items-center gap-1.5 text-amber-400 font-bold text-xs">
+                    <MapIcon className="w-3.5 h-3.5 shrink-0" />
+                    <span>Peta Spasial GIS</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-tight">
+                    Visualisasi batas poligon bidang, tapak tower, dan as jalur transmisi interaktif.
+                  </p>
                 </div>
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-100">
-                  {isLoggingIn ? 'Menghubungkan Google...' : 'Hubungkan Google Drive'}
-                </span>
-              </div>
-            </button>
 
-            <div className="flex items-center justify-center gap-2 text-slate-500">
-              <span className="h-px bg-white/10 flex-1"></span>
-              <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-500">ATAU</span>
-              <span className="h-px bg-white/10 flex-1"></span>
-            </div>
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-white/5 space-y-1">
+                  <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-xs">
+                    <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
+                    <span>Daftar Nominatif</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-tight">
+                    Sinkronisasi berkas kepemilikan, alas hak, NIK, dan kompensasi tanam tumbuh.
+                  </p>
+                </div>
 
-            <button 
-              type="button"
-              onClick={handleGuestBypassLogin}
-              className="w-full flex items-center justify-center gap-2.5 bg-slate-900 border border-white/10 hover:bg-slate-950 rounded-xl px-5 py-3 text-xs font-bold text-slate-300 hover:text-white transition-all cursor-pointer shadow-md"
-            >
-              <UserCheck className="w-4 h-4 text-indigo-400 shrink-0" />
-              <span>MASUK SEBAGAI TAMU (TANPA AKUN GOOGLE)</span>
-            </button>
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-white/5 space-y-1">
+                  <div className="flex items-center gap-1.5 text-sky-400 font-bold text-xs">
+                    <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                    <span>QC & Administrasi</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-tight">
+                    Validasi berlapis data lapangan, mutasi pecah/gabung bidang, & ekspor laporan.
+                  </p>
+                </div>
+              </div>
 
-            <div className="border-t border-white/5 pt-6 text-left space-y-3.5 text-xs text-slate-400">
-              <p className="font-semibold text-slate-300 text-center mb-1 text-[11px] uppercase tracking-wide">Persyaratan Akses Sistem</p>
-              <div className="flex gap-2.5">
-                <div className="text-indigo-400 shrink-0 font-bold">1.</div>
-                <p><strong>Admin / Creator:</strong> Harus masuk dengan Google Account yang memiliki lisensi Google Drive & Sheets untuk inisialisasi struktur file.</p>
+              {/* Detect if inside iframe and render warning */}
+              {typeof window !== 'undefined' && window.self !== window.top && !authError && (
+                <div className="p-3.5 bg-amber-500/10 border border-amber-500/20 text-slate-300 text-xs rounded-xl text-left space-y-2 leading-relaxed">
+                  <div className="flex items-center gap-2 text-amber-400 font-bold">
+                    <Info className="w-4 h-4 shrink-0 text-amber-400" />
+                    <span className="uppercase tracking-wider text-[10px]">Perhatian Akses Iframe</span>
+                  </div>
+                  <p className="text-[11px]">
+                    Jika popup Google Sign-In terhalang pembatasan browser, Anda dapat membuka portal langsung di jendela baru:
+                  </p>
+                  <a 
+                    href={window.location.href} 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="w-full flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs py-2 px-3 rounded-lg transition-all"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" /> Buka Aplikasi di Tab Baru
+                  </a>
+                </div>
+              )}
+
+              {authError && (
+                <div className="p-3.5 bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs font-semibold rounded-xl flex items-start gap-2 text-left">
+                  <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="flex-1">{authError}</div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="space-y-3 pt-1">
+                <button 
+                  onClick={handleLogin}
+                  disabled={isLoggingIn}
+                  className="w-full flex items-center justify-center gap-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-black rounded-xl px-5 py-3.5 text-sm transition-all cursor-pointer shadow-lg shadow-amber-500/20 active:scale-[0.99]"
+                >
+                  <div className="flex items-center justify-center gap-3">
+                    <div className="shrink-0 bg-white p-1 rounded-md">
+                      <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style={{ display: 'block', width: '18px', height: '18px' }}>
+                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                        <path fill="none" d="M0 0h48v48H0z"></path>
+                      </svg>
+                    </div>
+                    <span className="text-xs uppercase tracking-wider font-extrabold text-slate-950">
+                      {isLoggingIn ? 'Menghubungkan Akun...' : 'Masuk Dengan Akun Google (Operator / Admin)'}
+                    </span>
+                  </div>
+                </button>
+
+                <div className="flex items-center justify-center gap-2 text-slate-600">
+                  <span className="h-px bg-white/10 flex-1"></span>
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">ATAU</span>
+                  <span className="h-px bg-white/10 flex-1"></span>
+                </div>
+
+                <button 
+                  type="button"
+                  onClick={handleGuestBypassLogin}
+                  className="w-full flex items-center justify-center gap-2.5 bg-slate-950 hover:bg-slate-900 border border-amber-500/20 hover:border-amber-500/50 rounded-xl px-5 py-3 text-xs font-bold text-slate-200 hover:text-white transition-all cursor-pointer shadow-md"
+                >
+                  <UserCheck className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>MASUK SEBAGAI TAMU (MODE PANTAU / READ-ONLY)</span>
+                </button>
               </div>
-              <div className="flex gap-2.5">
-                <div className="text-indigo-400 shrink-0 font-bold">2.</div>
-                <p><strong>Staf Lapangan / QC / Tamu:</strong> Masuk menggunakan tautan Google yang sama atau yang telah diberi izin akses ke Google Drive Folder proyek oleh Admin.</p>
+
+              {/* Bantuan & Hubungi Admin (WhatsApp & Email Icon Only) */}
+              <div className="border-t border-white/10 pt-5 text-left">
+                <div className="flex items-center justify-between gap-4 bg-slate-950/70 p-4 rounded-2xl border border-white/5">
+                  <div className="space-y-0.5 min-w-0 flex-1">
+                    <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <HelpCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      Pusat Bantuan & Layanan Informasi
+                    </p>
+                    <p className="text-[11px] text-slate-400 leading-snug">
+                      Butuh bantuan akses, izin folder proyek, atau pertanyaan teknis? Hubungi admin kami:
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2.5 shrink-0">
+                    {/* WhatsApp Icon Button (Direct Click) */}
+                    <a
+                      href="https://wa.me/6281225085742?text=Halo%20Admin%20Ventura,%20saya%20membutuhkan%20informasi%20bantuan%20terkait%20Sistem%20Informasi%20Pertanahan%20VSS."
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-10 h-10 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center transition-all shadow-md hover:shadow-emerald-500/20 active:scale-95 cursor-pointer"
+                      title="Hubungi Admin via WhatsApp"
+                      aria-label="Hubungi Admin via WhatsApp"
+                    >
+                      <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                        <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+                      </svg>
+                    </a>
+
+                    {/* Email Icon Button (Direct Click) */}
+                    <a
+                      href="mailto:agungpambudi763@gmail.com?subject=Pertanyaan%20Sistem%20Informasi%20Pertanahan%20VSS"
+                      className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 border border-white/10 flex items-center justify-center transition-all shadow-md active:scale-95 cursor-pointer"
+                      title="Kirim Email ke Admin"
+                      aria-label="Kirim Email ke Admin"
+                    >
+                      <Mail className="w-5 h-5" />
+                    </a>
+                  </div>
+                </div>
               </div>
-              <div className="flex gap-2.5">
-                <div className="text-indigo-400 shrink-0 font-bold">3.</div>
-                <p><strong>Mode Tamu (Bypass Google):</strong> Akses cepat tanpa login Google. Menggunakan data lokal ter-cache dari sinkronisasi terakhir untuk melihat visualisasi, peta progres, & filter data (Read-Only).</p>
-              </div>
+
             </div>
           </div>
         </main>
@@ -2541,11 +2687,13 @@ export default function App() {
             </div>
           </main>
         ) : (
-          // 2. Unified Operator & Admin Login Form (Request 3)
+          // 2. Unified Operator & Admin Login Form (Request 3) - VSS Theme
           <main className="flex-1 max-w-4xl mx-auto w-full px-6 py-12 flex flex-col justify-center items-center z-10" id="sip_role_gate_auth">
-            <div className="glass-card rounded-3xl p-8 md:p-10 max-w-lg w-full shadow-2xl border border-white/10 space-y-6 animate-fadeIn">
+            <div className="bg-slate-900/95 rounded-3xl p-8 md:p-10 max-w-lg w-full shadow-2xl border border-amber-500/25 space-y-6 animate-fadeIn relative overflow-hidden">
+              <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-amber-600 via-amber-400 to-yellow-500"></div>
+              
               <div className="text-center space-y-2">
-                <div className="w-12 h-12 bg-indigo-500/10 text-indigo-400 rounded-xl flex items-center justify-center border border-white/5 mx-auto">
+                <div className="w-12 h-12 bg-amber-500/15 text-amber-400 rounded-xl flex items-center justify-center border border-amber-500/30 mx-auto">
                   <UserCheck className="w-6 h-6" />
                 </div>
                 <h2 className="text-xl font-black text-white uppercase tracking-tight font-sans">Masuk Akun Operator</h2>
@@ -2556,7 +2704,7 @@ export default function App() {
 
               <form onSubmit={handleVerifyOperator} className="space-y-4">
                 <div className="space-y-1.5">
-                  <label htmlFor="op_login_username" className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider block">
+                  <label htmlFor="op_login_username" className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">
                     Nama Pengguna (Username)
                   </label>
                   <div className="relative">
@@ -2570,20 +2718,20 @@ export default function App() {
                       value={operatorLoginUsername}
                       onChange={(e) => setOperatorLoginUsername(e.target.value)}
                       placeholder="Masukkan nama pengguna..."
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold font-sans"
+                      className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold font-sans"
                     />
                   </div>
                 </div>
 
                 <div className="space-y-1.5">
                   <div className="flex justify-between items-center">
-                    <label htmlFor="op_login_password" className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider block">
+                    <label htmlFor="op_login_password" className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">
                       Sandi Akses / PIN
                     </label>
                     <button
                       type="button"
                       onClick={() => setShowPin(!showPin)}
-                      className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-bold cursor-pointer"
+                      className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1 font-bold cursor-pointer"
                     >
                       {showPin ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                       {showPin ? 'Sembunyikan' : 'Tampilkan'}
@@ -2600,7 +2748,7 @@ export default function App() {
                       value={operatorLoginPassword}
                       onChange={(e) => setOperatorLoginPassword(e.target.value)}
                       placeholder="Masukkan sandi atau PIN..."
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold"
+                      className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold"
                     />
                   </div>
                 </div>
@@ -2616,13 +2764,13 @@ export default function App() {
                   <button
                     type="button"
                     onClick={handleLogout}
-                    className="flex-1 py-2.5 bg-slate-900 border border-white/10 hover:bg-slate-950 text-slate-300 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                    className="flex-1 py-2.5 bg-slate-950 border border-white/10 hover:bg-slate-900 text-slate-300 text-xs font-bold rounded-xl transition-all cursor-pointer"
                   >
                     Ganti Akun Google
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-600/25 cursor-pointer"
+                    className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 text-xs font-black rounded-xl transition-all shadow-lg shadow-amber-500/20 cursor-pointer"
                   >
                     Masuk Operator
                   </button>
@@ -2650,10 +2798,10 @@ export default function App() {
               <button
                 onMouseEnter={() => setIsSidebarHovered(true)}
                 onClick={() => setIsSidebarHovered(true)}
-                className="p-3 bg-indigo-600/90 hover:bg-indigo-500 text-white rounded-r-2xl shadow-xl border border-l-0 border-indigo-400/30 transition-all hover:pr-5 cursor-pointer flex items-center justify-center group"
+                className="p-3 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-r-2xl shadow-xl border border-l-0 border-amber-400/50 transition-all hover:pr-5 cursor-pointer flex items-center justify-center group font-black"
                 title="Arahkan kursor atau klik untuk membuka menu"
               >
-                <Menu className="w-4 h-4 animate-pulse group-hover:scale-110 transition-all" />
+                <Menu className="w-4 h-4 group-hover:scale-110 transition-all text-slate-950" />
               </button>
               
               {/* Secret hover-trigger border zone */}
@@ -2671,8 +2819,8 @@ export default function App() {
             className={`
               transition-all duration-300 ease-in-out shadow-lg flex flex-col gap-1.5 shrink-0
               ${isSidebarPinned 
-                ? 'md:w-64 glass-card p-4 rounded-2xl h-fit' 
-                : `fixed top-0 left-0 h-full w-72 p-6 z-50 bg-slate-950/98 backdrop-blur-md border-r border-white/10 shadow-2xl transform ${
+                ? 'md:w-64 glass-card p-4 rounded-2xl h-fit border-amber-500/15' 
+                : `fixed top-0 left-0 h-full w-72 p-6 z-50 bg-slate-950/98 backdrop-blur-md border-r border-amber-500/20 shadow-2xl transform ${
                     isSidebarHovered ? 'translate-x-0' : '-translate-x-full'
                   }`
               }
@@ -2680,8 +2828,8 @@ export default function App() {
           >
             {/* Sidebar Title with Pinned/Unpinned toggle button */}
             <div className="flex items-center justify-between border-b border-white/5 pb-2.5 mb-2.5 px-1">
-              <span className="text-[10px] font-extrabold text-slate-400 tracking-wider uppercase">
-                Menu Aplikasi
+              <span className="text-[10px] font-extrabold text-amber-400 tracking-wider uppercase">
+                Menu Aplikasi VSS
               </span>
               <button
                 type="button"
@@ -2694,9 +2842,9 @@ export default function App() {
                 title={isSidebarPinned ? "Sembunyikan menu otomatis (Auto-hide)" : "Sematkan menu di samping (Pinned)"}
               >
                 {isSidebarPinned ? (
-                  <Pin className="w-3.5 h-3.5 text-indigo-400" />
+                  <Pin className="w-3.5 h-3.5 text-amber-400" />
                 ) : (
-                  <Pin className="w-3.5 h-3.5 rotate-45 text-slate-500 hover:text-indigo-400" />
+                  <Pin className="w-3.5 h-3.5 rotate-45 text-slate-500 hover:text-amber-400" />
                 )}
               </button>
             </div>
@@ -2709,7 +2857,7 @@ export default function App() {
               }}
               className={`w-full text-left px-4 py-3 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
                 activeMenu === 'dashboard' 
-                  ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-inner' 
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-inner' 
                   : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
               }`}
             >
@@ -2725,7 +2873,7 @@ export default function App() {
               }}
               className={`w-full text-left pl-7 pr-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
                 activeMenu === 'nominatif' 
-                  ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-inner' 
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-inner' 
                   : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
               }`}
             >
@@ -2741,11 +2889,11 @@ export default function App() {
               }}
               className={`w-full text-left pl-7 pr-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
                 activeMenu === 'map' 
-                  ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-inner' 
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-inner' 
                   : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
               }`}
             >
-              <MapIcon className="w-3.5 h-3.5 shrink-0 text-sky-400" />
+              <MapIcon className="w-3.5 h-3.5 shrink-0 text-amber-400" />
               1.2. Peta Spasial (GIS)
             </button>
 
@@ -2757,7 +2905,7 @@ export default function App() {
               }}
               className={`w-full text-left pl-7 pr-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
                 activeMenu === 'map_span' 
-                  ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-inner' 
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-inner' 
                   : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
               }`}
             >
@@ -2774,11 +2922,11 @@ export default function App() {
               }}
               className={`w-full text-left pl-7 pr-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
                 activeMenu === 'resume_project' 
-                  ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-inner' 
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-inner' 
                   : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
               }`}
             >
-              <Landmark className="w-3.5 h-3.5 shrink-0 text-purple-400" />
+              <Landmark className="w-3.5 h-3.5 shrink-0 text-yellow-400" />
               1.4. Resume Project
             </button>
 
@@ -2791,11 +2939,11 @@ export default function App() {
               }}
               className={`w-full text-left pl-7 pr-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
                 activeMenu === 'surat_instansi' 
-                  ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-inner' 
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-inner' 
                   : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
               }`}
             >
-              <Mail className="w-3.5 h-3.5 shrink-0 text-sky-400" />
+              <Mail className="w-3.5 h-3.5 shrink-0 text-amber-400" />
               1.5. Surat Instansi
             </button>
 
@@ -2808,7 +2956,7 @@ export default function App() {
                 }}
                 className={`w-full text-left px-4 py-3 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
                   activeMenu === 'input' 
-                    ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-inner' 
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-inner' 
                     : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
                 }`}
               >
@@ -2827,7 +2975,7 @@ export default function App() {
                   }}
                   className={`w-full text-left px-4 py-3 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
                     activeMenu === 'qc' 
-                      ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-inner' 
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-inner' 
                       : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
                   }`}
                 >
@@ -2843,11 +2991,11 @@ export default function App() {
                   }}
                   className={`w-full text-left pl-7 pr-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
                     activeMenu === 'qc_sanding' 
-                      ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-inner' 
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-inner' 
                       : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
                   }`}
                 >
-                  <GitCompare className="w-3.5 h-3.5 shrink-0 text-indigo-400" />
+                  <GitCompare className="w-3.5 h-3.5 shrink-0 text-amber-400" />
                   3.1. Sanding Data (Peta vs Input)
                 </button>
 
@@ -2859,7 +3007,7 @@ export default function App() {
                   }}
                   className={`w-full text-left pl-7 pr-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
                     activeMenu === 'qc_sanding_esdm' 
-                      ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-inner' 
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-inner' 
                       : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
                   }`}
                 >
@@ -2878,7 +3026,7 @@ export default function App() {
                 }}
                 className={`w-full text-left px-4 py-3 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
                   activeMenu === 'logs' 
-                    ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-inner' 
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-inner' 
                     : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
                 }`}
               >
@@ -2896,11 +3044,11 @@ export default function App() {
                 }}
                 className={`w-full text-left px-4 py-3 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
                   activeMenu === 'project' 
-                    ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-inner' 
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-inner' 
                     : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
                 }`}
               >
-                <Briefcase className="w-4 h-4 shrink-0 text-indigo-400" />
+                <Briefcase className="w-4 h-4 shrink-0 text-amber-400" />
                 5. Manajemen Proyek
               </button>
             )}
@@ -2918,7 +3066,7 @@ export default function App() {
                 title="Buka Komparasi Data Cache vs Google Spreadsheet"
               >
                 <div className="flex items-center gap-2.5">
-                  <GitCompare className="w-4 h-4 shrink-0 text-indigo-400 group-hover:text-indigo-300" />
+                  <GitCompare className="w-4 h-4 shrink-0 text-amber-400 group-hover:text-amber-300" />
                   <span>Komparasi Cache vs Master</span>
                 </div>
                 {integrityStatus && integrityStatus.status === 'INCONSISTENT' && (
@@ -2933,10 +3081,10 @@ export default function App() {
             <div className="mt-4 p-3 bg-white/5 rounded-xl border border-white/10 text-[10px] text-slate-400 space-y-2 font-sans shadow-inner">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-slate-200 uppercase tracking-wide block text-[10px] flex items-center gap-1.5">
-                  <Briefcase className="w-3 h-3 text-indigo-400" />
+                  <Briefcase className="w-3 h-3 text-amber-400" />
                   Jalur Transmisi
                 </span>
-                <span className="text-[9px] font-mono text-indigo-400 font-bold bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">
+                <span className="text-[9px] font-mono text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
                   {projects.length} Jalur
                 </span>
               </div>
@@ -2951,7 +3099,7 @@ export default function App() {
                       setActiveProjectId(newId);
                       localStorage.setItem('project_ventura_active_project_id', newId);
                     }}
-                    className="w-full px-2.5 py-2 bg-slate-900 border border-indigo-500/30 hover:border-indigo-400/60 rounded-lg text-[11px] font-bold text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer truncate shadow-sm"
+                    className="w-full px-2.5 py-2 bg-slate-900 border border-amber-500/30 hover:border-amber-400/60 rounded-lg text-[11px] font-bold text-white focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer truncate shadow-sm"
                     title="Pilih Jalur Transmisi / Proyek Aktif"
                   >
                     {projects.map((proj) => (
@@ -2962,9 +3110,9 @@ export default function App() {
                   </select>
                 </div>
               ) : (
-                <div className="flex items-center gap-1.5 bg-indigo-500/10 p-2 rounded-lg border border-indigo-500/20">
+                <div className="flex items-center gap-1.5 bg-amber-500/10 p-2 rounded-lg border border-amber-500/20">
                   <Lock className="w-3 h-3 text-amber-400 shrink-0" />
-                  <p className="font-bold text-indigo-300 truncate font-sans text-[11px]">
+                  <p className="font-bold text-amber-300 truncate font-sans text-[11px]">
                     {projects.find(p => p.id === activeProjectId)?.name}
                   </p>
                 </div>
@@ -2988,8 +3136,8 @@ export default function App() {
             
             {/* INLINE ADMIN FORM: ADD PROJECT PATH - DISABLED (MOVED TO PROJECT MENU) */}
             {false && role === 'ADMIN' && isAddingProject && (
-              <div className="glass-card p-5 rounded-2xl border border-indigo-500/30 shadow-lg space-y-4 animate-fadeIn" id="admin_add_project_form">
-                <div className="flex items-center gap-1.5 text-indigo-300 text-xs font-bold uppercase tracking-wider">
+              <div className="glass-card p-5 rounded-2xl border border-amber-500/30 shadow-lg space-y-4 animate-fadeIn" id="admin_add_project_form">
+                <div className="flex items-center gap-1.5 text-amber-300 text-xs font-bold uppercase tracking-wider">
                   <Plus className="w-4 h-4" />
                   Tambah Jalur Kompensasi Baru
                 </div>
@@ -3005,7 +3153,7 @@ export default function App() {
                       value={newProjectName}
                       onChange={(e) => setNewProjectName(e.target.value)}
                       placeholder="Contoh: KOMPENSASI ROW 150 kV GRATI - BANGIL"
-                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 uppercase font-semibold placeholder:normal-case placeholder:font-normal"
+                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 uppercase font-semibold placeholder:normal-case placeholder:font-normal"
                     />
                   </div>
 
@@ -3017,7 +3165,7 @@ export default function App() {
                         value={newProjectSpreadsheetId}
                         onChange={(e) => setNewProjectSpreadsheetId(e.target.value)}
                         placeholder="ID Spreadsheet (Contoh: 1aBcDe...)"
-                        className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
                       />
                     </div>
                     <div>
@@ -3027,7 +3175,7 @@ export default function App() {
                         value={newProjectPublicCsvUrl}
                         onChange={(e) => setNewProjectPublicCsvUrl(e.target.value)}
                         placeholder="Contoh: https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
-                        className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
                       />
                     </div>
                   </div>
@@ -3040,7 +3188,7 @@ export default function App() {
                         value={newProjectFolderId}
                         onChange={(e) => setNewProjectFolderId(e.target.value)}
                         placeholder="ID Folder (Contoh: 1XyZ...)"
-                        className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
                       />
                     </div>
                     <div>
@@ -3050,7 +3198,7 @@ export default function App() {
                         value={newProjectUploadsFolderId}
                         onChange={(e) => setNewProjectUploadsFolderId(e.target.value)}
                         placeholder="ID Folder PDF (Contoh: 1AbC...)"
-                        className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
                       />
                     </div>
                   </div>
@@ -3072,7 +3220,7 @@ export default function App() {
                     </button>
                     <button
                       type="submit"
-                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl cursor-pointer shadow-md"
+                      className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs font-bold rounded-xl cursor-pointer shadow-md"
                     >
                       Simpan & Tambah Jalur
                     </button>
@@ -3088,7 +3236,7 @@ export default function App() {
                          <div className="flex justify-between items-center text-xs">
                            <span className="font-bold text-slate-200 truncate pr-4">{proj.name}</span>
                            <div className="flex items-center gap-1.5 shrink-0">
-                             <span className="text-[8px] font-mono font-semibold px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-300">
+                             <span className="text-[8px] font-mono font-semibold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300">
                                {proj.spreadsheetId ? 'Tersinkron' : 'Belum Setup'}
                              </span>
                              <button
@@ -3226,7 +3374,7 @@ export default function App() {
                       required
                       value={newAdminPin}
                       onChange={(e) => setNewAdminPin(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono font-bold"
+                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono font-bold"
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -3236,7 +3384,7 @@ export default function App() {
                       required
                       value={newFieldPin}
                       onChange={(e) => setNewFieldPin(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono font-bold"
+                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono font-bold"
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -3246,7 +3394,7 @@ export default function App() {
                       required
                       value={newQcPin}
                       onChange={(e) => setNewQcPin(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono font-bold"
+                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono font-bold"
                     />
                   </div>
                 </div>
@@ -3301,7 +3449,7 @@ export default function App() {
 
                   {/* Import section */}
                   <form onSubmit={handleImportConfig} className="bg-slate-900/60 p-4 rounded-xl border border-white/5 space-y-3">
-                    <span className="text-[10px] font-extrabold text-indigo-300 uppercase tracking-wider block">2. Impor Konfigurasi</span>
+                    <span className="text-[10px] font-extrabold text-amber-300 uppercase tracking-wider block">2. Impor Konfigurasi</span>
                     <p className="text-[11px] text-slate-400">
                       Tempel (paste) kode konfigurasi yang telah Anda ekspor di sini untuk menyinkronkan seluruh ID secara instan.
                     </p>
@@ -3310,7 +3458,7 @@ export default function App() {
                       value={backupJsonString}
                       onChange={(e) => setBackupJsonString(e.target.value)}
                       placeholder='Tempel kode JSON di sini (diawali dengan "[" dan diakhiri "]")'
-                      className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-[11px] font-mono text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-[11px] font-mono text-slate-300 focus:outline-none focus:ring-1 focus:ring-amber-500"
                     />
                     
                     {importStatus === 'success' && (
@@ -3333,7 +3481,7 @@ export default function App() {
                       </button>
                       <button
                         type="submit"
-                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg"
+                        className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-lg shadow-sm"
                       >
                         Impor & Sinkronkan
                       </button>
@@ -3346,7 +3494,7 @@ export default function App() {
             {/* Main view container display state */}
             {isLoadingData ? (
               <div className="glass-card p-12 rounded-2xl flex flex-col items-center justify-center text-center space-y-4 min-h-[350px] shadow-lg">
-                <div className="w-8 h-8 border-3 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                <div className="w-8 h-8 border-3 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
                 <p className="text-xs font-semibold text-slate-200 font-sans">Mengkoneksikan Google Drive & Memuat Data Proyek...</p>
                 <p className="text-[10px] text-slate-400 italic font-sans max-w-sm">Ini memakan waktu beberapa saat untuk memverifikasi folder & spreadsheet di Google Drive Anda.</p>
                 <button
@@ -3379,7 +3527,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={handleManualSync}
-                    className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-indigo-500/10 cursor-pointer"
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-xl transition-all shadow-md shadow-amber-500/20 cursor-pointer"
                   >
                     Coba Sinkronisasi Ulang
                   </button>
@@ -3406,14 +3554,14 @@ export default function App() {
                       ? 'bg-amber-500/10 border-amber-500/25 text-amber-300'
                       : syncFeedback.type === 'error'
                       ? 'bg-rose-500/10 border-rose-500/25 text-rose-300'
-                      : 'bg-indigo-500/10 border-indigo-500/25 text-indigo-300'
+                      : 'bg-amber-500/10 border-amber-500/25 text-amber-300'
                   }`}>
                     <div className="flex items-start gap-3">
                       <div className={`p-2 rounded-xl shrink-0 ${
                         syncFeedback.type === 'success' ? 'bg-emerald-500/20 text-emerald-400' :
                         syncFeedback.type === 'warning' ? 'bg-amber-500/20 text-amber-400' :
                         syncFeedback.type === 'error' ? 'bg-rose-500/20 text-rose-400' :
-                        'bg-indigo-500/20 text-indigo-400'
+                        'bg-amber-500/20 text-amber-400'
                       }`}>
                         {syncFeedback.type === 'success' && <CheckCircle2 className="w-5 h-5" />}
                         {syncFeedback.type === 'warning' && <AlertCircle className="w-5 h-5" />}
@@ -3475,7 +3623,7 @@ export default function App() {
                         id="banner_open_diff_modal_btn"
                         type="button"
                         onClick={handleOpenDiffModal}
-                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-md border border-indigo-400/40 transition-all flex items-center gap-1.5 cursor-pointer"
+                        className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
                         title="Buka Komparasi Rincian Data Cache vs Spreadsheet"
                       >
                         <GitCompare className="w-3.5 h-3.5" />
@@ -3523,11 +3671,14 @@ export default function App() {
                 {activeMenu === 'nominatif' && (
                   <DaftarNominatifPanel
                     records={records}
+                    role={role}
                     activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
                     onNavigateToInput={(rec) => {
                       setSelectedRecordForEdit(rec);
                       setActiveMenu('input');
                     }}
+                    onBatchUpdateRecords={handleBatchUpdateRecords}
+                    onDeleteRecord={handleDeleteRecord}
                   />
                 )}
                 
@@ -3538,6 +3689,7 @@ export default function App() {
                     role={role} 
                     activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
                     activeProjectId={activeProjectId}
+                    onDeleteRecord={handleDeleteRecord}
                   />
                 )}
 
@@ -3552,6 +3704,7 @@ export default function App() {
                       setSelectedRecordForEdit(rec);
                       setActiveMenu('input');
                     }}
+                    onDeleteRecord={handleDeleteRecord}
                   />
                 )}
 
@@ -3589,9 +3742,11 @@ export default function App() {
                 {activeMenu === 'input' && role !== 'GUEST' && (
                   <FormInput 
                     records={records} 
+                    role={role}
                     onSave={handleSaveRecord} 
                     accessToken={token!} 
                     onUpdateRecord={handleUpdateRecord} 
+                    onDeleteRecord={handleDeleteRecord}
                     uploadsFolderId={projectUploadsFolderId || undefined}
                     activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
                     initialSelectedRecord={selectedRecordForEdit}
@@ -3664,7 +3819,7 @@ export default function App() {
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-4">
                       <div>
                         <h1 className="text-xl font-extrabold text-white tracking-tight flex items-center gap-2">
-                          <Briefcase className="w-5 h-5 text-indigo-400" />
+                          <Briefcase className="w-5 h-5 text-amber-400" />
                           MANAJEMEN PROYEK & PIN AKSES
                         </h1>
                         <p className="text-xs text-slate-400 mt-1">
@@ -3679,55 +3834,55 @@ export default function App() {
                         onClick={() => setProjectSubTab('projects')}
                         className={`px-4 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
                           projectSubTab === 'projects'
-                            ? 'border-indigo-500 text-indigo-300 bg-indigo-500/5 rounded-t-xl'
+                            ? 'border-amber-500 text-amber-300 bg-amber-500/10 rounded-t-xl'
                             : 'border-transparent text-slate-400 hover:text-slate-200'
                         }`}
                       >
-                        <Briefcase className="w-4 h-4 text-indigo-400" />
+                        <Briefcase className="w-4 h-4 text-amber-400" />
                         Jalur Transmisi / Proyek
                       </button>
                       <button
                         onClick={() => setProjectSubTab('geojson')}
                         className={`px-4 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
                           projectSubTab === 'geojson'
-                            ? 'border-indigo-500 text-indigo-300 bg-indigo-500/5 rounded-t-xl'
+                            ? 'border-amber-500 text-amber-300 bg-amber-500/10 rounded-t-xl'
                             : 'border-transparent text-slate-400 hover:text-slate-200'
                         }`}
                       >
-                        <Layers className="w-4 h-4 text-indigo-400" />
+                        <Layers className="w-4 h-4 text-amber-400" />
                         Manajemen Berkas GeoJSON
                       </button>
                       <button
                         onClick={() => setProjectSubTab('operators')}
                         className={`px-4 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
                           projectSubTab === 'operators'
-                            ? 'border-indigo-500 text-indigo-300 bg-indigo-500/5 rounded-t-xl'
+                            ? 'border-amber-500 text-amber-300 bg-amber-500/10 rounded-t-xl'
                             : 'border-transparent text-slate-400 hover:text-slate-200'
                         }`}
                       >
-                        <Users className="w-4 h-4 text-indigo-400" />
+                        <Users className="w-4 h-4 text-amber-400" />
                         Registrasi & Kelola Operator
                       </button>
                       <button
                         onClick={() => setProjectSubTab('pins')}
                         className={`px-4 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
                           projectSubTab === 'pins'
-                            ? 'border-indigo-500 text-indigo-300 bg-indigo-500/5 rounded-t-xl'
+                            ? 'border-amber-500 text-amber-300 bg-amber-500/10 rounded-t-xl'
                             : 'border-transparent text-slate-400 hover:text-slate-200'
                         }`}
                       >
-                        <Settings className="w-4 h-4 text-indigo-400" />
+                        <Settings className="w-4 h-4 text-amber-400" />
                         PIN Keamanan Peran
                       </button>
                       <button
                         onClick={() => setProjectSubTab('migration')}
                         className={`px-4 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
                           projectSubTab === 'migration'
-                            ? 'border-indigo-500 text-indigo-300 bg-indigo-500/5 rounded-t-xl'
+                            ? 'border-amber-500 text-amber-300 bg-amber-500/10 rounded-t-xl'
                             : 'border-transparent text-slate-400 hover:text-slate-200'
                         }`}
                       >
-                        <RefreshCw className="w-4 h-4 text-indigo-400" />
+                        <RefreshCw className="w-4 h-4 text-amber-400" />
                         Ekspor & Impor Database
                       </button>
                     </div>
@@ -3736,10 +3891,10 @@ export default function App() {
                     {projectSubTab === 'projects' && (
                       <div className="space-y-6">
                         {/* Global Dashboard Display Settings Card */}
-                        <div className="glass-card p-6 rounded-2xl border border-indigo-500/30 bg-slate-900/80 shadow-xl space-y-4">
+                        <div className="glass-card p-6 rounded-2xl border border-amber-500/25 bg-slate-900/80 shadow-xl space-y-4">
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-3">
                             <div className="flex items-center gap-2.5">
-                              <div className="w-8 h-8 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                              <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
                                 <Filter className="w-4 h-4" />
                               </div>
                               <div>
@@ -3749,7 +3904,7 @@ export default function App() {
                                 </p>
                               </div>
                             </div>
-                            <span className="text-[10px] font-mono font-bold px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 self-start sm:self-auto">
+                            <span className="text-[10px] font-mono font-bold px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20 self-start sm:self-auto">
                               Global Admin Setting
                             </span>
                           </div>
@@ -3773,7 +3928,7 @@ export default function App() {
                               className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 border ${
                                 hideZeroLuas
                                   ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-lg shadow-amber-500/20 font-black border-amber-400'
-                                  : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 border-indigo-500'
+                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 shadow-md border-slate-600'
                               }`}
                             >
                               <Filter className="w-4 h-4" />
@@ -3796,7 +3951,7 @@ export default function App() {
                             {!isAddingProject && (
                               <button
                                 onClick={() => setIsAddingProject(true)}
-                                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5"
+                                className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5"
                               >
                                 <Plus className="w-3.5 h-3.5" />
                                 Tambah Jalur Baru
@@ -3810,7 +3965,7 @@ export default function App() {
                                 <div className="flex justify-between items-start text-xs">
                                   <div className="space-y-1">
                                     <span className="font-extrabold text-slate-200 text-sm block leading-snug">{proj.name}</span>
-                                    <span className="text-[10px] text-indigo-400 font-mono block">ID: {proj.id}</span>
+                                    <span className="text-[10px] text-amber-400 font-mono block">ID: {proj.id}</span>
                                   </div>
                                   <div className="flex items-center gap-1.5 shrink-0">
                                     <span className="text-[8px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 uppercase tracking-wider border border-emerald-500/20">
@@ -3823,7 +3978,7 @@ export default function App() {
                                   <div className="text-[10px] font-mono text-slate-400 space-y-1 pt-2 border-t border-white/5">
                                     <div className="flex items-center justify-between">
                                       <span>Spreadsheet ID:</span>
-                                      <span className="text-indigo-200 select-all truncate max-w-[200px]">{proj.spreadsheetId}</span>
+                                      <span className="text-amber-200 select-all truncate max-w-[200px]">{proj.spreadsheetId}</span>
                                     </div>
                                     {proj.publicCsvUrl && (
                                       <div className="flex items-center justify-between">
@@ -3834,13 +3989,13 @@ export default function App() {
                                     {proj.folderId && (
                                       <div className="flex items-center justify-between">
                                         <span>Folder ID:</span>
-                                        <span className="text-indigo-200 select-all truncate max-w-[200px]">{proj.folderId}</span>
+                                        <span className="text-amber-200 select-all truncate max-w-[200px]">{proj.folderId}</span>
                                       </div>
                                     )}
                                     {proj.uploadsFolderId && (
                                       <div className="flex items-center justify-between">
                                         <span>Folder PDF ID:</span>
-                                        <span className="text-indigo-200 select-all truncate max-w-[200px]">{proj.uploadsFolderId}</span>
+                                        <span className="text-amber-200 select-all truncate max-w-[200px]">{proj.uploadsFolderId}</span>
                                       </div>
                                     )}
                                   </div>
@@ -3871,10 +4026,10 @@ export default function App() {
 
                         {/* Tambah Jalur Kompensasi Baru Form */}
                         {isAddingProject && (
-                          <div className="glass-card p-6 rounded-2xl border border-indigo-500/30 shadow-xl space-y-4 animate-fadeIn" id="admin_add_project_form">
+                          <div className="glass-card p-6 rounded-2xl border border-amber-500/30 shadow-xl space-y-4 animate-fadeIn" id="admin_add_project_form">
                             <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
-                              <div className="flex items-center gap-1.5 text-indigo-300 text-xs font-bold uppercase tracking-wider">
-                                <Plus className="w-4 h-4" />
+                              <div className="flex items-center gap-1.5 text-amber-300 text-xs font-bold uppercase tracking-wider">
+                                <Plus className="w-4 h-4 text-amber-400" />
                                 Tambah Jalur Kompensasi Baru
                               </div>
                               <button
@@ -3896,7 +4051,7 @@ export default function App() {
                                   value={newProjectName}
                                   onChange={(e) => setNewProjectName(e.target.value)}
                                   placeholder="Contoh: KOMPENSASI ROW 150 kV GRATI - BANGIL"
-                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 uppercase font-semibold placeholder:normal-case placeholder:font-normal"
+                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 uppercase font-semibold placeholder:normal-case placeholder:font-normal"
                                 />
                               </div>
 
@@ -3908,7 +4063,7 @@ export default function App() {
                                     value={newProjectSpreadsheetId}
                                     onChange={(e) => setNewProjectSpreadsheetId(e.target.value)}
                                     placeholder="ID Spreadsheet (Contoh: 1aBcDe...)"
-                                    className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                    className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
                                   />
                                 </div>
                                 <div>
@@ -3918,7 +4073,7 @@ export default function App() {
                                     value={newProjectPublicCsvUrl}
                                     onChange={(e) => setNewProjectPublicCsvUrl(e.target.value)}
                                     placeholder="Contoh: https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
-                                    className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                    className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
                                   />
                                 </div>
                               </div>
@@ -3931,7 +4086,7 @@ export default function App() {
                                     value={newProjectFolderId}
                                     onChange={(e) => setNewProjectFolderId(e.target.value)}
                                     placeholder="ID Folder (Contoh: 1XyZ...)"
-                                    className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                    className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
                                   />
                                 </div>
                                 <div>
@@ -3941,7 +4096,7 @@ export default function App() {
                                     value={newProjectUploadsFolderId}
                                     onChange={(e) => setNewProjectUploadsFolderId(e.target.value)}
                                     placeholder="ID Folder PDF (Contoh: 1AbC...)"
-                                    className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                    className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
                                   />
                                 </div>
                               </div>
@@ -3963,7 +4118,7 @@ export default function App() {
                                 </button>
                                 <button
                                   type="submit"
-                                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl cursor-pointer shadow-md"
+                                  className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-xl cursor-pointer shadow-md"
                                 >
                                   Simpan & Tambah Jalur
                                 </button>
@@ -4025,7 +4180,7 @@ export default function App() {
                                     value={editFolderId}
                                     onChange={(e) => setEditFolderId(e.target.value)}
                                     placeholder="Contoh: 1XyZ..."
-                                    className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none"
+                                    className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-amber-500"
                                   />
                                 </div>
                                 <div>
@@ -4035,7 +4190,7 @@ export default function App() {
                                     value={editUploadsFolderId}
                                     onChange={(e) => setEditUploadsFolderId(e.target.value)}
                                     placeholder="Contoh: 1AbC..."
-                                    className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none"
+                                    className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-amber-500"
                                   />
                                 </div>
                               </div>
@@ -4051,7 +4206,7 @@ export default function App() {
                               </button>
                               <button
                                 type="submit"
-                                className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl shadow-md"
+                                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md"
                               >
                                 Simpan ID & Sinkronkan
                               </button>
@@ -4079,7 +4234,7 @@ export default function App() {
                               required
                               value={newAdminPin}
                               onChange={(e) => setNewAdminPin(e.target.value)}
-                              className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono font-bold"
+                              className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono font-bold"
                             />
                           </div>
                           <div className="space-y-1.5">
@@ -4089,7 +4244,7 @@ export default function App() {
                               required
                               value={newFieldPin}
                               onChange={(e) => setNewFieldPin(e.target.value)}
-                              className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono font-bold"
+                              className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono font-bold"
                             />
                           </div>
                           <div className="space-y-1.5">
@@ -4099,14 +4254,14 @@ export default function App() {
                               required
                               value={newQcPin}
                               onChange={(e) => setNewQcPin(e.target.value)}
-                              className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono font-bold"
+                              className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono font-bold"
                             />
                           </div>
                         </div>
                         <div className="flex justify-end gap-2 pt-2 border-t border-white/5">
                           <button
                             type="submit"
-                            className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl cursor-pointer shadow-md"
+                            className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-xl cursor-pointer shadow-md"
                           >
                             Perbarui PIN
                           </button>
@@ -4116,9 +4271,9 @@ export default function App() {
 
                     {/* Tab 3: Ekspor & Impor Database */}
                     {projectSubTab === 'migration' && (
-                      <div className="glass-card p-6 rounded-2xl border border-emerald-500/30 shadow-xl space-y-4 animate-fadeIn" id="admin_backup_sync">
-                        <div className="flex items-center gap-1.5 text-emerald-300 text-sm font-bold uppercase tracking-wider border-b border-white/5 pb-2.5">
-                          <RefreshCw className="w-5 h-5 text-emerald-400" />
+                      <div className="glass-card p-6 rounded-2xl border border-amber-500/30 shadow-xl space-y-4 animate-fadeIn" id="admin_backup_sync">
+                        <div className="flex items-center gap-1.5 text-amber-300 text-sm font-bold uppercase tracking-wider border-b border-white/5 pb-2.5">
+                          <RefreshCw className="w-5 h-5 text-amber-400" />
                           Alat Migrasi & Sinkronisasi Database (Google Drive & Sheets)
                         </div>
                         
@@ -4129,14 +4284,14 @@ export default function App() {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-1">
                           {/* Export section */}
                           <div className="bg-slate-900/60 p-4 rounded-xl border border-white/5 space-y-3">
-                            <span className="text-[10px] font-extrabold text-emerald-300 uppercase tracking-wider block">1. Ekspor Konfigurasi</span>
+                            <span className="text-[10px] font-extrabold text-amber-300 uppercase tracking-wider block">1. Ekspor Konfigurasi</span>
                             <p className="text-[11px] text-slate-400">
                               Klik tombol di bawah untuk menyalin seluruh konfigurasi ID jalur proyek saat ini ke clipboard Anda.
                             </p>
                             <button
                               type="button"
                               onClick={handleExportConfig}
-                              className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg shadow-md transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                              className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-lg shadow-md transition-all cursor-pointer flex items-center justify-center gap-1.5"
                             >
                               <Copy className="w-3.5 h-3.5" />
                               Salin Semua ID Konfigurasi
@@ -4145,7 +4300,7 @@ export default function App() {
 
                           {/* Import section */}
                           <form onSubmit={handleImportConfig} className="bg-slate-900/60 p-4 rounded-xl border border-white/5 space-y-3">
-                            <span className="text-[10px] font-extrabold text-indigo-300 uppercase tracking-wider block">2. Impor Konfigurasi</span>
+                            <span className="text-[10px] font-extrabold text-amber-300 uppercase tracking-wider block">2. Impor Konfigurasi</span>
                             <p className="text-[11px] text-slate-400">
                               Tempelkan kode hasil ekspor ke dalam kolom di bawah untuk memuat seluruh ID jalur proyek instan.
                             </p>
@@ -4154,7 +4309,7 @@ export default function App() {
                                 value={backupJsonString}
                                 onChange={(e) => setBackupJsonString(e.target.value)}
                                 placeholder='Tempel kode JSON di sini (diawali dengan "[" dan diakhiri "]")'
-                                className="w-full h-16 p-2 bg-slate-950 border border-white/10 rounded-lg text-[10px] text-emerald-300 font-mono focus:outline-none font-sans"
+                                className="w-full h-16 p-2 bg-slate-950 border border-white/10 rounded-lg text-[10px] text-amber-300 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500 font-sans"
                               />
                               
                               {importStatus === 'success' && (
@@ -4177,7 +4332,7 @@ export default function App() {
                                 </button>
                                 <button
                                   type="submit"
-                                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg cursor-pointer"
+                                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-lg cursor-pointer"
                                 >
                                   Impor & Sinkronkan
                                 </button>
@@ -4193,9 +4348,9 @@ export default function App() {
                       <div className="space-y-6 animate-fadeIn" id="admin_manage_geojson">
                         
                         {/* A. Info & Description */}
-                        <div className="glass-card p-6 rounded-2xl border border-indigo-500/30 shadow-xl space-y-4">
-                          <div className="flex items-center gap-1.5 text-indigo-300 text-sm font-bold uppercase tracking-wider border-b border-white/5 pb-2.5">
-                            <Layers className="w-5 h-5 text-indigo-400" />
+                        <div className="glass-card p-6 rounded-2xl border border-amber-500/30 shadow-xl space-y-4">
+                          <div className="flex items-center gap-1.5 text-amber-300 text-sm font-bold uppercase tracking-wider border-b border-white/5 pb-2.5">
+                            <Layers className="w-5 h-5 text-amber-400" />
                             Manajemen File Spasial GeoJSON
                           </div>
                           <p className="text-xs text-slate-400 leading-normal">
@@ -4237,16 +4392,16 @@ export default function App() {
                             </div>
 
                             {/* Card upload Tower */}
-                            <div className="p-4 bg-indigo-950/20 rounded-xl border border-indigo-500/30 flex flex-col justify-between space-y-3">
+                            <div className="p-4 bg-orange-950/20 rounded-xl border border-orange-500/30 flex flex-col justify-between space-y-3">
                               <div>
-                                <h4 className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
-                                  <span className="w-2 h-2 rounded-full bg-indigo-400"></span>
+                                <h4 className="text-xs font-bold text-orange-300 flex items-center gap-1.5">
+                                  <span className="w-2 h-2 rounded-full bg-orange-400"></span>
                                   3. GeoJSON Tapak Tower
                                 </h4>
                                 <p className="text-[11px] text-slate-400 mt-1">Titik posisi koordinat tower penyangga lengkap dengan nomor tower.</p>
                               </div>
-                              <label className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 border border-indigo-400/30 text-white rounded-lg text-xs font-bold text-center cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-md hover:scale-[1.02]">
-                                <UploadCloud className="w-4 h-4 text-white" />
+                              <label className="px-3 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-black text-center cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-md hover:scale-[1.02]">
+                                <UploadCloud className="w-4 h-4 text-slate-950" />
                                 Unggah Tapak Tower
                                 <input type="file" accept=".geojson,application/json" onChange={(e) => handleGeoJSONUpload(e, 'tower')} className="hidden" />
                               </label>
@@ -4272,7 +4427,7 @@ export default function App() {
                               <select
                                 value={geoJsonFilterProject}
                                 onChange={(e) => setGeoJsonFilterProject(e.target.value)}
-                                className="px-2.5 py-1.5 bg-slate-900 border border-white/10 text-indigo-300 rounded-xl text-xs font-bold focus:outline-none focus:border-indigo-500"
+                                className="px-2.5 py-1.5 bg-slate-900 border border-white/10 text-amber-300 rounded-xl text-xs font-bold focus:outline-none focus:border-amber-500"
                               >
                                 <option value="ALL">Semua Jalur ({loadedGeoJSONs.length})</option>
                                 <option value="global">Global / Semua Jalur</option>
@@ -4296,7 +4451,7 @@ export default function App() {
                                     <div key={g.id} className="flex items-center justify-between p-4 bg-slate-900/50 rounded-xl border border-white/5 text-xs">
                                       <div className="flex items-center gap-3 overflow-hidden mr-2">
                                         <span className={`w-3 h-3 rounded-full shrink-0 ${
-                                          g.type === 'bidang' ? 'bg-emerald-400' : g.type === 'jalur' ? 'bg-orange-400' : 'bg-indigo-400'
+                                          g.type === 'bidang' ? 'bg-emerald-400' : g.type === 'jalur' ? 'bg-amber-400' : 'bg-orange-400'
                                         }`} />
                                         <div className="overflow-hidden space-y-0.5">
                                           <div className="flex items-center gap-1.5 overflow-hidden">
@@ -4311,7 +4466,7 @@ export default function App() {
                                             <span className="text-slate-400 font-mono uppercase tracking-wider">
                                               Tipe: {g.type} {g.fieldMapping ? '• Mapped' : '• Auto-Detect'} {g.data?.features ? `• ${g.data.features.length} Fitur` : ''}
                                             </span>
-                                            <span className="px-1.5 py-0.2 bg-indigo-500/15 text-indigo-300 border border-indigo-500/20 rounded font-semibold truncate max-w-[180px]" title={associatedProj}>
+                                            <span className="px-1.5 py-0.2 bg-amber-500/15 text-amber-300 border border-amber-500/20 rounded font-semibold truncate max-w-[180px]" title={associatedProj}>
                                               📍 {associatedProj}
                                             </span>
                                           </div>
@@ -4333,7 +4488,7 @@ export default function App() {
                                             setTempLayerType(g.type || 'tower');
                                             setConfiguringLayer(g);
                                           }}
-                                          className="p-2 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 rounded-lg transition-colors border border-indigo-500/10"
+                                          className="p-2 text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 rounded-lg transition-colors border border-amber-500/15"
                                           title="Atur Pemetaan Kolom Atribut & Jalur Proyek"
                                         >
                                           <Settings className="w-4 h-4" />
@@ -4341,7 +4496,7 @@ export default function App() {
                                         <button
                                           onClick={() => handleToggleVisibility(g.id, g.visible)}
                                           className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
-                                            g.visible ? 'bg-indigo-500/20 text-indigo-300' : 'bg-slate-800 text-slate-500'
+                                            g.visible ? 'bg-amber-500/20 text-amber-300 border border-amber-500/20' : 'bg-slate-800 text-slate-500'
                                           }`}
                                         >
                                           {g.visible ? 'Sembunyikan' : 'Tampilkan'}
@@ -4377,7 +4532,7 @@ export default function App() {
                               {/* Modal Header */}
                               <div className="p-5 border-b border-white/10 flex items-center justify-between bg-slate-950/40">
                                 <div className="flex items-center gap-2">
-                                  <Layers className="w-5 h-5 text-indigo-400" />
+                                  <Layers className="w-5 h-5 text-amber-400" />
                                   <div>
                                     <h3 className="font-bold text-white text-sm">Pengaturan & Pemetaan GeoJSON</h3>
                                     <p className="text-[11px] text-slate-400 truncate max-w-[280px]">{configuringLayer.name}</p>
@@ -4394,15 +4549,15 @@ export default function App() {
                               {/* Modal Content */}
                               <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto scrollbar-thin">
                                 {/* Tipe / Kategori Layer Selection */}
-                                <div className="bg-indigo-950/40 p-3.5 rounded-xl border border-indigo-500/20 space-y-1.5">
-                                  <label className="text-[11px] font-bold text-indigo-200 flex justify-between">
+                                <div className="bg-amber-950/20 p-3.5 rounded-xl border border-amber-500/20 space-y-1.5">
+                                  <label className="text-[11px] font-bold text-amber-200 flex justify-between">
                                     <span>Tipe / Kategori Lapisan GeoJSON:</span>
                                     <span className="text-amber-400 font-bold text-[10px]">Ubah jika salah tipe</span>
                                   </label>
                                   <select
                                     value={tempLayerType}
                                     onChange={(e) => setTempLayerType(e.target.value as 'bidang' | 'jalur' | 'tower')}
-                                    className="w-full px-3 py-2 bg-slate-950 border border-indigo-500/30 text-indigo-100 rounded-xl text-xs font-bold focus:outline-none focus:border-indigo-400"
+                                    className="w-full px-3 py-2 bg-slate-950 border border-amber-500/30 text-amber-100 rounded-xl text-xs font-bold focus:outline-none focus:border-amber-400"
                                   >
                                     <option value="tower">🗼 Tapak Tower (Koordinat / Point / Tapak Tower)</option>
                                     <option value="bidang">🏞️ Bidang Tanah (Polygon Batas Lahan / Kepemilikan)</option>
@@ -4417,12 +4572,12 @@ export default function App() {
                                 <div className="bg-slate-950/60 p-3.5 rounded-xl border border-white/10 space-y-1.5">
                                   <label className="text-[11px] font-bold text-slate-300 flex justify-between">
                                     <span>Asosiasikan Berkas ke Jalur / Proyek:</span>
-                                    <span className="text-indigo-400 font-normal text-[10px]">Filter per Jalur</span>
+                                    <span className="text-amber-400 font-normal text-[10px]">Filter per Jalur</span>
                                   </label>
                                   <select
                                     value={tempLayerProjectId}
                                     onChange={(e) => setTempLayerProjectId(e.target.value)}
-                                    className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:border-indigo-400"
+                                    className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:border-amber-400"
                                   >
                                     <option value="global">🌐 Semua Jalur (Global - Selalu Tampak)</option>
                                     {projects.map(p => (
@@ -4443,7 +4598,7 @@ export default function App() {
                                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Kolom Tersedia di File:</p>
                                   <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto scrollbar-thin">
                                     {getGeoJSONKeys(configuringLayer.data).map(key => (
-                                      <span key={key} className="text-[9px] font-mono px-1.5 py-0.5 bg-white/5 text-indigo-300 rounded border border-white/5">
+                                      <span key={key} className="text-[9px] font-mono px-1.5 py-0.5 bg-white/5 text-amber-300 rounded border border-white/5">
                                         {key}
                                       </span>
                                     ))}
@@ -4460,12 +4615,12 @@ export default function App() {
                                       <div className="space-y-1">
                                         <label className="text-[11px] font-bold text-slate-300 flex justify-between">
                                           <span>Nama Desa / Kelurahan:</span>
-                                          <span className="text-indigo-400 font-normal text-[10px]">Auto-detect fallback</span>
+                                          <span className="text-amber-400 font-normal text-[10px]">Auto-detect fallback</span>
                                         </label>
                                         <select
                                           value={tempMapping.desa || ''}
                                           onChange={(e) => setTempMapping({ ...tempMapping, desa: e.target.value })}
-                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-amber-500"
                                         >
                                           <option value="">-- Gunakan Auto-Detect --</option>
                                           {getGeoJSONKeys(configuringLayer.data).map(key => (
@@ -4478,12 +4633,12 @@ export default function App() {
                                       <div className="space-y-1">
                                         <label className="text-[11px] font-bold text-slate-300 flex justify-between">
                                           <span>Span / Section (T.xx-T.xx):</span>
-                                          <span className="text-indigo-400 font-normal text-[10px]">Auto-detect fallback</span>
+                                          <span className="text-amber-400 font-normal text-[10px]">Auto-detect fallback</span>
                                         </label>
                                         <select
                                           value={tempMapping.span || ''}
                                           onChange={(e) => setTempMapping({ ...tempMapping, span: e.target.value })}
-                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-amber-500"
                                         >
                                           <option value="">-- Gunakan Auto-Detect --</option>
                                           {getGeoJSONKeys(configuringLayer.data).map(key => (
@@ -4496,12 +4651,12 @@ export default function App() {
                                       <div className="space-y-1">
                                         <label className="text-[11px] font-bold text-slate-300 flex justify-between">
                                           <span>Nomor Bidang Tanah (NOBID):</span>
-                                          <span className="text-indigo-400 font-normal text-[10px]">Auto-detect fallback</span>
+                                          <span className="text-amber-400 font-normal text-[10px]">Auto-detect fallback</span>
                                         </label>
                                         <select
                                           value={tempMapping.nobid || ''}
                                           onChange={(e) => setTempMapping({ ...tempMapping, nobid: e.target.value })}
-                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-amber-500"
                                         >
                                           <option value="">-- Gunakan Auto-Detect --</option>
                                           {getGeoJSONKeys(configuringLayer.data).map(key => (
@@ -4514,12 +4669,12 @@ export default function App() {
                                       <div className="space-y-1">
                                         <label className="text-[11px] font-bold text-slate-300 flex justify-between">
                                           <span>Nama Pemilik (Nama Final):</span>
-                                          <span className="text-indigo-400 font-normal text-[10px]">Auto-detect fallback</span>
+                                          <span className="text-amber-400 font-normal text-[10px]">Auto-detect fallback</span>
                                         </label>
                                         <select
                                           value={tempMapping.nama || ''}
                                           onChange={(e) => setTempMapping({ ...tempMapping, nama: e.target.value })}
-                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-amber-500"
                                         >
                                           <option value="">-- Gunakan Auto-Detect --</option>
                                           {getGeoJSONKeys(configuringLayer.data).map(key => (
@@ -4537,7 +4692,7 @@ export default function App() {
                                         <select
                                           value={tempMapping.rotasi || ''}
                                           onChange={(e) => setTempMapping({ ...tempMapping, rotasi: e.target.value })}
-                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-amber-500"
                                         >
                                           <option value="">-- Gunakan Default (Tanpa Rotasi / 0°) --</option>
                                           {getGeoJSONKeys(configuringLayer.data).map(key => (
@@ -4554,12 +4709,12 @@ export default function App() {
                                       <div className="space-y-1">
                                         <label className="text-[11px] font-bold text-slate-300 flex justify-between">
                                           <span>Nomor / Label Tower (towernumb):</span>
-                                          <span className="text-indigo-400 font-normal text-[10px]">T.01, T.02, No_Tower</span>
+                                          <span className="text-amber-400 font-normal text-[10px]">T.01, T.02, No_Tower</span>
                                         </label>
                                         <select
                                           value={tempMapping.tower || ''}
                                           onChange={(e) => setTempMapping({ ...tempMapping, tower: e.target.value })}
-                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-amber-500"
                                         >
                                           <option value="">-- Gunakan Auto-Detect --</option>
                                           {getGeoJSONKeys(configuringLayer.data).map(key => (
@@ -4572,12 +4727,12 @@ export default function App() {
                                       <div className="space-y-1">
                                         <label className="text-[11px] font-bold text-slate-300 flex justify-between">
                                           <span>Span / Section Terkait (SPAN):</span>
-                                          <span className="text-indigo-400 font-normal text-[10px]">Optional (T.xx - T.xx)</span>
+                                          <span className="text-amber-400 font-normal text-[10px]">Optional (T.xx - T.xx)</span>
                                         </label>
                                         <select
                                           value={tempMapping.span || ''}
                                           onChange={(e) => setTempMapping({ ...tempMapping, span: e.target.value })}
-                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-amber-500"
                                         >
                                           <option value="">-- Gunakan Auto-Detect --</option>
                                           {getGeoJSONKeys(configuringLayer.data).map(key => (
@@ -4590,12 +4745,12 @@ export default function App() {
                                       <div className="space-y-1">
                                         <label className="text-[11px] font-bold text-slate-300 flex justify-between">
                                           <span>Nama Desa / Kelurahan:</span>
-                                          <span className="text-indigo-400 font-normal text-[10px]">Optional</span>
+                                          <span className="text-amber-400 font-normal text-[10px]">Optional</span>
                                         </label>
                                         <select
                                           value={tempMapping.desa || ''}
                                           onChange={(e) => setTempMapping({ ...tempMapping, desa: e.target.value })}
-                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-amber-500"
                                         >
                                           <option value="">-- Gunakan Auto-Detect --</option>
                                           {getGeoJSONKeys(configuringLayer.data).map(key => (
@@ -4613,7 +4768,7 @@ export default function App() {
                                         <select
                                           value={tempMapping.rotasi || ''}
                                           onChange={(e) => setTempMapping({ ...tempMapping, rotasi: e.target.value })}
-                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-amber-500"
                                         >
                                           <option value="">-- Tanpa Rotasi / Auto --</option>
                                           {getGeoJSONKeys(configuringLayer.data).map(key => (
@@ -4629,12 +4784,12 @@ export default function App() {
                                       <div className="space-y-1">
                                         <label className="text-[11px] font-bold text-slate-300 flex justify-between">
                                           <span>Nama Jalur / Koridor:</span>
-                                          <span className="text-orange-400 font-normal text-[10px]">Auto-detect fallback</span>
+                                          <span className="text-amber-400 font-normal text-[10px]">Auto-detect fallback</span>
                                         </label>
                                         <select
                                           value={tempMapping.jalurName || ''}
                                           onChange={(e) => setTempMapping({ ...tempMapping, jalurName: e.target.value })}
-                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-amber-500"
                                         >
                                           <option value="">-- Gunakan Auto-Detect --</option>
                                           {getGeoJSONKeys(configuringLayer.data).map(key => (
@@ -4646,12 +4801,12 @@ export default function App() {
                                       <div className="space-y-1">
                                         <label className="text-[11px] font-bold text-slate-300 flex justify-between">
                                           <span>Span / Section (SPAN):</span>
-                                          <span className="text-indigo-400 font-normal text-[10px]">Auto-detect fallback</span>
+                                          <span className="text-amber-400 font-normal text-[10px]">Auto-detect fallback</span>
                                         </label>
                                         <select
                                           value={tempMapping.span || ''}
                                           onChange={(e) => setTempMapping({ ...tempMapping, span: e.target.value })}
-                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                                          className="w-full px-3 py-2 bg-slate-950 border border-white/10 text-slate-200 rounded-xl text-xs focus:outline-none focus:border-amber-500"
                                         >
                                           <option value="">-- Gunakan Auto-Detect --</option>
                                           {getGeoJSONKeys(configuringLayer.data).map(key => (
@@ -4704,7 +4859,7 @@ export default function App() {
                                       console.warn('Gagal menyimpan pemetaan kolom GeoJSON ke Firestore:', err);
                                     }
                                   }}
-                                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md cursor-pointer transition-all hover:scale-105 active:scale-95"
+                                  className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-black shadow-md cursor-pointer transition-all hover:scale-105 active:scale-95"
                                 >
                                   Simpan Pengaturan
                                 </button>
@@ -4720,9 +4875,9 @@ export default function App() {
                     {/* Tab: Registrasi & Kelola Operator */}
                     {projectSubTab === 'operators' && (
                       <div className="space-y-6 animate-fadeIn" id="admin_manage_operators">
-                        <div className="glass-card p-6 rounded-2xl border border-white/10 shadow-xl space-y-4">
-                          <div className="flex items-center gap-1.5 text-indigo-300 text-sm font-bold uppercase tracking-wider border-b border-white/5 pb-2.5">
-                            <Users className="w-5 h-5 text-indigo-400" />
+                        <div className="glass-card p-6 rounded-2xl border border-amber-500/30 shadow-xl space-y-4">
+                          <div className="flex items-center gap-1.5 text-amber-300 text-sm font-bold uppercase tracking-wider border-b border-white/5 pb-2.5">
+                            <Users className="w-5 h-5 text-amber-400" />
                             Registrasi & Kelola Akun Operator
                           </div>
                           <p className="text-xs text-slate-400 leading-normal">
@@ -4744,7 +4899,7 @@ export default function App() {
                                   value={newOpUsername}
                                   onChange={(e) => setNewOpUsername(e.target.value)}
                                   placeholder="contoh: budi_lapangan"
-                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
                                 />
                               </div>
 
@@ -4756,7 +4911,7 @@ export default function App() {
                                   value={newOpPassword}
                                   onChange={(e) => setNewOpPassword(e.target.value)}
                                   placeholder="contoh: sandi123"
-                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
                                 />
                               </div>
 
@@ -4768,7 +4923,7 @@ export default function App() {
                                   value={newOpName}
                                   onChange={(e) => setNewOpName(e.target.value)}
                                   placeholder="contoh: Budi Hartono (Tim 1)"
-                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold"
+                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold"
                                 />
                               </div>
 
@@ -4777,7 +4932,7 @@ export default function App() {
                                 <select
                                   value={newOpRole}
                                   onChange={(e) => setNewOpRole(e.target.value as any)}
-                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold"
+                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold"
                                 >
                                   <option value="FIELD">PETUGAS LAPANGAN (Input Data)</option>
                                   <option value="QC">VERIFIKATOR QC (Validasi & QC)</option>
@@ -4790,7 +4945,7 @@ export default function App() {
                                 <select
                                   value={newOpProjectId}
                                   onChange={(e) => setNewOpProjectId(e.target.value)}
-                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold"
+                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold"
                                 >
                                   <option value="all">Semua Jalur (Akses Global)</option>
                                   {projects.map(p => (
@@ -4816,7 +4971,7 @@ export default function App() {
 
                               <button
                                 type="submit"
-                                className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer"
+                                className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all cursor-pointer"
                               >
                                 Daftarkan Akun Operator
                               </button>
@@ -4860,7 +5015,7 @@ export default function App() {
                                           <div className="space-y-0.5">
                                             <p className="font-semibold text-slate-300">{op.name}</p>
                                             <p className="text-[10px] text-slate-400">
-                                              Sandi: <span className="font-mono text-indigo-300 font-bold bg-white/5 px-1 rounded">{op.password}</span>
+                                              Sandi: <span className="font-mono text-amber-300 font-bold bg-white/5 px-1 rounded">{op.password}</span>
                                             </p>
                                             <p className="text-[9px] text-slate-500 truncate">
                                               Akses: <span className="font-bold text-slate-400">{lockedProjName}</span>
@@ -4892,6 +5047,44 @@ export default function App() {
           </main>
         </div>
       )}
+
+      {/* Footer Global VSS Corporate - Clean & Minimalist */}
+      <footer className="w-full border-t border-white/10 bg-slate-950/80 backdrop-blur-md py-3.5 px-4 sm:px-8 mt-auto z-10">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-slate-300">PT. Ventura Skala Simetris</span>
+            <span className="text-slate-600">•</span>
+            <span className="text-[11px] text-slate-400 font-mono">Sistem Informasi Pertanahan & GIS Transmisi</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-slate-500 font-medium mr-1">Bantuan Admin:</span>
+            {/* WhatsApp Icon Button (Direct Click without displaying number) */}
+            <a
+              href="https://wa.me/6281225085742?text=Halo%20Admin%20Ventura,%20saya%20membutuhkan%20informasi%20bantuan%20terkait%20Sistem%20Informasi%20Pertanahan%20VSS."
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-7 h-7 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 text-white flex items-center justify-center transition-all shadow-sm active:scale-95 cursor-pointer"
+              title="Hubungi Admin via WhatsApp"
+              aria-label="Hubungi Admin via WhatsApp"
+            >
+              <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+              </svg>
+            </a>
+
+            {/* Email Icon Button (Direct Click without displaying email address) */}
+            <a
+              href="mailto:agungpambudi763@gmail.com?subject=Pertanyaan%20Sistem%20Informasi%20Pertanahan%20VSS"
+              className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 border border-white/10 flex items-center justify-center transition-all shadow-sm active:scale-95 cursor-pointer"
+              title="Kirim Email ke Admin"
+              aria-label="Kirim Email ke Admin"
+            >
+              <Mail className="w-3.5 h-3.5" />
+            </a>
+          </div>
+        </div>
+      </footer>
       {/* Cache vs Spreadsheet Comparison Modal for Admin */}
       <CacheDiffModal
         isOpen={isDiffModalOpen}

@@ -817,7 +817,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
   return (
     <div className="space-y-6 pb-12" id="sip_sanding_esdm_panel">
       {/* 1. Header & Navigation breadcrumb */}
-      <div className="glass-card p-6 rounded-2xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4 border border-white/10 bg-gradient-to-r from-slate-900/90 via-indigo-950/40 to-slate-900/90">
+      <div className="glass-card p-6 rounded-2xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4 border border-white/10 bg-gradient-to-r from-slate-900/90 via-amber-950/20 to-slate-900/90">
         <div>
           <div className="flex items-center gap-2 mb-1.5">
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
@@ -826,7 +826,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
             <span className="text-xs text-slate-400 font-medium">• {activeProjectName}</span>
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2.5 font-sans">
-            <GitCompare className="w-6 h-6 text-indigo-400 shrink-0" />
+            <GitCompare className="w-6 h-6 text-amber-400 shrink-0" />
             QC 3.2: Sanding Data ESDM (PDF vs Data Tim)
           </h1>
           <p className="text-xs text-slate-300 mt-1 max-w-3xl leading-relaxed">
@@ -856,8 +856,8 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
             </button>
           )}
 
-          <div className="px-3 py-1.5 bg-indigo-600/30 text-indigo-200 text-xs font-bold rounded-xl border border-indigo-500/40 flex items-center gap-1.5 shadow-sm">
-            <CheckCircle2 className="w-4 h-4 text-indigo-400" />
+          <div className="px-3 py-1.5 bg-amber-500/30 text-amber-200 text-xs font-bold rounded-xl border border-amber-500/40 flex items-center gap-1.5 shadow-sm">
+            <CheckCircle2 className="w-4 h-4 text-amber-400" />
             3.2: Sanding ESDM (Aktif)
           </div>
         </div>
@@ -869,8 +869,8 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
         <div className="lg:col-span-4 glass-card p-5 rounded-2xl shadow-xl border border-white/10 bg-slate-900/60 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
-                <span className="w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-300 inline-flex items-center justify-center text-xs font-extrabold border border-indigo-500/30">1</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-300 inline-flex items-center justify-center text-xs font-extrabold border border-amber-500/30">1</span>
                 Pilih Desa Target
               </span>
               <span className="text-[11px] text-slate-400">PDF ESDM per Desa</span>
@@ -883,7 +883,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
             <select
               value={selectedDesa}
               onChange={(e) => setSelectedDesa(e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-white text-sm font-semibold focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all cursor-pointer"
+              className="w-full px-3.5 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-white text-sm font-semibold focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-all cursor-pointer"
             >
               {uniqueDesaList.map(desa => {
                 const count = records.filter(r => (r.DESA || '').trim().toUpperCase() === desa).length;
@@ -912,10 +912,10 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
           <div className="mt-4 pt-3 border-t border-white/5">
             <button
               onClick={handleLoadDemoSoborejo}
-              className="w-full py-2 px-3 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-indigo-200 text-xs font-semibold rounded-xl border border-indigo-500/30 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+              className="w-full py-2 px-3 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-amber-200 text-xs font-semibold rounded-xl border border-amber-500/30 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
               title="Gunakan 24 bidang hasil ekspor resmi ESDM Desa Soborejo untuk langsung menguji fitur"
             >
-              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
               Gunakan Contoh Dokumen ESDM Soborejo (24 Bidang)
             </button>
           </div>
@@ -926,8 +926,8 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
           <div>
             {/* Header with Sub-tabs */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-white/5">
-              <span className="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
-                <span className="w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-300 inline-flex items-center justify-center text-xs font-extrabold border border-indigo-500/30">2</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-300 inline-flex items-center justify-center text-xs font-extrabold border border-amber-500/30">2</span>
                 Input Data ESDM (PDF / Excel / Teks)
               </span>
 
@@ -938,7 +938,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                   onClick={() => setActiveInputTab('upload')}
                   className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
                     activeInputTab === 'upload'
-                      ? 'bg-indigo-600 text-white shadow-sm'
+                      ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
                       : 'text-slate-400 hover:text-white hover:bg-white/5'
                   }`}
                 >
@@ -950,7 +950,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                   onClick={() => setActiveInputTab('hybrid')}
                   className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
                     activeInputTab === 'hybrid'
-                      ? 'bg-gradient-to-r from-emerald-600 to-indigo-600 text-white shadow-sm shadow-emerald-500/20'
+                      ? 'bg-gradient-to-r from-emerald-600 to-amber-600 text-white shadow-sm shadow-emerald-500/20'
                       : 'text-emerald-400 hover:text-white hover:bg-emerald-500/10'
                   }`}
                   title="Upload file Excel dan PDF sekaligus untuk mendapatkan presisi angka 100% dan legalitas alas hak resmi"
@@ -963,7 +963,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                   onClick={() => setActiveInputTab('paste')}
                   className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
                     activeInputTab === 'paste'
-                      ? 'bg-indigo-600 text-white shadow-sm'
+                      ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
                       : 'text-slate-400 hover:text-white hover:bg-white/5'
                   }`}
                 >
@@ -1042,13 +1042,13 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                   onClick={() => fileInputRef.current?.click()}
                   className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-2 ${
                     isDragOver 
-                      ? 'border-indigo-400 bg-indigo-500/10 scale-[1.005]' 
-                      : 'border-slate-700 hover:border-indigo-500 hover:bg-white/5'
+                      ? 'border-amber-400 bg-amber-500/10 scale-[1.005]' 
+                      : 'border-slate-700 hover:border-amber-500 hover:bg-white/5'
                   }`}
                 >
                   {isLoadingPdf ? (
                     <div className="py-3 flex flex-col items-center gap-2">
-                      <RefreshCw className="w-7 h-7 text-indigo-400 animate-spin" />
+                      <RefreshCw className="w-7 h-7 text-amber-400 animate-spin" />
                       <span className="text-sm font-semibold text-white">Membaca dan menyandingkan data ESDM...</span>
                       <span className="text-xs text-slate-400">Memproses tower span, nomor bidang, luas tanah, tanaman, dan bangunan...</span>
                     </div>
@@ -1061,12 +1061,12 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                         <span>Data ESDM Berhasil Dimuat:</span>
                         <span className="text-emerald-400 font-mono">{esdmData.bidangList.length} Bidang Terdeteksi</span>
                         {esdmData.metadata.sourceType === 'HYBRID' ? (
-                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-gradient-to-r from-emerald-500/30 to-indigo-500/30 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-gradient-to-r from-emerald-500/30 to-amber-500/30 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
                             <Zap className="w-3 h-3 text-amber-400" />
                             SINERGI HIBRIDA (Excel + PDF)
                           </span>
                         ) : esdmData.metadata.sourceType ? (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/20 text-amber-300 border border-amber-500/30">
                             {esdmData.metadata.sourceType}
                           </span>
                         ) : null}
@@ -1074,21 +1074,21 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                       <div className="text-xs text-slate-400 flex flex-wrap items-center justify-center gap-2 mt-0.5">
                         <span>File: <strong className="text-white font-mono">{uploadedFileName || 'dokumen'}</strong></span>
                         <span>•</span>
-                        <span>Desa: <strong className="text-indigo-300">{esdmData.metadata.desa || selectedDesa}</strong></span>
+                        <span>Desa: <strong className="text-amber-300">{esdmData.metadata.desa || selectedDesa}</strong></span>
                         <span>•</span>
                         <span>{esdmData.metadata.totalTanamanCount} tanaman terdata</span>
                       </div>
-                      <span className="text-[11px] text-indigo-400 underline mt-1.5 font-medium">
+                      <span className="text-[11px] text-amber-400 underline mt-1.5 font-medium">
                         Klik untuk mengganti berkas atau pilih berkas lain
                       </span>
                     </div>
                   ) : (
                     <div className="py-2 flex flex-col items-center gap-1.5">
-                      <div className="w-10 h-10 rounded-full bg-indigo-600/20 text-indigo-400 inline-flex items-center justify-center border border-indigo-500/30">
+                      <div className="w-10 h-10 rounded-full bg-amber-500/20 text-amber-400 inline-flex items-center justify-center border border-amber-500/30">
                         <UploadCloud className="w-5 h-5" />
                       </div>
                       <div className="text-sm font-bold text-white">
-                        Tarik & Lepas File ke sini, atau <span className="text-indigo-400 underline">Pilih File</span>
+                        Tarik & Lepas File ke sini, atau <span className="text-amber-400 underline">Pilih File</span>
                       </div>
                       <div className="text-xs text-slate-400 max-w-lg leading-relaxed">
                         Pilih file <strong>PDF (.pdf)</strong> resmi ESDM, file <strong>Excel (.xlsx / .csv)</strong>, atau <strong>pilih kedua file sekaligus</strong> untuk Mode Sinergi Hibrida.
@@ -1105,7 +1105,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
 
                 {/* Companion File Quick Synergy Action when only one source is currently loaded */}
                 {esdmData && esdmData.metadata.sourceType !== 'HYBRID' && (
-                  <div className="p-3 rounded-xl bg-gradient-to-r from-slate-900/90 via-indigo-950/40 to-slate-900/90 border border-indigo-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="p-3 rounded-xl bg-gradient-to-r from-slate-900/90 via-amber-950/20 to-slate-900/90 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="flex items-center gap-2.5">
                       <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center border border-amber-500/30 shrink-0">
                         <Zap className="w-4 h-4" />
@@ -1137,7 +1137,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                             e.stopPropagation();
                             singleAddPdfInputRef.current?.click();
                           }}
-                          className="px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold rounded-lg shadow transition-all flex items-center gap-1.5 cursor-pointer"
+                          className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs font-bold rounded-lg shadow transition-all flex items-center gap-1.5 cursor-pointer"
                         >
                           <FilePlus className="w-3.5 h-3.5" />
                           + Tambah Berkas PDF
@@ -1237,12 +1237,12 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                     onClick={() => hybridPdfInputRef.current?.click()}
                     className={`p-4 rounded-xl border-2 border-dashed transition-all cursor-pointer flex flex-col items-center text-center justify-between gap-3 ${
                       hybridPdfFile || uploadedPdfBuffer
-                        ? 'border-indigo-500 bg-indigo-950/20'
-                        : 'border-slate-700 hover:border-indigo-500/60 hover:bg-slate-800/40'
+                        ? 'border-amber-500 bg-amber-950/20'
+                        : 'border-slate-700 hover:border-amber-500/60 hover:bg-slate-800/40'
                     }`}
                   >
                     <div className="flex flex-col items-center gap-1.5">
-                      <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-300 flex items-center justify-center border border-indigo-500/30">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center border border-amber-500/30">
                         <FileText className="w-5 h-5" />
                       </div>
                       <span className="text-xs font-bold text-white uppercase tracking-wider">
@@ -1254,11 +1254,11 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                     </div>
 
                     {hybridPdfFile ? (
-                      <div className="px-3 py-1 bg-indigo-500/20 border border-indigo-500/40 rounded-lg text-indigo-300 text-xs font-mono font-semibold truncate max-w-full">
+                      <div className="px-3 py-1 bg-amber-500/20 border border-amber-500/40 rounded-lg text-amber-300 text-xs font-mono font-semibold truncate max-w-full">
                         ✓ {hybridPdfFile.name}
                       </div>
                     ) : uploadedPdfBuffer ? (
-                      <div className="px-3 py-1 bg-indigo-500/20 border border-indigo-500/40 rounded-lg text-indigo-300 text-xs font-mono font-semibold truncate max-w-full">
+                      <div className="px-3 py-1 bg-amber-500/20 border border-amber-500/40 rounded-lg text-amber-300 text-xs font-mono font-semibold truncate max-w-full">
                         ✓ {uploadedPdfName || 'PDF Telah Dimuat'}
                       </div>
                     ) : (
@@ -1297,7 +1297,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                         setPdfError(err.message || 'Gagal memproses kedua berkas.');
                       }
                     }}
-                    className="w-full sm:w-auto px-5 py-2.5 bg-gradient-to-r from-emerald-600 via-indigo-600 to-purple-600 hover:from-emerald-500 hover:to-purple-500 disabled:opacity-40 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 cursor-pointer transition-all"
+                    className="w-full sm:w-auto px-5 py-2.5 bg-gradient-to-r from-emerald-600 via-amber-600 to-amber-700 hover:from-emerald-500 hover:to-amber-600 disabled:opacity-40 text-white text-xs font-bold rounded-xl shadow-lg shadow-amber-600/20 flex items-center justify-center gap-2 cursor-pointer transition-all"
                   >
                     {isLoadingPdf ? (
                       <RefreshCw className="w-4 h-4 animate-spin" />
@@ -1315,13 +1315,13 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                    <FileSpreadsheet className="w-4 h-4 text-indigo-400" />
+                    <FileSpreadsheet className="w-4 h-4 text-amber-400" />
                     Tempel Isi Tabel / Teks dari PDF atau Excel:
                   </label>
                   <button
                     type="button"
                     onClick={handleFillSamplePastedText}
-                    className="text-[11px] text-indigo-400 hover:text-indigo-300 underline font-medium cursor-pointer"
+                    className="text-[11px] text-amber-400 hover:text-amber-300 underline font-medium cursor-pointer"
                   >
                     Isi Contoh Teks
                   </button>
@@ -1332,7 +1332,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                   onChange={(e) => setPastedText(e.target.value)}
                   placeholder="Buka PDF di pembaca PDF (Adobe / Chrome) atau buka Excel, salin baris tabel nominatif (Ctrl+A lalu Ctrl+C), kemudian tempel di sini (Ctrl+V)..."
                   rows={5}
-                  className="w-full px-3.5 py-2.5 bg-slate-950/80 border border-slate-700 rounded-xl text-xs font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none transition-all leading-relaxed"
+                  className="w-full px-3.5 py-2.5 bg-slate-950/80 border border-slate-700 rounded-xl text-xs font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 resize-none transition-all leading-relaxed"
                 />
 
                 <div className="flex items-center justify-between gap-3">
@@ -1343,7 +1343,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                     type="button"
                     onClick={handleProcessPastedText}
                     disabled={isLoadingPdf || !pastedText.trim()}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer shrink-0 shadow-md shadow-indigo-600/20"
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer shrink-0 shadow-md shadow-amber-600/20"
                   >
                     {isLoadingPdf ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                     Proses Teks ESDM
@@ -1387,10 +1387,10 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                   </div>
                 </div>
 
-                <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl space-y-1.5">
-                  <div className="font-bold text-indigo-300">Cara Cepat Konversi PDF Scan ke Excel (Gratis):</div>
+                <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl space-y-1.5">
+                  <div className="font-bold text-amber-300">Cara Cepat Konversi PDF Scan ke Excel (Gratis):</div>
                   <ol className="list-decimal list-inside space-y-1 text-[11px] text-slate-300">
-                    <li>Buka browser dan kunjungi <a href="https://www.ilovepdf.com/id/pdf-ke-excel" target="_blank" rel="noreferrer" className="text-indigo-400 underline font-semibold">iLovePDF PDF ke Excel</a> atau Adobe Acrobat Converter.</li>
+                    <li>Buka browser dan kunjungi <a href="https://www.ilovepdf.com/id/pdf-ke-excel" target="_blank" rel="noreferrer" className="text-amber-400 underline font-semibold">iLovePDF PDF ke Excel</a> atau Adobe Acrobat Converter.</li>
                     <li>Aktifkan fitur OCR (Pengenalan Teks Optik) jika dokumen Anda hasil scan fisik.</li>
                     <li>Download hasil file <strong>.xlsx</strong>-nya, lalu upload langsung ke tab <strong>Upload Dokumen</strong> di aplikasi ini.</li>
                   </ol>
@@ -1435,7 +1435,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                   <button
                     type="button"
                     onClick={handleLoadDemoSoborejo}
-                    className="px-3 py-1.5 bg-indigo-600/30 hover:bg-indigo-600/40 text-indigo-200 text-xs font-semibold rounded-lg border border-indigo-500/30 flex items-center gap-1.5 transition-all cursor-pointer"
+                    className="px-3 py-1.5 bg-amber-500/30 hover:bg-amber-500/40 text-amber-200 text-xs font-semibold rounded-lg border border-amber-500/30 flex items-center gap-1.5 transition-all cursor-pointer"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
                     Uji dengan Demo Soborejo (24 Bidang)
@@ -1452,7 +1452,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
         <div className="glass-card rounded-2xl border border-emerald-500/40 bg-gradient-to-r from-slate-900/95 via-emerald-950/40 to-slate-900/95 p-4.5 space-y-3.5 shadow-xl">
           <div className="flex flex-wrap items-center justify-between gap-2.5 pb-2.5 border-b border-white/5">
             <div className="flex items-center gap-2.5">
-              <span className="px-3 py-1 rounded-full bg-gradient-to-r from-emerald-500/30 to-indigo-500/30 text-emerald-300 border border-emerald-500/50 text-xs font-extrabold flex items-center gap-1.5 shadow-sm">
+              <span className="px-3 py-1 rounded-full bg-gradient-to-r from-emerald-500/30 to-amber-500/30 text-emerald-300 border border-emerald-500/50 text-xs font-extrabold flex items-center gap-1.5 shadow-sm">
                 <Zap className="w-4 h-4 text-amber-300 animate-pulse" />
                 Sinergi Hibrida Sukses (Excel + PDF)
               </span>
@@ -1485,8 +1485,8 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
             </div>
 
             {/* Box 2: PDF Legal */}
-            <div className="p-3 bg-slate-950/70 rounded-xl border border-indigo-500/20 flex items-start gap-2.5">
-              <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-400 shrink-0">
+            <div className="p-3 bg-slate-950/70 rounded-xl border border-amber-500/20 flex items-start gap-2.5">
+              <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 shrink-0">
                 <FileText className="w-4 h-4" />
               </div>
               <div className="overflow-hidden">
@@ -1494,7 +1494,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                 <div className="font-semibold text-white truncate text-xs mt-0.5" title={esdmData.metadata.hybridSummary.pdfFileName}>
                   {esdmData.metadata.hybridSummary.pdfFileName}
                 </div>
-                <div className="text-[11px] text-indigo-300 font-mono mt-0.5">
+                <div className="text-[11px] text-amber-300 font-mono mt-0.5">
                   {esdmData.metadata.totalPages} Halaman Resmi ESDM
                 </div>
               </div>
@@ -1547,10 +1547,10 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
 
       {/* Multi-Sheet Selector Banner if Excel has multiple sheets (e.g., 3 sheets: Tanah, Bangunan, Tanaman) */}
       {esdmData?.metadata.sheetNames && esdmData.metadata.sheetNames.length > 1 && (
-        <div className="glass-card rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-slate-900/90 via-indigo-950/40 to-slate-900/90 p-4 space-y-3 shadow-lg">
+        <div className="glass-card rounded-2xl border border-amber-500/30 bg-gradient-to-r from-slate-900/90 via-amber-950/20 to-slate-900/90 p-4 space-y-3 shadow-lg">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-indigo-500/20 text-indigo-300 flex items-center justify-center border border-indigo-500/30 shrink-0">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center border border-amber-500/30 shrink-0">
                 <FileSpreadsheet className="w-5 h-5" />
               </div>
               <div>
@@ -1576,7 +1576,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                 onClick={() => handleSwitchSheet('AUTO')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
                   activeExcelSheet === 'AUTO' || esdmData.metadata.isMergedFromSheets
-                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30 ring-1 ring-indigo-400'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-600/20 ring-1 ring-amber-400'
                     : 'bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10'
                 }`}
               >
@@ -1634,7 +1634,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
           {/* Card 2: Total Bidang Data Kita */}
           <div className="glass-card p-4 rounded-xl border border-white/10 bg-slate-900/70">
             <div className="text-[11px] text-slate-400 font-medium">Bidang Data Kita</div>
-            <div className="text-2xl font-bold text-indigo-300 mt-1">
+            <div className="text-2xl font-bold text-amber-300 mt-1">
               {comparisonResult.summary.totalAppBidang}
             </div>
             <div className="text-[11px] text-slate-400 mt-0.5">
@@ -1745,7 +1745,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                 onClick={() => setStatusFilter(tab.id as any)}
                 className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
                   statusFilter === tab.id
-                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-600/20'
                     : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
                 }`}
               >
@@ -1768,7 +1768,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
               <select
                 value={spanFilter}
                 onChange={(e) => setSpanFilter(e.target.value)}
-                className="px-2.5 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+                className="px-2.5 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500 cursor-pointer"
               >
                 <option value="ALL">Semua Span</option>
                 {availableSpans.map(s => (
@@ -1785,7 +1785,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                 value={searchKeyword}
                 onChange={(e) => setSearchKeyword(e.target.value)}
                 placeholder="Cari nama, NIK, no bidang..."
-                className="pl-8 pr-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-48 transition-all"
+                className="pl-8 pr-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 w-48 transition-all"
               />
               {searchKeyword && (
                 <button
@@ -1820,11 +1820,11 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
 
       {/* 4b. Keputusan Crosscheck & Audit Progress Bar */}
       {comparisonResult && (
-        <div className="glass-card p-4 rounded-2xl shadow-xl border border-indigo-500/20 bg-gradient-to-r from-slate-900/90 via-indigo-950/30 to-slate-900/90 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="glass-card p-4 rounded-2xl shadow-xl border border-amber-500/20 bg-gradient-to-r from-slate-900/90 via-amber-950/20 to-slate-900/90 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           {/* Progress counters */}
           <div className="flex flex-wrap items-center gap-2.5">
             <div className="flex items-center gap-2 pr-2 border-r border-white/10">
-              <ShieldCheck className="w-4 h-4 text-indigo-400" />
+              <ShieldCheck className="w-4 h-4 text-amber-400" />
               <span className="text-xs font-bold text-white uppercase tracking-wider">
                 Keputusan & Tindak Lanjut:
               </span>
@@ -1903,7 +1903,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
             {decisionFilter !== 'ALL' && (
               <button
                 onClick={() => setDecisionFilter('ALL')}
-                className="text-[11px] text-indigo-300 hover:text-white underline cursor-pointer ml-1"
+                className="text-[11px] text-amber-300 hover:text-white underline cursor-pointer ml-1"
               >
                 Reset Filter
               </button>
@@ -1941,7 +1941,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                 onClick={() => setTableHeightMode('compact')}
                 className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                   tableHeightMode === 'compact'
-                    ? 'bg-indigo-600 text-white shadow-sm'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
                     : 'text-slate-400 hover:text-white'
                 }`}
                 title="Tinggi Ringkas (380px)"
@@ -1953,7 +1953,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                 onClick={() => setTableHeightMode('standard')}
                 className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                   tableHeightMode === 'standard'
-                    ? 'bg-indigo-600 text-white shadow-sm'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
                     : 'text-slate-400 hover:text-white'
                 }`}
                 title="Tinggi Standar (550px)"
@@ -1965,7 +1965,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                 onClick={() => setTableHeightMode('tall')}
                 className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                   tableHeightMode === 'tall'
-                    ? 'bg-indigo-600 text-white shadow-sm'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
                     : 'text-slate-400 hover:text-white'
                 }`}
                 title="Layar Penuh"
@@ -2065,7 +2065,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                         {/* Span & No Bidang */}
                         <td className="py-3 px-4">
                           <div className="font-bold text-white font-mono">{item.span}</div>
-                          <div className="text-xs text-indigo-300 font-semibold mt-0.5 flex items-center gap-1.5 flex-wrap">
+                          <div className="text-xs text-amber-300 font-semibold mt-0.5 flex items-center gap-1.5 flex-wrap">
                             <span>Bidang No. {item.nobid}</span>
                             {item.esdmBidang?.source === 'HYBRID' && (
                               <span 
@@ -2098,7 +2098,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
 
                             {/* ESDM */}
                             <div className="flex items-baseline gap-1.5 pt-1 border-t border-white/5">
-                              <span className="text-[10px] text-indigo-400 font-bold uppercase w-10 shrink-0">ESDM:</span>
+                              <span className="text-[10px] text-amber-400 font-bold uppercase w-10 shrink-0">ESDM:</span>
                               <div>
                                 <div className={`font-semibold ${item.isNamaMatch ? 'text-slate-300' : 'text-amber-300'}`}>
                                   {item.esdmNama}
@@ -2122,7 +2122,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                             </div>
                             <div className="font-mono text-slate-300">
                               {item.esdmLuas.toLocaleString('id-ID')} m²
-                              <span className="text-[10px] text-indigo-400 font-normal ml-1">(ESDM)</span>
+                              <span className="text-[10px] text-amber-400 font-normal ml-1">(ESDM)</span>
                             </div>
                             {item.esdmBidang?.pdfCrossCheck && item.esdmBidang.pdfCrossCheck.diffLuas !== 0 && (
                               <div className="text-[10px] text-amber-400/90 font-mono" title={`Di PDF tercatat luas ${item.esdmBidang.pdfCrossCheck.pdfLuas} m² (selisih ${item.esdmBidang.pdfCrossCheck.diffLuas} m²)`}>
@@ -2150,7 +2150,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                             </div>
                             <div className="pt-0.5 border-t border-white/5 flex items-center justify-between gap-1 flex-wrap">
                               <div>
-                                <span className="text-indigo-400">ESDM: </span>
+                                <span className="text-amber-400">ESDM: </span>
                                 <span className="text-slate-300 font-medium">
                                   {item.esdmJenisHak || '-'} {item.esdmNomerHak ? `No. ${item.esdmNomerHak}` : ''}
                                 </span>
@@ -2292,7 +2292,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                                 <span className="text-xs text-slate-200 font-medium line-clamp-2 leading-relaxed">
                                   {itemDecision.notes}
                                 </span>
-                                <Edit3 className="w-3 h-3 text-slate-400 group-hover:text-indigo-400 shrink-0 mt-0.5" />
+                                <Edit3 className="w-3 h-3 text-slate-400 group-hover:text-amber-400 shrink-0 mt-0.5" />
                               </div>
                               {itemDecision.updatedBy && (
                                 <div className="text-[9px] text-slate-400 font-mono flex items-center justify-between pt-0.5 border-t border-white/5">
@@ -2307,7 +2307,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                             <button
                               type="button"
                               onClick={() => handleOpenNoteModal(item)}
-                              className="px-2 py-1 rounded-lg bg-white/5 hover:bg-indigo-600/20 hover:border-indigo-500/30 text-slate-400 hover:text-indigo-300 border border-dashed border-white/15 text-[11px] font-semibold transition-all flex items-center gap-1 cursor-pointer"
+                              className="px-2 py-1 rounded-lg bg-white/5 hover:bg-amber-500/20 hover:border-amber-500/30 text-slate-400 hover:text-amber-300 border border-dashed border-white/15 text-[11px] font-semibold transition-all flex items-center gap-1 cursor-pointer"
                               title="Tambah catatan khusus untuk bidang ini"
                             >
                               <MessageSquare className="w-3 h-3 text-slate-400" />
@@ -2321,7 +2321,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                           <button
                             type="button"
                             onClick={() => handleOpenItemModal(item)}
-                            className="px-2.5 py-1.5 bg-indigo-600/80 hover:bg-indigo-600 text-white font-bold rounded-lg transition-all text-xs flex items-center justify-center gap-1 mx-auto cursor-pointer shadow-sm"
+                            className="px-2.5 py-1.5 bg-amber-500/80 hover:bg-amber-500 text-slate-950 font-bold font-bold rounded-lg transition-all text-xs flex items-center justify-center gap-1 mx-auto cursor-pointer shadow-sm"
                             title="Buka perbandingan rinci field per field & rekonsiliasi tanaman"
                           >
                             <Eye className="w-3.5 h-3.5" />
@@ -2339,7 +2339,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
       ) : (
         /* Empty State before upload */
         <div className="glass-card p-12 rounded-2xl shadow-xl text-center border border-white/10 bg-slate-900/60 max-w-2xl mx-auto space-y-4">
-          <div className="w-16 h-16 rounded-full bg-indigo-600/20 text-indigo-400 inline-flex items-center justify-center border border-indigo-500/30 mx-auto">
+          <div className="w-16 h-16 rounded-full bg-amber-500/20 text-amber-400 inline-flex items-center justify-center border border-amber-500/30 mx-auto">
             <GitCompare className="w-8 h-8" />
           </div>
           <h3 className="text-xl font-bold text-white">
@@ -2351,7 +2351,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
           <div className="pt-2">
             <button
               onClick={handleLoadDemoSoborejo}
-              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-indigo-600/30 inline-flex items-center gap-2 cursor-pointer"
+              className="px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs font-bold rounded-xl transition-all shadow-md shadow-amber-600/20 inline-flex items-center gap-2 cursor-pointer"
             >
               <Sparkles className="w-4 h-4" />
               Muat Contoh Data ESDM Desa Soborejo (24 Bidang)
@@ -2367,7 +2367,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
             {/* Modal Header */}
             <div className="p-5 border-b border-white/10 flex items-center justify-between bg-white/5">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
                   <GitCompare className="w-5 h-5" />
                 </div>
                 <div>
@@ -2403,16 +2403,16 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
               {/* Side by side field diff table */}
               <div>
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
-                  <FileText className="w-4 h-4 text-indigo-400" />
+                  <FileText className="w-4 h-4 text-amber-400" />
                   Perbandingan Parameter Bidang Tanah
                 </h4>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Left Column: Data Aplikasi */}
-                  <div className="p-4 rounded-xl border border-indigo-500/30 bg-indigo-950/20 space-y-3">
-                    <div className="text-xs font-extrabold uppercase text-indigo-300 flex items-center justify-between border-b border-indigo-500/20 pb-2">
+                  <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-950/20 space-y-3">
+                    <div className="text-xs font-extrabold uppercase text-amber-300 flex items-center justify-between border-b border-amber-500/20 pb-2">
                       <span>Data Aplikasi (Google Sheets)</span>
-                      <span className="text-[10px] font-normal text-indigo-400">Database Lokal</span>
+                      <span className="text-[10px] font-normal text-amber-400">Database Lokal</span>
                     </div>
 
                     <div className="space-y-2 text-xs">
@@ -2523,7 +2523,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                     Matriks Rekonsiliasi Tanaman Lengkap
                   </h4>
                   <div className="text-xs font-semibold text-slate-300">
-                    Total Pohon: <strong className="text-indigo-300">{selectedItemForModal.appTotalTanaman} (Data)</strong> vs <strong className="text-emerald-300">{selectedItemForModal.esdmTotalTanaman} (ESDM)</strong>
+                    Total Pohon: <strong className="text-amber-300">{selectedItemForModal.appTotalTanaman} (Data)</strong> vs <strong className="text-emerald-300">{selectedItemForModal.esdmTotalTanaman} (ESDM)</strong>
                   </div>
                 </div>
 
@@ -2625,10 +2625,10 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
               </div>
 
               {/* Form Keputusan Crosscheck & Catatan Khusus */}
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-slate-950 via-indigo-950/40 to-slate-950 border border-indigo-500/30 space-y-4">
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-slate-950 via-amber-950/20 to-slate-950 border border-amber-500/30 space-y-4">
                 <div className="flex items-center justify-between border-b border-white/10 pb-3 flex-wrap gap-2">
                   <div className="flex items-center gap-2">
-                    <ShieldCheck className="w-5 h-5 text-indigo-400" />
+                    <ShieldCheck className="w-5 h-5 text-amber-400" />
                     <div>
                       <h4 className="text-sm font-bold text-white uppercase tracking-wider">
                         Keputusan Crosscheck & Catatan Khusus
@@ -2746,7 +2746,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                     onChange={(e) => setModalNotes(e.target.value)}
                     placeholder="Contoh: Luas fisik telah dikonfirmasi ulang bersama pemilik; tanaman jati 5 batang ditebang sebelum inventarisasi; alas hak terlampir pada warkah No. 42..."
                     rows={3}
-                    className="w-full px-3.5 py-2.5 bg-slate-950 border border-white/15 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 resize-none leading-relaxed"
+                    className="w-full px-3.5 py-2.5 bg-slate-950 border border-white/15 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 resize-none leading-relaxed"
                   />
 
                   {/* Preset quick notes tags */}
@@ -2769,7 +2769,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                             setModalNotes(preset);
                           }
                         }}
-                        className="text-[10px] px-2 py-0.5 rounded-md bg-white/5 hover:bg-indigo-600/30 text-slate-300 hover:text-indigo-200 border border-white/10 transition-colors cursor-pointer"
+                        className="text-[10px] px-2 py-0.5 rounded-md bg-white/5 hover:bg-amber-500/30 text-slate-300 hover:text-amber-200 border border-white/10 transition-colors cursor-pointer"
                       >
                         + {preset}
                       </button>
@@ -2782,7 +2782,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
             {/* Modal Footer */}
             <div className="p-4 border-t border-white/10 bg-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="text-xs text-slate-400 flex items-center gap-1.5">
-                <Info className="w-4 h-4 text-indigo-400 shrink-0" />
+                <Info className="w-4 h-4 text-amber-400 shrink-0" />
                 <span>Setiap penetapan status atau catatan akan otomatis tersimpan dan tercatat di <strong>Log Aktivitas</strong>.</span>
               </div>
 
@@ -2805,7 +2805,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                         setSelectedItemForModal(null);
                       }
                     }}
-                    className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                    className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
                     Buka di Form Input
@@ -2831,7 +2831,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
           <div className="bg-slate-900 border border-white/20 rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div className="flex items-center gap-2">
-                <MessageSquare className="w-5 h-5 text-indigo-400" />
+                <MessageSquare className="w-5 h-5 text-amber-400" />
                 <h4 className="text-sm font-bold text-white uppercase tracking-wider">
                   Catatan Khusus Bidang No. {editingNoteItem.nobid}
                 </h4>
@@ -2917,7 +2917,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                 onChange={(e) => setNoteInputText(e.target.value)}
                 placeholder="Tulis alasan, klarifikasi batas, hasil verifikasi fisik, atau catatan tindak lanjut..."
                 rows={3}
-                className="w-full px-3 py-2 bg-slate-950 border border-white/15 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 resize-none"
+                className="w-full px-3 py-2 bg-slate-950 border border-white/15 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 resize-none"
               />
 
               {/* Preset chips */}
@@ -2939,7 +2939,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
                         setNoteInputText(preset);
                       }
                     }}
-                    className="text-[10px] px-2 py-0.5 rounded-md bg-white/5 hover:bg-indigo-600/30 text-slate-300 hover:text-indigo-200 border border-white/10 transition-colors cursor-pointer"
+                    className="text-[10px] px-2 py-0.5 rounded-md bg-white/5 hover:bg-amber-500/30 text-slate-300 hover:text-amber-200 border border-white/10 transition-colors cursor-pointer"
                   >
                     + {preset}
                   </button>
@@ -2958,7 +2958,7 @@ PROYEK: SUTT 150 KV KABUPATEN PURWOREJO KECAMATAN BUTUH DESA SOBOREJO
               <button
                 type="button"
                 onClick={handleSaveNoteModal}
-                className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-md"
+                className="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-md"
               >
                 <Check className="w-3.5 h-3.5" />
                 Simpan & Catat ke Log

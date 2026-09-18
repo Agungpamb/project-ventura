@@ -498,11 +498,11 @@ export default function SandingDataPanel({
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2.5">
-              <div className="p-2.5 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/20">
+              <div className="p-2.5 bg-amber-500/10 text-amber-400 rounded-xl border border-amber-500/20">
                 <GitCompare className="w-6 h-6" />
               </div>
               <div>
-                <span className="text-[10px] font-extrabold text-indigo-400 uppercase tracking-widest block font-mono">
+                <span className="text-[10px] font-extrabold text-amber-400 uppercase tracking-widest block font-mono">
                   MENU 3.1 — QC & REKONSILIASI
                 </span>
                 <h1 className="text-lg md:text-xl font-black text-white tracking-tight font-sans">
@@ -537,7 +537,7 @@ export default function SandingDataPanel({
 
             <button
               onClick={handleExportCSV}
-              className="px-3.5 py-2 bg-indigo-600/90 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-600/20 flex items-center gap-2 cursor-pointer"
+              className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs font-bold rounded-xl transition-all shadow-lg shadow-amber-600/20 flex items-center gap-2 cursor-pointer"
             >
               <Download className="w-4 h-4" />
               Ekspor Hasil Sanding (CSV)
@@ -560,7 +560,7 @@ export default function SandingDataPanel({
           <div className="p-3 bg-slate-900/80 rounded-2xl border border-white/5 space-y-1">
             <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider block">2. Total Input Tim</span>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-lg font-black text-indigo-400 font-mono">{stats.totalInput}</span>
+              <span className="text-lg font-black text-amber-400 font-mono">{stats.totalInput}</span>
               <span className="text-[10px] text-slate-500">record</span>
             </div>
           </div>
@@ -618,7 +618,7 @@ export default function SandingDataPanel({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Cari nama, no. bidang, span, desa..."
-              className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
             />
           </div>
 
@@ -630,7 +630,7 @@ export default function SandingDataPanel({
                 setSelectedDesaFilter(e.target.value);
                 setSelectedSpanFilter('');
               }}
-              className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
+              className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-medium"
             >
               <option value="">Semua Desa ({availableDesas.length})</option>
               {availableDesas.map(d => (
@@ -644,7 +644,7 @@ export default function SandingDataPanel({
             <select
               value={selectedSpanFilter}
               onChange={(e) => setSelectedSpanFilter(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
+              className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-medium"
             >
               <option value="">Semua Span ({availableSpans.length})</option>
               {availableSpans.map(s => (
@@ -658,7 +658,7 @@ export default function SandingDataPanel({
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold"
+              className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold"
             >
               <option value="ALL">Semua Status Hasil Sanding</option>
               <option value="DISCREPANCY">⚠️ Hanya Ketidakcocokan (Mismatch)</option>
@@ -725,7 +725,7 @@ export default function SandingDataPanel({
               onClick={() => setTableHeightMode('compact')}
               className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                 tableHeightMode === 'compact'
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
                   : 'text-slate-400 hover:text-white'
               }`}
               title="Tinggi Ringkas (380px)"
@@ -737,7 +737,7 @@ export default function SandingDataPanel({
               onClick={() => setTableHeightMode('standard')}
               className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                 tableHeightMode === 'standard'
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
                   : 'text-slate-400 hover:text-white'
               }`}
               title="Tinggi Standar (550px)"
@@ -749,7 +749,7 @@ export default function SandingDataPanel({
               onClick={() => setTableHeightMode('tall')}
               className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                 tableHeightMode === 'tall'
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
                   : 'text-slate-400 hover:text-white'
               }`}
               title="Layar Penuh"
@@ -793,7 +793,7 @@ export default function SandingDataPanel({
                   <tr 
                     key={item.id}
                     className={`hover:bg-white/5 transition-all ${
-                      inspectItem?.id === item.id ? 'bg-indigo-500/10' : ''
+                      inspectItem?.id === item.id ? 'bg-amber-500/10' : ''
                     }`}
                   >
                     {/* Index */}
@@ -808,7 +808,7 @@ export default function SandingDataPanel({
                           {item.desaGeo || item.desaInput || '-'}
                         </span>
                         <div className="flex items-center gap-1 text-[10px] font-mono text-slate-400">
-                          <Layers className="w-3 h-3 text-indigo-400 shrink-0" />
+                          <Layers className="w-3 h-3 text-amber-400 shrink-0" />
                           <span>{item.spanGeo || item.spanInput || '-'}</span>
                         </div>
                       </div>
@@ -841,7 +841,7 @@ export default function SandingDataPanel({
 
                         {/* INPUT TIM SPREADSHEET */}
                         <div className="flex items-start gap-1.5">
-                          <span className="px-1.5 py-0.5 text-[8px] font-bold rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 uppercase shrink-0 font-mono">
+                          <span className="px-1.5 py-0.5 text-[8px] font-bold rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase shrink-0 font-mono">
                             TIM
                           </span>
                           <span className={`text-xs font-semibold ${
@@ -887,7 +887,7 @@ export default function SandingDataPanel({
                         </div>
                         <div className="text-slate-300">
                           <span className="text-[9px] text-slate-500 block uppercase font-mono">Input Tim</span>
-                          <span className="font-medium text-indigo-300">{item.obyekInput}</span>
+                          <span className="font-medium text-amber-300">{item.obyekInput}</span>
                         </div>
                       </div>
                     </td>
@@ -913,7 +913,7 @@ export default function SandingDataPanel({
                       <div className="flex items-center justify-center gap-1.5">
                         <button
                           onClick={() => setInspectItem(item)}
-                          className="p-1.5 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded-lg transition-all cursor-pointer border border-indigo-500/30"
+                          className="p-1.5 bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 font-bold rounded-lg transition-all cursor-pointer border border-amber-500/30"
                           title="Buka Lembar Detil Sanding 6 Parameter"
                         >
                           <GitCompare className="w-3.5 h-3.5" />
@@ -945,7 +945,7 @@ export default function SandingDataPanel({
             {/* Modal Header */}
             <div className="p-5 bg-slate-950 border-b border-white/10 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/20">
+                <div className="p-2 bg-amber-500/10 text-amber-400 rounded-xl border border-amber-500/20">
                   <GitCompare className="w-5 h-5" />
                 </div>
                 <div>
@@ -1025,9 +1025,9 @@ export default function SandingDataPanel({
                 </div>
 
                 {/* RIGHT: SPREADSHEET INPUT TIM */}
-                <div className="p-4 bg-slate-900/90 rounded-2xl border border-indigo-500/30 space-y-3">
+                <div className="p-4 bg-slate-900/90 rounded-2xl border border-amber-500/30 space-y-3">
                   <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                    <span className="text-xs font-black text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <span className="text-xs font-black text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
                       <FileSpreadsheet className="w-4 h-4" /> Data Input Tim
                     </span>
                     <span className="text-[10px] text-slate-400 font-mono">Spreadsheet / Form</span>
@@ -1050,7 +1050,7 @@ export default function SandingDataPanel({
 
                     <div>
                       <span className="text-[10px] text-slate-400 block font-mono">3. NOMER BIDANG</span>
-                      <strong className="text-indigo-300 font-mono font-bold">{inspectItem.nobidInput || '(Belum diinput)'}</strong>
+                      <strong className="text-amber-300 font-mono font-bold">{inspectItem.nobidInput || '(Belum diinput)'}</strong>
                     </div>
 
                     <div>
@@ -1087,7 +1087,7 @@ export default function SandingDataPanel({
 
                     <div>
                       <span className="text-[10px] text-slate-400 block font-mono">6. OBYEK KOMPENSASI</span>
-                      <strong className="text-indigo-300">{inspectItem.obyekInput}</strong>
+                      <strong className="text-amber-300">{inspectItem.obyekInput}</strong>
                     </div>
                   </div>
                 </div>
@@ -1107,7 +1107,7 @@ export default function SandingDataPanel({
                       setInspectItem(null);
                       onNavigateToInput(rec);
                     }}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
                   >
                     <Edit3 className="w-3.5 h-3.5" />
                     Edit Data Input Tim
