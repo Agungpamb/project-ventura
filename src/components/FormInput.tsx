@@ -254,10 +254,13 @@ export default function FormInput({
     if (!formData.DESA.trim()) newErrors.DESA = 'Desa wajib diisi';
     if (!formData.SPAN.trim()) newErrors.SPAN = 'Span wajib diisi';
     if (!formData.NOBID.trim()) newErrors.NOBID = 'Nomor Bidang wajib diisi';
-    if (!formData.LUAS.trim()) {
-      newErrors.LUAS = 'Luas wajib diisi';
-    } else if (isNaN(parseFloat(formData.LUAS)) || parseFloat(formData.LUAS) <= 0) {
-      newErrors.LUAS = 'Luas harus berupa angka positif';
+    
+    // Luas bersifat opsional / boleh kosong atau 0 (untuk mengakomodir kepemilikan tanaman atau bangunan saja tanpa tanah)
+    if (formData.LUAS && formData.LUAS.trim()) {
+      const parsedLuas = parseFloat(formData.LUAS.replace(',', '.'));
+      if (isNaN(parsedLuas) || parsedLuas < 0) {
+        newErrors.LUAS = 'Luas harus berupa angka non-negatif (>= 0)';
+      }
     }
 
     // 2. Check Owner identity
@@ -902,7 +905,10 @@ export default function FormInput({
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 uppercase mb-1">LUAS (m²) *</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-600 uppercase">LUAS TANAH (m²)</label>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">Boleh Kosong / 0</span>
+                  </div>
                   <input
                     type="text"
                     value={formData.LUAS}
@@ -910,9 +916,31 @@ export default function FormInput({
                     className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 ${
                       errors.LUAS ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-amber-500'
                     }`}
-                    placeholder="Contoh: 1540"
+                    placeholder="0 atau kosong (jika hanya tanaman/bangunan)"
                   />
                   {errors.LUAS && <p className="text-xs text-rose-600 mt-1">{errors.LUAS}</p>}
+                  
+                  <div className="mt-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextVal = formData.LUAS === '0' ? '' : '0';
+                        handleChange('LUAS', nextVal);
+                      }}
+                      className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all inline-flex items-center gap-1.5 cursor-pointer ${
+                        formData.LUAS === '0'
+                          ? 'bg-amber-500/15 text-amber-700 border-amber-300 font-bold'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                      title="Klik untuk set luas 0 m² jika pihak berhak hanya memiliki tanaman atau bangunan tanpa tanah"
+                    >
+                      <span>🌲 / 🏠</span>
+                      <span>Hanya Tanaman / Bangunan (Set 0 m²)</span>
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1 leading-tight">
+                    *Kosongkan atau isi 0 jika pihak berhak hanya memiliki tanaman atau bangunan (tanpa tanah).
+                  </p>
                 </div>
 
                 <div>

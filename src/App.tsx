@@ -3904,6 +3904,7 @@ export default function App() {
                     operatorName={operatorName}
                     accessToken={token || undefined}
                     uploadsFolderId={projectUploadsFolderId || undefined}
+                    onRefreshGoogleToken={handleRefreshGoogleAuth}
                     onNavigateToInput={(rec) => {
                       setSelectedRecordForEdit(rec);
                       setActiveMenu('input');

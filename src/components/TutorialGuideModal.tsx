@@ -17,7 +17,13 @@ import {
   Save,
   Printer,
   UploadCloud,
-  ChevronRight
+  ChevronRight,
+  PlusCircle,
+  Trash2,
+  Database,
+  Search,
+  CheckSquare,
+  Lock
 } from 'lucide-react';
 import { generateTutorialPDF } from '../lib/tutorialPdfGenerator';
 import { ProjectConfig } from '../types';
@@ -29,7 +35,7 @@ interface TutorialGuideModalProps {
   userRole?: string;
 }
 
-type GuideTab = 'overview' | 'guest' | 'field' | 'qc' | 'gallery' | 'faq';
+type GuideTab = 'overview' | 'crud' | 'field' | 'guest' | 'qc' | 'gallery' | 'faq';
 
 export const TutorialGuideModal: React.FC<TutorialGuideModalProps> = ({
   isOpen,
@@ -119,18 +125,18 @@ export const TutorialGuideModal: React.FC<TutorialGuideModalProps> = ({
             }`}
           >
             <Layers className="w-3.5 h-3.5" />
-            Ringkasan & Matriks Peran
+            Ringkasan & Matriks
           </button>
           <button
-            onClick={() => setActiveTab('guest')}
+            onClick={() => setActiveTab('crud')}
             className={`px-3.5 py-1.5 rounded-lg font-bold flex items-center gap-2 transition-all shrink-0 cursor-pointer ${
-              activeTab === 'guest'
-                ? 'bg-blue-600 text-white shadow-sm'
+              activeTab === 'crud'
+                ? 'bg-amber-500 text-slate-950 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            <Eye className="w-3.5 h-3.5" />
-            Pengguna Tamu (Guest)
+            <Database className="w-3.5 h-3.5" />
+            Panduan Add / Edit / Hapus
           </button>
           <button
             onClick={() => setActiveTab('field')}
@@ -145,6 +151,17 @@ export const TutorialGuideModal: React.FC<TutorialGuideModalProps> = ({
             <span className="px-1.5 py-0.2 bg-amber-400 text-slate-950 text-[10px] font-black rounded font-mono">
               Ctrl+S
             </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('guest')}
+            className={`px-3.5 py-1.5 rounded-lg font-bold flex items-center gap-2 transition-all shrink-0 cursor-pointer ${
+              activeTab === 'guest'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <Eye className="w-3.5 h-3.5" />
+            Pengguna Tamu (Guest)
           </button>
           <button
             onClick={() => setActiveTab('qc')}
@@ -183,6 +200,194 @@ export const TutorialGuideModal: React.FC<TutorialGuideModalProps> = ({
 
         {/* Content Body */}
         <div className="p-6 overflow-y-auto space-y-6 text-slate-300 flex-1">
+
+          {/* TAB 2: PANDUAN CRUD (ADD, EDIT, DELETE, UPLOAD) */}
+          {activeTab === 'crud' && (
+            <div className="space-y-6">
+              {/* Header Box */}
+              <div className="bg-gradient-to-r from-amber-500/15 via-slate-800/60 to-slate-900 border border-amber-500/30 p-4 rounded-xl">
+                <h3 className="text-sm font-bold text-amber-400 flex items-center gap-2 mb-1">
+                  <Database className="w-4 h-4" />
+                  PANDUAN OPERASIONAL: CARA TAMBAH, EDIT & KELOLA DATA BIDANG
+                </h3>
+                <p className="text-xs leading-relaxed text-slate-300">
+                  Panduan lengkap cara menginput data inventarisasi baru, memperbarui data bidang yang telah tersimpan, 
+                  prosedur penghapusan yang aman (terproteksi PIN), serta pengelolaan berkas digital Google Drive.
+                </p>
+              </div>
+
+              {/* MODUL 1: CARA TAMBAH DATA (ADD DATA) */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                    <PlusCircle className="w-4 h-4" />
+                    1. TATA CARA MENAMBAH DATA BIDANG BARU (ADD DATA)
+                  </h4>
+                  <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded text-[10px] font-bold">
+                    Petugas Lapangan & Admin
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="p-3.5 bg-slate-950/60 border border-slate-800 rounded-xl space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs font-bold text-white">
+                      <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[11px]">1</span>
+                      Buka Form Input
+                    </div>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Klik menu <strong>"Input Data"</strong> di bilah navigasi samping, atau klik tombol hijau <strong>"+ Tambah Bidang Baru"</strong> di bagian atas Daftar Nominatif.
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 bg-slate-950/60 border border-slate-800 rounded-xl space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs font-bold text-white">
+                      <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[11px]">2</span>
+                      Isi Tab 1: Data Lahan & Pemilik (*)
+                    </div>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Pilih <strong>Desa</strong>, isi <strong>Span Tower</strong> (contoh: <code>01-02</code>), ketik <strong>Nomor Bidang</strong> unik, <strong>Luas (m²)</strong>, <strong>Nama Pemilik</strong> sesuai KTP, <strong>NIK 16-Digit</strong>, serta 4 batas tanah (Utara, Selatan, Timur, Barat).
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 bg-slate-950/60 border border-slate-800 rounded-xl space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs font-bold text-white">
+                      <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[11px]">3</span>
+                      Isi Tab 2 & 3: Alas Hak, Bangunan & Tanaman
+                    </div>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Pilih bukti kepemilikan (SHM/Letter C/Girik) & nomornya. Jika ada bangunan terdampak, isi luas & spesifikasinya. Di Tab 3, masukkan tanaman tegakan (tersedia hingga 30 slot tanaman dengan kategori SM/BM dan ukuran).
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 bg-slate-950/60 border border-slate-800 rounded-xl space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
+                      <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[11px]">4</span>
+                      Simpan Cepat (Ctrl + S)
+                    </div>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Tekan tombol kombinasi <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 text-amber-300 font-mono text-[11px] rounded">Ctrl + S</kbd> (Windows) atau <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 text-amber-300 font-mono text-[11px] rounded">Cmd + S</kbd> (Mac) kapan saja, atau klik tombol <strong>"Simpan Cepat"</strong>. Data langsung divalidasi & tersimpan ke cloud!
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* MODUL 2: CARA EDIT DATA (EDIT DATA) */}
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-2">
+                    <Edit3 className="w-4 h-4" />
+                    2. TATA CARA MENGUBAH / MENGEDIT DATA (EDIT DATA)
+                  </h4>
+                  <span className="px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/30 rounded text-[10px] font-bold">
+                    Fleksibel via Tabel atau Peta
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Jalur 1: Tabel Nominatif */}
+                  <div className="p-4 bg-slate-950/70 border border-slate-800 rounded-xl space-y-2.5">
+                    <div className="flex items-center gap-2 text-xs font-bold text-blue-400">
+                      <Search className="w-4 h-4" />
+                      Jalur A: Edit Dari Daftar Nominatif
+                    </div>
+                    <ul className="text-xs text-slate-400 space-y-1.5 pl-1">
+                      <li>• Buka halaman <strong>Daftar Nominatif</strong>.</li>
+                      <li>• Ketik nama warga atau nomor bidang pada kolom pencarian.</li>
+                      <li>• Klik tombol kuning / ikon pensil <strong>"Edit"</strong> di baris data terkait.</li>
+                      <li>• Formulir Input akan terbuka otomatis dengan seluruh isian bidang tersebut sudah terisi lengkap.</li>
+                      <li>• Lakukan perubahan yang diinginkan (misal revisi luas tanah atau penambahan tanaman), lalu tekan <strong>Ctrl + S</strong>.</li>
+                    </ul>
+                  </div>
+
+                  {/* Jalur 2: Peta Spasial GIS */}
+                  <div className="p-4 bg-slate-950/70 border border-slate-800 rounded-xl space-y-2.5">
+                    <div className="flex items-center gap-2 text-xs font-bold text-emerald-400">
+                      <MapPin className="w-4 h-4" />
+                      Jalur B: Edit Dari Peta Spasial GIS
+                    </div>
+                    <ul className="text-xs text-slate-400 space-y-1.5 pl-1">
+                      <li>• Buka menu <strong>Peta Spasial GIS</strong>.</li>
+                      <li>• Klik poligon lahan yang bersangkutan pada peta.</li>
+                      <li>• Kartu popup detail bidang akan muncul di sebelah kanan dengan koordinat dan status.</li>
+                      <li>• Klik tombol <strong>"Buka / Edit Bidang"</strong> di kartu tersebut.</li>
+                      <li>• Sistem langsung mengarahkan Anda ke formulir input dengan data siap diedit.</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {/* MODUL 3: CARA HAPUS DATA (DELETE DATA) & INTEGRITAS */}
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-rose-400 uppercase tracking-wider flex items-center gap-2">
+                    <Trash2 className="w-4 h-4" />
+                    3. PROSEDUR PENGHAPUSAN BIDANG (DELETE DATA) - KHUSUS ADMIN
+                  </h4>
+                  <span className="px-2 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/30 rounded text-[10px] font-bold flex items-center gap-1">
+                    <Lock className="w-3 h-3" />
+                    Terproteksi PIN Keamanan
+                  </span>
+                </div>
+
+                <div className="p-4 bg-rose-950/20 border border-rose-500/30 rounded-xl space-y-2">
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    Untuk mencegah hilangnya data penting proyek secara tidak sengaja, fitur hapus data dibatasi dengan standar keamanan berlapis:
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                    <div className="p-2.5 bg-slate-950/80 border border-rose-500/20 rounded-lg text-xs">
+                      <div className="text-rose-400 font-bold mb-1">1. Hak Akses Terbatas</div>
+                      <p className="text-slate-400 text-[11px]">Hanya pengguna dengan peran <strong>Administrator</strong> yang dapat memunculkan tombol hapus.</p>
+                    </div>
+                    <div className="p-2.5 bg-slate-950/80 border border-rose-500/20 rounded-lg text-xs">
+                      <div className="text-rose-400 font-bold mb-1">2. Konfirmasi PIN 6-Digit</div>
+                      <p className="text-slate-400 text-[11px]">Sistem meminta verifikasi PIN Admin sebelum perintah penghapusan dieksekusi ke database.</p>
+                    </div>
+                    <div className="p-2.5 bg-slate-950/80 border border-rose-500/20 rounded-lg text-xs">
+                      <div className="text-rose-400 font-bold mb-1">3. Pencatatan Audit Log</div>
+                      <p className="text-slate-400 text-[11px]">Setiap aksi hapus tercatat di log integritas: waktu, user, ID bidang, dan alasan penghapusan.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* MODUL 4: UPLOAD BERKAS DIGITAL & TTD DIGITAL */}
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center gap-2">
+                    <UploadCloud className="w-4 h-4" />
+                    4. PENGUNGGAHAN BERKAS DRIVE & TANDA TANGAN DIGITAL (TAB 5)
+                  </h4>
+                  <span className="px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/30 rounded text-[10px] font-bold">
+                    Otomatisasi Cloud Drive
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="p-3.5 bg-slate-950/60 border border-slate-800 rounded-xl space-y-2">
+                    <h5 className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <CheckSquare className="w-3.5 h-3.5 text-blue-400" />
+                      Manajemen Berkas Google Drive Otomatis
+                    </h5>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Pada Tab 5 Form Input, Anda dapat mengunggah scan KTP, KK, Sertifikat/Letter C, SPPT PBB, dan foto patok batas tanah. 
+                      Sistem secara cerdas membuatkan sub-folder rapi di Google Drive berdasarkan nama Desa dan Nomor Bidang (contoh: <code>SUKAMAJU/BIDANG_042_ACHMAD_SYAFEI</code>).
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 bg-slate-950/60 border border-slate-800 rounded-xl space-y-2">
+                    <h5 className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
+                      Kanvas Tanda Tangan Digital Resmi
+                    </h5>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Pemilik tanah dan surveyor dapat langsung membubuhkan tanda tangan digital pada kanvas touchscreen atau menggunakan mouse di Tab 5. 
+                      Tanda tangan ini otomatis tersemat secara presisi pada Formulir Inventarisasi resmi saat dicetak ke PDF!
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* TAB 1: OVERVIEW & MATRIKS */}
           {activeTab === 'overview' && (

@@ -493,6 +493,7 @@ export interface VillageResume {
   desaName: string;
   kecamatan?: string;
   kabupaten?: string;
+  driveFolderId?: string; // ID folder Google Drive khusus untuk desa ini
   // 6 Tahapan Proyek Lapangan
   baSosialisasiAwal: VillageStageDoc;       // Dokumen BA sos awal (upload pdf dan dokumentasi)
   baPengumuman: VillageStageDoc;            // Dokumen BA Pengumuman (upload pdf dan dokumentasi)

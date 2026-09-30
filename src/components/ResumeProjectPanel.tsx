@@ -36,9 +36,10 @@ import {
   subscribeVillageResumes, 
   createDefaultVillageResume,
   createEmptyStageDoc,
+  compressImageFile,
   fileToBase64 
 } from '../lib/projectResumeStorage';
-import { uploadFileToDrive } from '../lib/googleApi';
+import { uploadFileToDrive, findOrCreateFolder } from '../lib/googleApi';
 
 interface ResumeProjectPanelProps {
   records: LandRecord[];
@@ -49,6 +50,7 @@ interface ResumeProjectPanelProps {
   operatorName?: string;
   accessToken?: string;
   uploadsFolderId?: string;
+  onRefreshGoogleToken?: () => Promise<string | null>;
   onNavigateToInput?: (record: LandRecord) => void;
 }
 
@@ -69,7 +71,8 @@ export default function ResumeProjectPanel({
   userEmail = 'operator@ventura.id',
   operatorName = 'Operator',
   accessToken,
-  uploadsFolderId
+  uploadsFolderId,
+  onRefreshGoogleToken
 }: ResumeProjectPanelProps) {
   const isGuest = role === 'GUEST';
 
@@ -80,6 +83,13 @@ export default function ResumeProjectPanel({
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'COMPLETED' | 'IN_PROGRESS' | 'NOT_STARTED'>('ALL');
   const [activeTab, setActiveTab] = useState<'table' | 'cards'>('table');
   const [tableHeightMode, setTableHeightMode] = useState<'compact' | 'standard' | 'tall'>('standard');
+
+  // Cloud and feedback states
+  const [isCloudConnected, setIsCloudConnected] = useState(true);
+  const [isRefreshingCloud, setIsRefreshingCloud] = useState(false);
+  const [saveFeedback, setSaveFeedback] = useState<{ type: 'success' | 'warning' | 'error'; text: string } | null>(null);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
+  const [uploadProgressText, setUploadProgressText] = useState('');
 
   // Modals
   const [editingDesa, setEditingDesa] = useState<VillageResume | null>(null);
@@ -112,7 +122,7 @@ export default function ResumeProjectPanel({
     return map;
   }, [records]);
 
-  // Load and sync village resumes
+  // Load and sync village resumes with Cloud Firestore
   useEffect(() => {
     let unsubscribe = () => {};
     setIsLoading(true);
@@ -120,40 +130,69 @@ export default function ResumeProjectPanel({
     const init = async () => {
       const stored = await loadVillageResumes(activeProjectId);
       
-      // Ensure all unique desas from records exist in resumes
+      // Ensure all unique desas from records are represented in view
       const existingMap = new Map<string, VillageResume>();
       stored.forEach(r => existingMap.set(r.desaName.toUpperCase(), r));
 
-      let hasNew = false;
       const mergedList: VillageResume[] = [...stored];
 
       uniqueDesasFromRecords.forEach((_, desaName) => {
         if (!existingMap.has(desaName)) {
-          const newResume = createDefaultVillageResume(activeProjectId, desaName);
-          mergedList.push(newResume);
-          existingMap.set(desaName, newResume);
-          hasNew = true;
-          saveVillageResume(newResume); // Persist background
+          // Display default placeholder in UI without overwriting Firestore
+          const defaultResume = createDefaultVillageResume(activeProjectId, desaName);
+          mergedList.push(defaultResume);
+          existingMap.set(desaName, defaultResume);
         }
       });
 
       setResumes(mergedList);
       setIsLoading(false);
 
-      // Subscribe to realtime updates
-      unsubscribe = subscribeVillageResumes(activeProjectId, (updated) => {
-        setResumes(prev => {
-          const map = new Map<string, VillageResume>();
-          prev.forEach(p => map.set(p.desaName.toUpperCase(), p));
-          updated.forEach(u => map.set(u.desaName.toUpperCase(), u));
-          return Array.from(map.values());
-        });
-      });
+      // Subscribe to realtime push updates from Cloud Firestore
+      unsubscribe = subscribeVillageResumes(
+        activeProjectId, 
+        (updated) => {
+          setIsCloudConnected(true);
+          setResumes(prev => {
+            const map = new Map<string, VillageResume>();
+            // Keep local placeholders
+            prev.forEach(p => map.set(p.desaName.toUpperCase(), p));
+            // Apply live Firestore updates
+            updated.forEach(u => map.set(u.desaName.toUpperCase(), u));
+            return Array.from(map.values());
+          });
+        },
+        (connected) => {
+          setIsCloudConnected(connected);
+        }
+      );
     };
 
     init();
     return () => unsubscribe();
   }, [activeProjectId, uniqueDesasFromRecords]);
+
+  // Manual pull from Cloud Firestore
+  const handleManualRefreshCloud = async () => {
+    setIsRefreshingCloud(true);
+    try {
+      const fresh = await loadVillageResumes(activeProjectId);
+      setResumes(prev => {
+        const map = new Map<string, VillageResume>();
+        prev.forEach(p => map.set(p.desaName.toUpperCase(), p));
+        fresh.forEach(u => map.set(u.desaName.toUpperCase(), u));
+        return Array.from(map.values());
+      });
+      setIsCloudConnected(true);
+      setSaveFeedback({ type: 'success', text: 'Data Resume Proyek berhasil disinkronkan langsung dari Cloud Firestore!' });
+      setTimeout(() => setSaveFeedback(null), 4000);
+    } catch {
+      setSaveFeedback({ type: 'warning', text: 'Gagal menarik data cloud. Tetap menggunakan data tersimpan.' });
+      setTimeout(() => setSaveFeedback(null), 4000);
+    } finally {
+      setIsRefreshingCloud(false);
+    }
+  };
 
   // Calculate Progress of a single village
   const calculateVillageProgress = (res: VillageResume): number => {
@@ -234,16 +273,35 @@ export default function ResumeProjectPanel({
   const handleSaveVillageChanges = async () => {
     if (!editingDesa) return;
     setIsSaving(true);
+    setSaveFeedback(null);
     try {
       const updated: VillageResume = {
         ...editingDesa,
         updatedBy: operatorName || userEmail
       };
-      await saveVillageResume(updated);
+      const result = await saveVillageResume(updated);
       setResumes(prev => prev.map(r => r.id === updated.id ? updated : r));
       setEditingDesa(null);
-    } catch (e) {
+
+      if (result.cloudSynced) {
+        setSaveFeedback({
+          type: 'success',
+          text: `Progres Desa ${updated.desaName} berhasil disimpan ke Cloud Firestore & otomatis tersinkron ke semua perangkat tim!`
+        });
+      } else {
+        setSaveFeedback({
+          type: 'warning',
+          text: `Data tersimpan di perangkat ini. ${result.error || 'Belum tersinkron ke cloud'}.`
+        });
+      }
+      setTimeout(() => setSaveFeedback(null), 6000);
+    } catch (e: any) {
       console.error('Error saving village resume:', e);
+      setSaveFeedback({
+        type: 'error',
+        text: `Gagal menyimpan: ${e?.message || 'Terjadi kesalahan sistem'}`
+      });
+      setTimeout(() => setSaveFeedback(null), 6000);
     } finally {
       setIsSaving(false);
     }
@@ -254,22 +312,77 @@ export default function ResumeProjectPanel({
     e.preventDefault();
     if (!newDesaName.trim()) return;
     const newResume = createDefaultVillageResume(activeProjectId, newDesaName.trim(), newKecamatan.trim());
-    await saveVillageResume(newResume);
+    const res = await saveVillageResume(newResume);
     setResumes(prev => [...prev, newResume]);
     setNewDesaName('');
     setNewKecamatan('');
     setIsAddingDesaModal(false);
+
+    if (res.cloudSynced) {
+      setSaveFeedback({
+        type: 'success',
+        text: `Desa ${newResume.desaName} berhasil ditambahkan dan disinkronkan ke Cloud Firestore!`
+      });
+      setTimeout(() => setSaveFeedback(null), 5000);
+    }
+  };
+
+  // Helper to ensure a dedicated Google Drive folder exists for the village
+  const getOrCreateDesaFolder = async (desaName: string): Promise<string | null> => {
+    let currentToken = accessToken;
+    if (!currentToken && onRefreshGoogleToken) {
+      currentToken = (await onRefreshGoogleToken()) || undefined;
+    }
+    if (!currentToken) return null;
+
+    try {
+      // 1. Root / master upload folder in Drive
+      const mainFolderId = uploadsFolderId || await findOrCreateFolder(currentToken, "SIP_Berkas_Pertanahan_Desa");
+      // 2. Dedicated master folder for Resume Proyek
+      const resumeMasterFolderId = await findOrCreateFolder(currentToken, "RESUME_PROYEK_DESA", mainFolderId);
+      // 3. Subfolder dedicated for this specific Desa: RESUME_DESA_[NAMA_DESA]
+      const cleanDesaName = desaName.trim().toUpperCase().replace(/[\/\\?%*:|"<>\s]/g, '_');
+      const desaFolderId = await findOrCreateFolder(currentToken, `RESUME_DESA_${cleanDesaName}`, resumeMasterFolderId);
+      return desaFolderId;
+    } catch (err) {
+      console.warn("Gagal membuat/mencari folder desa di Google Drive:", err);
+      return null;
+    }
   };
 
   // Upload PDF Handler inside editing modal
   const handleUploadPdf = async (file: File, stageKey: typeof STAGES_CONFIG[number]['key']) => {
     if (!editingDesa) return;
+    setIsUploadingFile(true);
+    setUploadProgressText('Menghubungkan ke Google Drive...');
     try {
       let webLink = '';
-      if (accessToken && uploadsFolderId) {
-        const res = await uploadFileToDrive(accessToken, file, `RESUME_${stageKey.toUpperCase()}`, editingDesa.desaName, uploadsFolderId);
-        webLink = res.webViewLink;
+      let currentToken = accessToken;
+      if (!currentToken && onRefreshGoogleToken) {
+        currentToken = (await onRefreshGoogleToken()) || undefined;
+      }
+
+      if (currentToken) {
+        setUploadProgressText(`Membuat folder Google Drive untuk Desa ${editingDesa.desaName}...`);
+        const desaFolderId = await getOrCreateDesaFolder(editingDesa.desaName);
+        if (desaFolderId) {
+          setUploadProgressText(`Mengunggah file PDF "${file.name}" langsung ke Google Drive...`);
+          const res = await uploadFileToDrive(
+            currentToken, 
+            file, 
+            `BA_${stageKey.toUpperCase()}`, 
+            editingDesa.desaName, 
+            desaFolderId
+          );
+          webLink = res.webViewLink;
+          setEditingDesa(prev => prev ? { ...prev, driveFolderId: desaFolderId } : null);
+        } else {
+          webLink = await fileToBase64(file);
+        }
       } else {
+        if (file.size > 800 * 1024) {
+          alert(`Perhatian: File PDF ini cukup besar (${Math.round(file.size / 1024)} KB). Disarankan sambungkan Google Drive agar berkas otomatis masuk ke folder Google Drive dan tidak membebani database.`);
+        }
         webLink = await fileToBase64(file);
       }
 
@@ -286,22 +399,53 @@ export default function ResumeProjectPanel({
           }
         };
       });
-    } catch (err) {
+
+      setSaveFeedback({
+        type: 'success',
+        text: `Berkas PDF "${file.name}" berhasil diunggah langsung ke folder Google Drive Desa ${editingDesa.desaName}!`
+      });
+      setTimeout(() => setSaveFeedback(null), 5000);
+    } catch (err: any) {
       console.error('Failed to upload PDF:', err);
-      alert('Gagal mengunggah PDF. Silakan coba kembali.');
+      alert('Gagal mengunggah PDF ke Google Drive: ' + (err?.message || 'Cek koneksi internet.'));
+    } finally {
+      setIsUploadingFile(false);
+      setUploadProgressText('');
     }
   };
 
   // Upload Documentation Photos Handler inside editing modal
   const handleUploadPhoto = async (file: File, stageKey: typeof STAGES_CONFIG[number]['key']) => {
     if (!editingDesa) return;
+    setIsUploadingFile(true);
+    setUploadProgressText('Menghubungkan ke Google Drive...');
     try {
       let photoUrl = '';
-      if (accessToken && uploadsFolderId) {
-        const res = await uploadFileToDrive(accessToken, file, `DOK_${stageKey.toUpperCase()}`, editingDesa.desaName, uploadsFolderId);
-        photoUrl = res.webViewLink;
+      let currentToken = accessToken;
+      if (!currentToken && onRefreshGoogleToken) {
+        currentToken = (await onRefreshGoogleToken()) || undefined;
+      }
+
+      if (currentToken) {
+        setUploadProgressText(`Membuat folder Google Drive untuk Desa ${editingDesa.desaName}...`);
+        const desaFolderId = await getOrCreateDesaFolder(editingDesa.desaName);
+        if (desaFolderId) {
+          setUploadProgressText(`Mengunggah foto dokumentasi ke Google Drive...`);
+          const res = await uploadFileToDrive(
+            currentToken, 
+            file, 
+            `DOK_${stageKey.toUpperCase()}`, 
+            editingDesa.desaName, 
+            desaFolderId
+          );
+          photoUrl = res.webViewLink;
+          setEditingDesa(prev => prev ? { ...prev, driveFolderId: desaFolderId } : null);
+        } else {
+          photoUrl = await compressImageFile(file, 1000, 1000, 0.65);
+        }
       } else {
-        photoUrl = await fileToBase64(file);
+        // Auto compress camera photos to ~60-90KB for safe Firestore storage if offline
+        photoUrl = await compressImageFile(file, 1000, 1000, 0.65);
       }
 
       setEditingDesa(prev => {
@@ -317,9 +461,18 @@ export default function ResumeProjectPanel({
           }
         };
       });
-    } catch (err) {
+
+      setSaveFeedback({
+        type: 'success',
+        text: `Foto dokumentasi berhasil diunggah langsung ke folder Google Drive Desa ${editingDesa.desaName}!`
+      });
+      setTimeout(() => setSaveFeedback(null), 5000);
+    } catch (err: any) {
       console.error('Failed to upload photo:', err);
-      alert('Gagal mengunggah foto dokumentasi.');
+      alert('Gagal mengunggah foto dokumentasi: ' + (err?.message || 'Cek koneksi internet.'));
+    } finally {
+      setIsUploadingFile(false);
+      setUploadProgressText('');
     }
   };
 
@@ -396,6 +549,27 @@ export default function ResumeProjectPanel({
 
           {/* Quick Actions */}
           <div className="flex items-center gap-2.5 flex-wrap">
+            {/* Realtime Cloud Sync Status */}
+            <div className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold flex items-center gap-2 ${
+              isCloudConnected 
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${isCloudConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
+              <span>{isCloudConnected ? 'Cloud Firestore (Real-time)' : 'Mode Lokal / Offline'}</span>
+            </div>
+
+            {/* Manual Refresh from Cloud */}
+            <button
+              onClick={handleManualRefreshCloud}
+              disabled={isRefreshingCloud}
+              className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-white/10 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-sm disabled:opacity-50"
+              title="Tarik data terbaru dari Cloud Firestore jika rekan kerja baru saja menyimpan pembaruan"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-sky-400 ${isRefreshingCloud ? 'animate-spin' : ''}`} />
+              <span>{isRefreshingCloud ? 'Menyinkronkan...' : 'Sinkronkan Cloud'}</span>
+            </button>
+
             <button
               onClick={handleExportCSV}
               className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-white/10 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-sm"
@@ -417,6 +591,34 @@ export default function ResumeProjectPanel({
             )}
           </div>
         </div>
+
+        {/* Save Feedback Alert Banner */}
+        {saveFeedback && (
+          <div className={`p-3.5 rounded-2xl border text-xs font-semibold flex items-center justify-between gap-3 animate-fadeIn ${
+            saveFeedback.type === 'success' 
+              ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300' 
+              : saveFeedback.type === 'warning'
+              ? 'bg-amber-950/60 border-amber-500/40 text-amber-300'
+              : 'bg-rose-950/60 border-rose-500/40 text-rose-300'
+          }`}>
+            <div className="flex items-center gap-2.5">
+              {saveFeedback.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              ) : saveFeedback.type === 'warning' ? (
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              ) : (
+                <X className="w-4 h-4 text-rose-400 shrink-0" />
+              )}
+              <span>{saveFeedback.text}</span>
+            </div>
+            <button 
+              onClick={() => setSaveFeedback(null)} 
+              className="p-1 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Top KPI Metrics Bar */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5 pt-2 border-t border-white/5 relative z-10">
@@ -907,12 +1109,28 @@ export default function ResumeProjectPanel({
                 </div>
               </div>
 
-              <button
-                onClick={() => setEditingDesa(null)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {editingDesa.driveFolderId && (
+                  <a
+                    href={`https://drive.google.com/drive/folders/${editingDesa.driveFolderId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                    title="Buka Folder Google Drive Desa ini di tab baru"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5 text-sky-400" />
+                    <span>Folder Drive Desa</span>
+                    <ExternalLink className="w-3 h-3 text-sky-400" />
+                  </a>
+                )}
+
+                <button
+                  onClick={() => setEditingDesa(null)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Stage Tabs */}
@@ -941,6 +1159,12 @@ export default function ResumeProjectPanel({
 
             {/* Modal Body: Active Stage Details */}
             <div className="p-6 overflow-y-auto flex-1 space-y-6">
+              {isUploadingFile && (
+                <div className="bg-sky-950/80 border border-sky-500/40 p-4 rounded-2xl flex items-center gap-3 animate-pulse text-xs font-bold text-sky-200">
+                  <RefreshCw className="w-4 h-4 text-sky-400 animate-spin shrink-0" />
+                  <span>{uploadProgressText || 'Sedang membuat folder desa di Google Drive & mengunggah berkas...'}</span>
+                </div>
+              )}
               {(() => {
                 const currentStageConfig = STAGES_CONFIG.find(s => s.key === activeStageTab)!;
                 const stageData = editingDesa[activeStageTab] || createEmptyStageDoc();

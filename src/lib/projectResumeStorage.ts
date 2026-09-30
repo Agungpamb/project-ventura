@@ -44,7 +44,7 @@ const VILLAGE_CACHE_PREFIX = 'project_ventura_village_resumes_';
 const LETTERS_CACHE_PREFIX = 'project_ventura_agency_letters_';
 
 // Safety wrapper so Firestore promises (network lag, offline, or rule delays) never hang indefinitely
-async function withTimeout<T>(promise: Promise<T>, timeoutMs = 2500): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs = 12000): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error('Operasi Firestore melebihi batas waktu (timeout)')), timeoutMs);
@@ -56,13 +56,68 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs = 2500): Promise<T>
   }
 }
 
+// ----------------- IMAGE COMPRESSION HELPER -----------------
+
+/**
+ * Compress image before storing locally or to Firestore to avoid exceeding 1MB limit
+ */
+export function compressImageFile(file: File, maxWidth = 1000, maxHeight = 1000, quality = 0.65): Promise<string> {
+  return new Promise((resolve) => {
+    // If not an image, fallback to standard reader
+    if (!file.type.startsWith('image/')) {
+      fileToBase64(file).then(resolve).catch(() => resolve(''));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > maxWidth) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            }
+          } else {
+            if (height > maxHeight) {
+              width = Math.round((width * maxHeight) / height);
+              height = maxHeight;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(event.target?.result as string);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } catch {
+          resolve(event.target?.result as string);
+        }
+      };
+      img.onerror = () => resolve(event.target?.result as string);
+    };
+    reader.onerror = () => resolve('');
+  });
+}
+
 // ----------------- VILLAGE RESUME FUNCTIONS -----------------
 
 export async function loadVillageResumes(projectId: string): Promise<VillageResume[]> {
   try {
     const resumesRef = collection(db, 'village_resumes');
     const q = query(resumesRef, where('projectId', '==', projectId));
-    const snap = await withTimeout(getDocs(q), 2500);
+    const snap = await withTimeout(getDocs(q), 10000);
     
     if (!snap.empty) {
       const list: VillageResume[] = [];
@@ -89,15 +144,19 @@ export async function loadVillageResumes(projectId: string): Promise<VillageResu
   return [];
 }
 
-export async function saveVillageResume(resume: VillageResume): Promise<void> {
+export async function saveVillageResume(resume: VillageResume): Promise<{ success: boolean; cloudSynced: boolean; error?: string }> {
   const updatedResume: VillageResume = {
     ...resume,
     lastUpdated: Date.now()
   };
 
-  // 1. Save to LocalStorage immediately for instant UX
+  // 1. Save to LocalStorage immediately for instant offline/local UX
   try {
-    const current = await loadVillageResumes(resume.projectId);
+    const cached = localStorage.getItem(`${VILLAGE_CACHE_PREFIX}${resume.projectId}`);
+    let current: VillageResume[] = [];
+    if (cached) {
+      try { current = JSON.parse(cached); } catch {}
+    }
     const index = current.findIndex(r => r.id === resume.id);
     let updatedList: VillageResume[];
     if (index >= 0) {
@@ -114,15 +173,49 @@ export async function saveVillageResume(resume: VillageResume): Promise<void> {
   // 2. Persist to Firestore with safety timeout
   try {
     const resumeRef = doc(db, 'village_resumes', resume.id);
-    await withTimeout(setDoc(resumeRef, updatedResume, { merge: true }), 2500);
-  } catch (err) {
+    await withTimeout(setDoc(resumeRef, updatedResume, { merge: true }), 12000);
+    console.log(`[Resume Project] Desa ${resume.desaName} berhasil disinkronkan ke Firestore Cloud!`);
+    return { success: true, cloudSynced: true };
+  } catch (err: any) {
+    const errMessage = err?.message || String(err);
     console.warn('Gagal menyimpan village resume ke Firestore:', err);
+    return { 
+      success: true, 
+      cloudSynced: false, 
+      error: errMessage.includes('exceeds maximum size') 
+        ? 'Ukuran berkas melebihi batas 1MB Firestore. Gunakan file yang lebih kecil atau hubungkan Google Drive.' 
+        : 'Gagal terkirim ke Cloud Firestore. Tersimpan di memori perangkat ini (Offline).'
+    };
+  }
+}
+
+export async function deleteVillageResume(projectId: string, resumeId: string): Promise<void> {
+  // 1. LocalStorage
+  try {
+    const raw = localStorage.getItem(`${VILLAGE_CACHE_PREFIX}${projectId}`);
+    let current: VillageResume[] = [];
+    if (raw) {
+      try { current = JSON.parse(raw); } catch {}
+    }
+    const filtered = current.filter(r => r.id !== resumeId);
+    localStorage.setItem(`${VILLAGE_CACHE_PREFIX}${projectId}`, JSON.stringify(filtered));
+  } catch (err) {
+    console.warn('Gagal delete local village resume:', err);
+  }
+
+  // 2. Firestore
+  try {
+    const resumeRef = doc(db, 'village_resumes', resumeId);
+    await withTimeout(deleteDoc(resumeRef), 10000);
+  } catch (err) {
+    console.warn('Gagal delete village resume dari Firestore:', err);
   }
 }
 
 export function subscribeVillageResumes(
   projectId: string, 
-  callback: (resumes: VillageResume[]) => void
+  callback: (resumes: VillageResume[]) => void,
+  onStatusChange?: (isConnected: boolean) => void
 ) {
   try {
     const resumesRef = collection(db, 'village_resumes');
@@ -132,15 +225,16 @@ export function subscribeVillageResumes(
       snapshot.forEach(d => {
         list.push(d.data() as VillageResume);
       });
-      if (list.length > 0) {
-        localStorage.setItem(`${VILLAGE_CACHE_PREFIX}${projectId}`, JSON.stringify(list));
-        callback(list);
-      }
+      localStorage.setItem(`${VILLAGE_CACHE_PREFIX}${projectId}`, JSON.stringify(list));
+      callback(list);
+      if (onStatusChange) onStatusChange(true);
     }, (err) => {
       console.warn('Realtime listener error for village resumes:', err);
+      if (onStatusChange) onStatusChange(false);
     });
   } catch (e) {
     console.warn('Could not initialize snapshot listener for village resumes:', e);
+    if (onStatusChange) onStatusChange(false);
     return () => {};
   }
 }
