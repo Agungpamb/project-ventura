@@ -15,7 +15,16 @@ import {
   saveLayerToLocalStorage,
   loadDeployedDefaultGeoJSONs
 } from './lib/geojsonStorage';
-import { type LandRecord, compareLandRecords, type OperatorConfig, type DataIntegrityLog, type ActivityLog, type ProjectConfig } from './types';
+import { 
+  type LandRecord, 
+  compareLandRecords, 
+  type OperatorConfig, 
+  type DataIntegrityLog, 
+  type ActivityLog, 
+  type ProjectConfig,
+  type ResumeStageConfig,
+  DEFAULT_RESUME_STAGES 
+} from './types';
 import { saveActivityLog, saveIntegrityLog } from './lib/activityStorage';
 import CacheDiffModal from './components/CacheDiffModal';
 import ModuleLoadingFallback from './components/ModuleLoadingFallback';
@@ -38,14 +47,14 @@ import {
   RefreshCw, FileSpreadsheet, KeyRound, CheckSquare,
   Plus, User, UserCheck, Settings, Folder, Key, Eye, EyeOff, Lock, Unlock, Info, ShieldCheck, HelpCircle, Briefcase, Filter,
   Pin, Menu, Clock, LayoutGrid, Sun, Moon, Copy, Users, ExternalLink, Layers, Trash2, X, Globe, GitCompare,
-  CheckCircle2, AlertCircle, FileText, Landmark, Mail, Sparkles, BookOpen
+  CheckCircle2, AlertCircle, FileText, Landmark, Mail, Sparkles, BookOpen, Save
 } from 'lucide-react';
 
 const DEFAULT_PROJECTS: ProjectConfig[] = [
-  { id: 'proj-1', name: 'KOMPENSASI ROW 150 kV JELOK - SANGGARAHAN', folderId: null, spreadsheetId: null, uploadsFolderId: null, publicCsvUrl: null },
-  { id: 'proj-2', name: 'KOMPENSASI ROW 150 kV BANGIL - BULUKANDANG', folderId: null, spreadsheetId: null, uploadsFolderId: null, publicCsvUrl: null },
-  { id: 'proj-3', name: 'KOMPENSASI ROW 150 kV LAWANG - BULUKANDANG', folderId: null, spreadsheetId: null, uploadsFolderId: null, publicCsvUrl: null },
-  { id: 'proj-4', name: 'KOMPENSASI ROW 150 kV GRATI - BANGIL', folderId: null, spreadsheetId: null, uploadsFolderId: null, publicCsvUrl: null },
+  { id: 'proj-1', name: 'KOMPENSASI ROW 150 kV JELOK - SANGGARAHAN', folderId: null, spreadsheetId: null, uploadsFolderId: null, publicCsvUrl: null, resumeStages: DEFAULT_RESUME_STAGES },
+  { id: 'proj-2', name: 'KOMPENSASI ROW 150 kV BANGIL - BULUKANDANG', folderId: null, spreadsheetId: null, uploadsFolderId: null, publicCsvUrl: null, resumeStages: DEFAULT_RESUME_STAGES },
+  { id: 'proj-3', name: 'KOMPENSASI ROW 150 kV LAWANG - BULUKANDANG', folderId: null, spreadsheetId: null, uploadsFolderId: null, publicCsvUrl: null, resumeStages: DEFAULT_RESUME_STAGES },
+  { id: 'proj-4', name: 'KOMPENSASI ROW 150 kV GRATI - BANGIL', folderId: null, spreadsheetId: null, uploadsFolderId: null, publicCsvUrl: null, resumeStages: DEFAULT_RESUME_STAGES },
 ];
 
 // RFC-compliant CSV Parser
@@ -408,6 +417,8 @@ export default function App() {
   const [editFolderId, setEditFolderId] = useState('');
   const [editUploadsFolderId, setEditUploadsFolderId] = useState('');
   const [editPublicCsvUrl, setEditPublicCsvUrl] = useState('');
+  const [editingStagesProjectId, setEditingStagesProjectId] = useState<string | null>(null);
+  const [tempProjectStages, setTempProjectStages] = useState<ResumeStageConfig[]>(DEFAULT_RESUME_STAGES);
   
   const [showBackupTools, setShowBackupTools] = useState(false);
   const [projectSubTab, setProjectSubTab] = useState<'projects' | 'geojson' | 'operators' | 'pins' | 'migration'>('projects');
@@ -2298,6 +2309,32 @@ export default function App() {
     alert("Konfigurasi ID Google Drive / Sheets berhasil disimpan!");
   };
 
+  // Open Stage Config Modal for a Project
+  const startEditingProjectStages = (proj: ProjectConfig) => {
+    setEditingStagesProjectId(proj.id);
+    const existing = proj.resumeStages && proj.resumeStages.length > 0 
+      ? proj.resumeStages 
+      : DEFAULT_RESUME_STAGES;
+    setTempProjectStages(JSON.parse(JSON.stringify(existing)));
+  };
+
+  // Update Resume Stages for a Project (both from Project Management and from ResumeProjectPanel)
+  const handleUpdateProjectStages = async (projectId: string, newStages: ResumeStageConfig[]) => {
+    const updated = projects.map(p => {
+      if (p.id === projectId) {
+        return {
+          ...p,
+          resumeStages: newStages
+        };
+      }
+      return p;
+    });
+
+    setProjects(updated);
+    localStorage.setItem('project_ventura_projects', JSON.stringify(updated));
+    await saveProjectsToCloud(updated);
+  };
+
   // Copy full project settings JSON to Clipboard
   const handleExportConfig = () => {
     const jsonStr = JSON.stringify(projects, null, 2);
@@ -3909,6 +3946,10 @@ export default function App() {
                       setSelectedRecordForEdit(rec);
                       setActiveMenu('input');
                     }}
+                    resumeStages={projects.find(p => p.id === activeProjectId)?.resumeStages || DEFAULT_RESUME_STAGES}
+                    onUpdateResumeStages={async (newStages) => {
+                      await handleUpdateProjectStages(activeProjectId, newStages);
+                    }}
                   />
                 )}
 
@@ -4187,6 +4228,43 @@ export default function App() {
                                   </div>
                                 )}
 
+                                {/* Resume Stages Preview & Configure Button */}
+                                <div className="pt-2 border-t border-white/5 space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                                      <FileText className="w-3.5 h-3.5 text-amber-400" />
+                                      Tahapan Resume Proyek:
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => startEditingProjectStages(proj)}
+                                      className="text-[11px] font-bold text-amber-300 hover:text-amber-200 px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 rounded-lg border border-amber-500/30 transition-all cursor-pointer flex items-center gap-1"
+                                      title="Atur poin tahapan apa saja yang ditampilkan pada resume proyek ini"
+                                    >
+                                      <Settings className="w-3 h-3" />
+                                      Atur Poin ({((proj.resumeStages || DEFAULT_RESUME_STAGES).filter(s => s.active !== false)).length}/{(proj.resumeStages || DEFAULT_RESUME_STAGES).length})
+                                    </button>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    {(proj.resumeStages || DEFAULT_RESUME_STAGES).map(s => {
+                                      const isActive = s.active !== false;
+                                      return (
+                                        <span 
+                                          key={s.key} 
+                                          className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${
+                                            isActive
+                                              ? 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+                                              : 'bg-slate-800/80 text-slate-500 border-slate-700/50 line-through'
+                                          }`}
+                                          title={isActive ? `${s.fullName} (Aktif)` : `${s.fullName} (Nonaktif)`}
+                                        >
+                                          {s.label}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
                                 <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/5">
                                   <div className="flex items-center gap-1.5">
                                     {activeProjectId === proj.id ? (
@@ -4432,6 +4510,190 @@ export default function App() {
                               </button>
                             </div>
                           </form>
+                        )}
+
+                        {/* Modal: Atur Poin Resume Proyek Per Jalur */}
+                        {editingStagesProjectId && (
+                          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fadeIn">
+                            <div className="glass-card rounded-3xl w-full max-w-2xl border border-amber-500/30 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                              {/* Modal Header */}
+                              <div className="p-5 border-b border-white/10 flex items-center justify-between bg-slate-900/95">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30 shrink-0">
+                                    <Settings className="w-5 h-5" />
+                                  </div>
+                                  <div>
+                                    <h3 className="text-base font-extrabold text-white tracking-tight flex items-center gap-2">
+                                      Atur Poin Tahapan Resume Proyek
+                                    </h3>
+                                    <p className="text-xs text-slate-400 mt-0.5">
+                                      Jalur: <span className="text-amber-300 font-bold">{projects.find(p => p.id === editingStagesProjectId)?.name}</span>
+                                    </p>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingStagesProjectId(null)}
+                                  className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                                >
+                                  <X className="w-5 h-5" />
+                                </button>
+                              </div>
+
+                              {/* Modal Body */}
+                              <div className="p-6 overflow-y-auto space-y-5 flex-1 bg-slate-950/60">
+                                <div className="p-3.5 bg-amber-500/10 border border-amber-500/25 rounded-2xl flex items-start gap-3 text-xs text-amber-200">
+                                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                                  <p className="leading-relaxed">
+                                    Pilih poin tahapan apa saja yang dikerjakan pada proyek ini. Masing-masing proyek dapat memiliki tahapan yang berbeda. Poin yang dinonaktifkan di bawah ini <strong>tidak akan dihitung dalam persentase progres</strong> dan disembunyikan dari Menu 1.4 (Resume Proyek).
+                                  </p>
+                                </div>
+
+                                {/* Quick Presets */}
+                                <div className="space-y-2">
+                                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                                    Pilihan Cepat (Presets):
+                                  </span>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setTempProjectStages(tempProjectStages.map(s => ({ ...s, active: true })));
+                                      }}
+                                      className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-slate-200 transition-all cursor-pointer"
+                                    >
+                                      Aktifkan Semua (6 Tahap)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setTempProjectStages(tempProjectStages.map(s => ({
+                                          ...s,
+                                          active: s.key !== 'bushClearing'
+                                        })));
+                                      }}
+                                      className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-slate-200 transition-all cursor-pointer"
+                                    >
+                                      Standar ROW (5 Tahap tanpa Bush Clearing)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setTempProjectStages(tempProjectStages.map(s => ({
+                                          ...s,
+                                          active: s.key === 'baSosialisasiAwal' || s.key === 'baPengumuman' || s.key === 'lampiranBapt'
+                                        })));
+                                      }}
+                                      className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-slate-200 transition-all cursor-pointer"
+                                    >
+                                      Tahap Awal (Sos. Pendahuluan, Pengumuman & BAPT)
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Stages Checklist */}
+                                <div className="space-y-2.5">
+                                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                                    Daftar Poin Tahapan ({tempProjectStages.filter(s => s.active !== false).length} Aktif dari {tempProjectStages.length}):
+                                  </span>
+                                  <div className="space-y-2">
+                                    {tempProjectStages.map((stage) => {
+                                      const isChecked = stage.active !== false;
+                                      return (
+                                        <div
+                                          key={stage.key}
+                                          onClick={() => {
+                                            setTempProjectStages(prev => prev.map(s => s.key === stage.key ? { ...s, active: !isChecked } : s));
+                                          }}
+                                          className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                                            isChecked 
+                                              ? 'bg-amber-500/10 border-amber-500/40 shadow-sm' 
+                                              : 'bg-slate-900/40 border-white/5 opacity-60 hover:opacity-80'
+                                          }`}
+                                        >
+                                          <div className="flex items-center gap-3">
+                                            <input
+                                              type="checkbox"
+                                              checked={isChecked}
+                                              onChange={() => {}}
+                                              className="w-4 h-4 rounded text-amber-500 focus:ring-amber-500 bg-slate-900 border-white/20 cursor-pointer"
+                                            />
+                                            <div>
+                                              <div className="flex items-center gap-2">
+                                                <span className="text-xs font-extrabold text-white">
+                                                  {stage.label}
+                                                </span>
+                                                <span className="text-xs text-slate-400 font-medium hidden sm:inline">
+                                                  ({stage.fullName})
+                                                </span>
+                                              </div>
+                                              <div className="flex items-center gap-2 pt-1 text-[10px] text-slate-400">
+                                                {stage.hasPdf && (
+                                                  <span className="bg-amber-500/15 text-amber-300 px-1.5 py-0.5 rounded font-bold">
+                                                    Ada Berkas BA (PDF)
+                                                  </span>
+                                                )}
+                                                {stage.hasPhoto && (
+                                                  <span className="bg-purple-500/15 text-purple-300 px-1.5 py-0.5 rounded font-bold">
+                                                    Ada Foto Dokumentasi
+                                                  </span>
+                                                )}
+                                              </div>
+                                            </div>
+                                          </div>
+
+                                          <span className={`text-[10px] font-mono font-bold px-2 py-1 rounded-full shrink-0 ${
+                                            isChecked
+                                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                              : 'bg-slate-800 text-slate-500 border border-slate-700'
+                                          }`}>
+                                            {isChecked ? 'AKTIF' : 'NONAKTIF'}
+                                          </span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Modal Footer */}
+                              <div className="p-4 border-t border-white/10 bg-slate-900 flex items-center justify-between gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTempProjectStages(JSON.parse(JSON.stringify(DEFAULT_RESUME_STAGES)));
+                                  }}
+                                  className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white text-xs font-bold transition-all cursor-pointer"
+                                >
+                                  Reset ke Standar
+                                </button>
+
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingStagesProjectId(null)}
+                                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
+                                  >
+                                    Batal
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      if (editingStagesProjectId) {
+                                        await handleUpdateProjectStages(editingStagesProjectId, tempProjectStages);
+                                        setEditingStagesProjectId(null);
+                                        alert("Pengaturan poin tahapan resume proyek berhasil disimpan dan disinkronkan ke Cloud!");
+                                      }
+                                    }}
+                                    className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs font-black shadow-lg shadow-amber-600/20 cursor-pointer flex items-center gap-2"
+                                  >
+                                    <Save className="w-3.5 h-3.5" />
+                                    <span>Simpan ke Proyek & Cloud</span>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
                         )}
                       </div>
                     )}

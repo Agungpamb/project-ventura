@@ -526,6 +526,73 @@ export interface AgencyLetter {
   updatedBy: string;
 }
 
+export interface ResumeStageConfig {
+  key: string;
+  label: string;
+  fullName: string;
+  active: boolean;
+  hasPdf?: boolean;
+  hasPhoto?: boolean;
+  color?: string;
+}
+
+export const DEFAULT_RESUME_STAGES: ResumeStageConfig[] = [
+  { 
+    key: 'baSosialisasiAwal', 
+    label: '1. Sos. Pendahuluan', 
+    fullName: 'Sosialisasi Pendahuluan', 
+    active: true, 
+    hasPdf: true, 
+    hasPhoto: true, 
+    color: 'text-amber-400' 
+  },
+  { 
+    key: 'baPengumuman', 
+    label: '2. Sos. Pengumuman Inv.', 
+    fullName: 'Sosialisasi Pengumuman Inventarisasi', 
+    active: true, 
+    hasPdf: true, 
+    hasPhoto: true, 
+    color: 'text-sky-400' 
+  },
+  { 
+    key: 'lampiranBapt', 
+    label: '3. BAPT Register', 
+    fullName: 'BAPT Register', 
+    active: true, 
+    hasPdf: true, 
+    hasPhoto: false, 
+    color: 'text-amber-400' 
+  },
+  { 
+    key: 'baPenyampaianNilai', 
+    label: '4. Sos. Penyampaian Nilai', 
+    fullName: 'Sosialisasi Penyampaian Nilai', 
+    active: true, 
+    hasPdf: true, 
+    hasPhoto: true, 
+    color: 'text-purple-400' 
+  },
+  { 
+    key: 'baSerahTerimaRekening', 
+    label: '5. Sos. Pembayaran Komp.', 
+    fullName: 'Sosialisasi Pembayaran Kompensasi', 
+    active: true, 
+    hasPdf: true, 
+    hasPhoto: true, 
+    color: 'text-emerald-400' 
+  },
+  { 
+    key: 'bushClearing', 
+    label: '6. Bush Clearing', 
+    fullName: 'Bush Clearing', 
+    active: true, 
+    hasPdf: false, 
+    hasPhoto: true, 
+    color: 'text-rose-400' 
+  }
+];
+
 export interface ProjectConfig {
   id: string;
   name: string;
@@ -533,6 +600,7 @@ export interface ProjectConfig {
   spreadsheetId: string | null;
   uploadsFolderId: string | null;
   publicCsvUrl?: string | null;
+  resumeStages?: ResumeStageConfig[];
 }
 
 

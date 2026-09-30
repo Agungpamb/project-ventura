@@ -27,9 +27,11 @@ import {
   Layers, 
   RefreshCw,
   FolderOpen,
+  Settings,
   Trash2
 } from 'lucide-react';
-import type { LandRecord, VillageResume, VillageStageDoc, StageStatus } from '../types';
+import type { LandRecord, VillageResume, VillageStageDoc, StageStatus, ResumeStageConfig } from '../types';
+import { DEFAULT_RESUME_STAGES } from '../types';
 import { 
   loadVillageResumes, 
   saveVillageResume, 
@@ -52,16 +54,9 @@ interface ResumeProjectPanelProps {
   uploadsFolderId?: string;
   onRefreshGoogleToken?: () => Promise<string | null>;
   onNavigateToInput?: (record: LandRecord) => void;
+  resumeStages?: ResumeStageConfig[];
+  onUpdateResumeStages?: (newStages: ResumeStageConfig[]) => Promise<void>;
 }
-
-const STAGES_CONFIG = [
-  { key: 'baSosialisasiAwal', label: '1. BA Sos Awal', fullName: 'BA Sosialisasi Awal', hasPdf: true, hasPhoto: true, color: 'text-amber-400' },
-  { key: 'baPengumuman', label: '2. BA Pengumuman', fullName: 'BA Pengumuman & Penetapan', hasPdf: true, hasPhoto: true, color: 'text-sky-400' },
-  { key: 'lampiranBapt', label: '3. Lampiran BAPT', fullName: 'Lampiran Berita Acara Pembayaran (BAPT)', hasPdf: true, hasPhoto: false, color: 'text-amber-400' },
-  { key: 'baPenyampaianNilai', label: '4. BA Penyampaian Nilai', fullName: 'BA Penyampaian Nilai Kompensasi', hasPdf: true, hasPhoto: true, color: 'text-purple-400' },
-  { key: 'baSerahTerimaRekening', label: '5. BA Rekening', fullName: 'BA Serah Terima Buku Rekening Bank', hasPdf: true, hasPhoto: true, color: 'text-emerald-400' },
-  { key: 'bushClearing', label: '6. Bush Clearing', fullName: 'Dokumentasi & Progres Bush Clearing', hasPdf: false, hasPhoto: true, color: 'text-rose-400' },
-] as const;
 
 export default function ResumeProjectPanel({
   records,
@@ -72,9 +67,23 @@ export default function ResumeProjectPanel({
   operatorName = 'Operator',
   accessToken,
   uploadsFolderId,
-  onRefreshGoogleToken
+  onRefreshGoogleToken,
+  resumeStages,
+  onUpdateResumeStages
 }: ResumeProjectPanelProps) {
   const isGuest = role === 'GUEST';
+
+  // Configured stages for this specific project
+  const stagesConfig = useMemo<ResumeStageConfig[]>(() => {
+    if (resumeStages && resumeStages.length > 0) return resumeStages;
+    return DEFAULT_RESUME_STAGES;
+  }, [resumeStages]);
+
+  // Only the active stages that should be shown on tables & KPIs
+  const activeStages = useMemo<ResumeStageConfig[]>(() => {
+    const filtered = stagesConfig.filter(s => s.active !== false);
+    return filtered.length > 0 ? filtered : DEFAULT_RESUME_STAGES;
+  }, [stagesConfig]);
 
   // State
   const [resumes, setResumes] = useState<VillageResume[]>([]);
@@ -91,13 +100,29 @@ export default function ResumeProjectPanel({
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [uploadProgressText, setUploadProgressText] = useState('');
 
+  // Settings Modal for Points / Stages
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [tempStages, setTempStages] = useState<ResumeStageConfig[]>(stagesConfig);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+
+  useEffect(() => {
+    setTempStages(stagesConfig);
+  }, [stagesConfig]);
+
   // Modals
   const [editingDesa, setEditingDesa] = useState<VillageResume | null>(null);
-  const [activeStageTab, setActiveStageTab] = useState<typeof STAGES_CONFIG[number]['key']>('baSosialisasiAwal');
+  const [activeStageTab, setActiveStageTab] = useState<string>('baSosialisasiAwal');
   const [isSaving, setIsSaving] = useState(false);
   const [isAddingDesaModal, setIsAddingDesaModal] = useState(false);
   const [newDesaName, setNewDesaName] = useState('');
   const [newKecamatan, setNewKecamatan] = useState('');
+
+  // Synchronize activeStageTab with available active stages
+  useEffect(() => {
+    if (activeStages.length > 0 && !activeStages.some(s => s.key === activeStageTab)) {
+      setActiveStageTab(activeStages[0].key);
+    }
+  }, [activeStages, activeStageTab]);
 
   // Preview Modal
   const [previewModal, setPreviewModal] = useState<{
@@ -194,20 +219,15 @@ export default function ResumeProjectPanel({
     }
   };
 
-  // Calculate Progress of a single village
+  // Calculate Progress of a single village dynamically based on active stages
   const calculateVillageProgress = (res: VillageResume): number => {
-    const stages = [
-      res.baSosialisasiAwal,
-      res.baPengumuman,
-      res.lampiranBapt,
-      res.baPenyampaianNilai,
-      res.baSerahTerimaRekening,
-      res.bushClearing
-    ];
+    if (activeStages.length === 0) return 0;
+    const stageWeight = 100 / activeStages.length;
     let points = 0;
-    stages.forEach(s => {
-      if (s?.status === 'SELESAI') points += 100 / 6;
-      else if (s?.status === 'PROSES') points += 50 / 6;
+    activeStages.forEach(s => {
+      const stage = (res as any)[s.key] as VillageStageDoc | undefined;
+      if (stage?.status === 'SELESAI') points += stageWeight;
+      else if (stage?.status === 'PROSES') points += stageWeight / 2;
     });
     return Math.round(points);
   };
@@ -225,7 +245,7 @@ export default function ResumeProjectPanel({
       if (statusFilter === 'NOT_STARTED') return progress === 0;
       return true;
     }).sort((a, b) => a.desaName.localeCompare(b.desaName));
-  }, [resumes, searchQuery, statusFilter]);
+  }, [resumes, searchQuery, statusFilter, activeStages]);
 
   // Overall Project Resume Metrics
   const metrics = useMemo(() => {
@@ -238,14 +258,10 @@ export default function ResumeProjectPanel({
     let completedCount = 0;
     let inProgressCount = 0;
 
-    const stageStats: Record<string, { selesai: number; proses: number }> = {
-      baSosialisasiAwal: { selesai: 0, proses: 0 },
-      baPengumuman: { selesai: 0, proses: 0 },
-      lampiranBapt: { selesai: 0, proses: 0 },
-      baPenyampaianNilai: { selesai: 0, proses: 0 },
-      baSerahTerimaRekening: { selesai: 0, proses: 0 },
-      bushClearing: { selesai: 0, proses: 0 }
-    };
+    const stageStats: Record<string, { selesai: number; proses: number }> = {};
+    activeStages.forEach(s => {
+      stageStats[s.key] = { selesai: 0, proses: 0 };
+    });
 
     resumes.forEach(r => {
       const prog = calculateVillageProgress(r);
@@ -253,8 +269,8 @@ export default function ResumeProjectPanel({
       if (prog === 100) completedCount++;
       else if (prog > 0) inProgressCount++;
 
-      STAGES_CONFIG.forEach(s => {
-        const stage = r[s.key];
+      activeStages.forEach(s => {
+        const stage = (r as any)[s.key] as VillageStageDoc | undefined;
         if (stage?.status === 'SELESAI') stageStats[s.key].selesai++;
         else if (stage?.status === 'PROSES') stageStats[s.key].proses++;
       });
@@ -267,7 +283,7 @@ export default function ResumeProjectPanel({
       avgProgress: Math.round(totalProgressSum / totalDesa),
       stageStats
     };
-  }, [resumes]);
+  }, [resumes, activeStages]);
 
   // Handle Save Edited Village Stage
   const handleSaveVillageChanges = async () => {
@@ -351,7 +367,7 @@ export default function ResumeProjectPanel({
   };
 
   // Upload PDF Handler inside editing modal
-  const handleUploadPdf = async (file: File, stageKey: typeof STAGES_CONFIG[number]['key']) => {
+  const handleUploadPdf = async (file: File, stageKey: string) => {
     if (!editingDesa) return;
     setIsUploadingFile(true);
     setUploadProgressText('Menghubungkan ke Google Drive...');
@@ -388,7 +404,7 @@ export default function ResumeProjectPanel({
 
       setEditingDesa(prev => {
         if (!prev) return null;
-        const currentStage = prev[stageKey] || createEmptyStageDoc();
+        const currentStage = (prev as any)[stageKey] || createEmptyStageDoc();
         return {
           ...prev,
           [stageKey]: {
@@ -415,7 +431,7 @@ export default function ResumeProjectPanel({
   };
 
   // Upload Documentation Photos Handler inside editing modal
-  const handleUploadPhoto = async (file: File, stageKey: typeof STAGES_CONFIG[number]['key']) => {
+  const handleUploadPhoto = async (file: File, stageKey: string) => {
     if (!editingDesa) return;
     setIsUploadingFile(true);
     setUploadProgressText('Menghubungkan ke Google Drive...');
@@ -450,7 +466,7 @@ export default function ResumeProjectPanel({
 
       setEditingDesa(prev => {
         if (!prev) return null;
-        const currentStage = prev[stageKey] || createEmptyStageDoc();
+        const currentStage = (prev as any)[stageKey] || createEmptyStageDoc();
         const existingPhotos = currentStage.docPhotos || [];
         return {
           ...prev,
@@ -476,19 +492,17 @@ export default function ResumeProjectPanel({
     }
   };
 
-  // Export CSV
+  // Export CSV dynamically according to active stages
   const handleExportCSV = () => {
-    const headers = ['No', 'Nama Desa', 'Kecamatan', 'BA Sos Awal', 'BA Pengumuman', 'Lampiran BAPT', 'BA Nilai', 'BA Rekening', 'Bush Clearing', 'Progres (%)'];
+    const headers = ['No', 'Nama Desa', 'Kecamatan', ...activeStages.map(s => s.fullName), 'Progres (%)'];
     const rows = filteredResumes.map((r, i) => [
       i + 1,
       `"${r.desaName}"`,
       `"${r.kecamatan || '-'}"`,
-      r.baSosialisasiAwal.status,
-      r.baPengumuman.status,
-      r.lampiranBapt.status,
-      r.baPenyampaianNilai.status,
-      r.baSerahTerimaRekening.status,
-      r.bushClearing.status,
+      ...activeStages.map(s => {
+        const stage = (r as any)[s.key] as VillageStageDoc | undefined;
+        return stage?.status || 'BELUM';
+      }),
       `${calculateVillageProgress(r)}%`
     ]);
 
@@ -543,7 +557,7 @@ export default function ResumeProjectPanel({
               </h2>
             </div>
             <p className="text-xs text-slate-400 leading-relaxed max-w-3xl">
-              Matriks resume 6 tahapan utama per desa: BA Sosialisasi Awal, BA Pengumuman, Lampiran BAPT, BA Penyampaian Nilai, BA Serah Terima Rekening, dan Bush Clearing.
+              Matriks resume {activeStages.length} tahapan proyek per desa: {activeStages.map(s => s.fullName).join(', ')}.
             </p>
           </div>
 
@@ -569,6 +583,21 @@ export default function ResumeProjectPanel({
               <RefreshCw className={`w-3.5 h-3.5 text-sky-400 ${isRefreshingCloud ? 'animate-spin' : ''}`} />
               <span>{isRefreshingCloud ? 'Menyinkronkan...' : 'Sinkronkan Cloud'}</span>
             </button>
+
+            {/* Settings: Atur Poin Tahapan Proyek */}
+            {!isGuest && (
+              <button
+                onClick={() => {
+                  setTempStages(JSON.parse(JSON.stringify(stagesConfig)));
+                  setIsSettingsModalOpen(true);
+                }}
+                className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-white/10 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-sm hover:border-amber-500/40"
+                title="Atur poin tahapan apa saja yang aktif pada proyek ini"
+              >
+                <Settings className="w-3.5 h-3.5 text-amber-400" />
+                <span>Atur Poin ({activeStages.length}/{stagesConfig.length})</span>
+              </button>
+            )}
 
             <button
               onClick={handleExportCSV}
@@ -621,14 +650,16 @@ export default function ResumeProjectPanel({
         )}
 
         {/* Top KPI Metrics Bar */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5 pt-2 border-t border-white/5 relative z-10">
-          {STAGES_CONFIG.map((stage) => {
+        <div className={`grid grid-cols-2 sm:grid-cols-3 ${
+          activeStages.length <= 4 ? 'lg:grid-cols-4' : activeStages.length === 5 ? 'lg:grid-cols-5' : 'lg:grid-cols-6'
+        } gap-3.5 pt-2 border-t border-white/5 relative z-10`}>
+          {activeStages.map((stage) => {
             const stat = metrics.stageStats[stage.key] || { selesai: 0, proses: 0 };
             const pct = metrics.totalDesa > 0 ? Math.round((stat.selesai / metrics.totalDesa) * 100) : 0;
             return (
               <div key={stage.key} className="bg-slate-900/60 p-3 rounded-2xl border border-white/5 space-y-2 hover:border-white/10 transition-all">
                 <div className="flex items-center justify-between">
-                  <span className={`text-[11px] font-bold ${stage.color} truncate block`}>
+                  <span className={`text-[11px] font-bold ${stage.color || 'text-amber-400'} truncate block`}>
                     {stage.label}
                   </span>
                   <span className="text-[10px] font-mono font-extrabold text-slate-400">
@@ -797,20 +828,19 @@ export default function ResumeProjectPanel({
               <tr className="bg-slate-950/90 border-b border-white/10 text-[10px] font-black uppercase tracking-wider text-slate-400 font-mono">
                 <th className="py-3 px-3 w-12 text-center">No</th>
                 <th className="py-3 px-3 w-48">Desa & Info Lahan</th>
-                <th className="py-3 px-3">1. BA Sos Awal</th>
-                <th className="py-3 px-3">2. BA Pengumuman</th>
-                <th className="py-3 px-3">3. Lampiran BAPT</th>
-                <th className="py-3 px-3">4. BA Nilai</th>
-                <th className="py-3 px-3">5. BA Rekening</th>
-                <th className="py-3 px-3">6. Bush Clearing</th>
+                {activeStages.map((stage) => (
+                  <th key={stage.key} className="py-3 px-3 min-w-[130px]">
+                    <span className={stage.color || 'text-slate-300'}>{stage.label}</span>
+                  </th>
+                ))}
                 <th className="py-3 px-3 w-28 text-center">Progres</th>
-                <th className="py-3 px-4 w-32 text-center">Aksi Dokumen</th>
+                <th className="py-3 px-4 w-36 text-center">Aksi Dokumen</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5 text-xs font-medium">
               {filteredResumes.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="text-center py-16 text-slate-400 space-y-3">
+                  <td colSpan={activeStages.length + 4} className="text-center py-16 text-slate-400 space-y-3">
                     <Landmark className="w-10 h-10 text-slate-600 mx-auto" />
                     <p className="text-sm font-semibold">Tidak ada data desa yang cocok dengan pencarian.</p>
                   </td>
@@ -853,185 +883,45 @@ export default function ResumeProjectPanel({
                         </div>
                       </td>
 
-                      {/* 1. BA Sos Awal */}
-                      <td className="py-3.5 px-3">
-                        <div className="space-y-1.5">
-                          {renderStatusBadge(res.baSosialisasiAwal.status)}
-                          <div className="flex items-center gap-1">
-                            {res.baSosialisasiAwal.pdfUrl && (
-                              <button
-                                onClick={() => setPreviewModal({
-                                  isOpen: true,
-                                  title: `BA Sosialisasi Awal - Desa ${res.desaName}`,
-                                  pdfUrl: res.baSosialisasiAwal.pdfUrl
-                                })}
-                                className="p-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
-                                title="Buka PDF BA Sosialisasi Awal"
-                              >
-                                <FileText className="w-3 h-3" /> PDF
-                              </button>
-                            )}
-                            {(res.baSosialisasiAwal.docPhotos?.length || 0) > 0 && (
-                              <button
-                                onClick={() => setPreviewModal({
-                                  isOpen: true,
-                                  title: `Foto BA Sosialisasi Awal - Desa ${res.desaName}`,
-                                  photos: res.baSosialisasiAwal.docPhotos
-                                })}
-                                className="p-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
-                                title="Lihat Foto Dokumentasi"
-                              >
-                                <ImageIcon className="w-3 h-3" /> {res.baSosialisasiAwal.docPhotos?.length} Foto
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* 2. BA Pengumuman */}
-                      <td className="py-3.5 px-3">
-                        <div className="space-y-1.5">
-                          {renderStatusBadge(res.baPengumuman.status)}
-                          <div className="flex items-center gap-1">
-                            {res.baPengumuman.pdfUrl && (
-                              <button
-                                onClick={() => setPreviewModal({
-                                  isOpen: true,
-                                  title: `BA Pengumuman - Desa ${res.desaName}`,
-                                  pdfUrl: res.baPengumuman.pdfUrl
-                                })}
-                                className="p-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
-                                title="Buka PDF BA Pengumuman"
-                              >
-                                <FileText className="w-3 h-3" /> PDF
-                              </button>
-                            )}
-                            {(res.baPengumuman.docPhotos?.length || 0) > 0 && (
-                              <button
-                                onClick={() => setPreviewModal({
-                                  isOpen: true,
-                                  title: `Foto Pengumuman - Desa ${res.desaName}`,
-                                  photos: res.baPengumuman.docPhotos
-                                })}
-                                className="p-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
-                                title="Lihat Foto Dokumentasi"
-                              >
-                                <ImageIcon className="w-3 h-3" /> {res.baPengumuman.docPhotos?.length} Foto
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* 3. Lampiran BAPT */}
-                      <td className="py-3.5 px-3">
-                        <div className="space-y-1.5">
-                          {renderStatusBadge(res.lampiranBapt.status)}
-                          {res.lampiranBapt.pdfUrl && (
-                            <button
-                              onClick={() => setPreviewModal({
-                                isOpen: true,
-                                title: `Lampiran BAPT - Desa ${res.desaName}`,
-                                pdfUrl: res.lampiranBapt.pdfUrl
-                              })}
-                              className="p-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
-                              title="Buka PDF Lampiran BAPT"
-                            >
-                              <FileText className="w-3 h-3" /> PDF
-                            </button>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* 4. BA Penyampaian Nilai */}
-                      <td className="py-3.5 px-3">
-                        <div className="space-y-1.5">
-                          {renderStatusBadge(res.baPenyampaianNilai.status)}
-                          <div className="flex items-center gap-1">
-                            {res.baPenyampaianNilai.pdfUrl && (
-                              <button
-                                onClick={() => setPreviewModal({
-                                  isOpen: true,
-                                  title: `BA Penyampaian Nilai - Desa ${res.desaName}`,
-                                  pdfUrl: res.baPenyampaianNilai.pdfUrl
-                                })}
-                                className="p-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
-                                title="Buka PDF Penyampaian Nilai"
-                              >
-                                <FileText className="w-3 h-3" /> PDF
-                              </button>
-                            )}
-                            {(res.baPenyampaianNilai.docPhotos?.length || 0) > 0 && (
-                              <button
-                                onClick={() => setPreviewModal({
-                                  isOpen: true,
-                                  title: `Foto Penyampaian Nilai - Desa ${res.desaName}`,
-                                  photos: res.baPenyampaianNilai.docPhotos
-                                })}
-                                className="p-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
-                                title="Lihat Foto Dokumentasi"
-                              >
-                                <ImageIcon className="w-3 h-3" /> {res.baPenyampaianNilai.docPhotos?.length} Foto
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* 5. BA Serah Terima Rekening */}
-                      <td className="py-3.5 px-3">
-                        <div className="space-y-1.5">
-                          {renderStatusBadge(res.baSerahTerimaRekening.status)}
-                          <div className="flex items-center gap-1">
-                            {res.baSerahTerimaRekening.pdfUrl && (
-                              <button
-                                onClick={() => setPreviewModal({
-                                  isOpen: true,
-                                  title: `BA Serah Terima Rekening - Desa ${res.desaName}`,
-                                  pdfUrl: res.baSerahTerimaRekening.pdfUrl
-                                })}
-                                className="p-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
-                                title="Buka PDF Serah Terima Rekening"
-                              >
-                                <FileText className="w-3 h-3" /> PDF
-                              </button>
-                            )}
-                            {(res.baSerahTerimaRekening.docPhotos?.length || 0) > 0 && (
-                              <button
-                                onClick={() => setPreviewModal({
-                                  isOpen: true,
-                                  title: `Foto Serah Terima Rekening - Desa ${res.desaName}`,
-                                  photos: res.baSerahTerimaRekening.docPhotos
-                                })}
-                                className="p-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
-                                title="Lihat Foto Dokumentasi"
-                              >
-                                <ImageIcon className="w-3 h-3" /> {res.baSerahTerimaRekening.docPhotos?.length} Foto
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* 6. Bush Clearing */}
-                      <td className="py-3.5 px-3">
-                        <div className="space-y-1.5">
-                          {renderStatusBadge(res.bushClearing.status)}
-                          {(res.bushClearing.docPhotos?.length || 0) > 0 && (
-                            <button
-                              onClick={() => setPreviewModal({
-                                isOpen: true,
-                                title: `Foto Bush Clearing - Desa ${res.desaName}`,
-                                photos: res.bushClearing.docPhotos
-                              })}
-                              className="p-1 rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 text-[10px] flex items-center gap-1 cursor-pointer"
-                              title="Lihat Foto Dokumentasi Bush Clearing"
-                            >
-                              <TreePine className="w-3 h-3" /> {res.bushClearing.docPhotos?.length} Foto
-                            </button>
-                          )}
-                        </div>
-                      </td>
+                      {/* Dynamic Stage Columns */}
+                      {activeStages.map((stage) => {
+                        const stageData = (res as any)[stage.key] as VillageStageDoc | undefined || createEmptyStageDoc();
+                        return (
+                          <td key={stage.key} className="py-3.5 px-3">
+                            <div className="space-y-1.5">
+                              {renderStatusBadge(stageData.status)}
+                              <div className="flex items-center gap-1 flex-wrap">
+                                {stageData.pdfUrl && (
+                                  <button
+                                    onClick={() => setPreviewModal({
+                                      isOpen: true,
+                                      title: `${stage.fullName} - Desa ${res.desaName}`,
+                                      pdfUrl: stageData.pdfUrl
+                                    })}
+                                    className="p-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                    title={`Buka Berkas PDF ${stage.fullName}`}
+                                  >
+                                    <FileText className="w-3 h-3 text-amber-400" /> PDF
+                                  </button>
+                                )}
+                                {(stageData.docPhotos?.length || 0) > 0 && (
+                                  <button
+                                    onClick={() => setPreviewModal({
+                                      isOpen: true,
+                                      title: `Foto ${stage.fullName} - Desa ${res.desaName}`,
+                                      photos: stageData.docPhotos
+                                    })}
+                                    className="p-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                    title="Lihat Foto Dokumentasi"
+                                  >
+                                    <ImageIcon className="w-3 h-3 text-purple-400" /> {stageData.docPhotos?.length} Foto
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
 
                       {/* Progress Bar */}
                       <td className="py-3.5 px-3 text-center">
@@ -1044,7 +934,7 @@ export default function ResumeProjectPanel({
                           <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
                             <div 
                               className={`h-full rounded-full transition-all duration-300 ${
-                                progress === 100 ? 'bg-emerald-500' : progress > 50 ? 'bg-amber-500' : 'bg-amber-500'
+                                progress === 100 ? 'bg-emerald-500' : 'bg-amber-500'
                               }`}
                               style={{ width: `${progress}%` }}
                             />
@@ -1052,33 +942,64 @@ export default function ResumeProjectPanel({
                         </div>
                       </td>
 
-                      {/* Action Button */}
+                      {/* Action Button & Drive Folder Link */}
                       <td className="py-3.5 px-4 text-center">
-                        {!isGuest ? (
-                          <button
-                            onClick={() => {
-                              setEditingDesa(res);
-                              setActiveStageTab('baSosialisasiAwal');
-                            }}
-                            className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm w-full"
-                            title="Kelola & Upload Dokumen Desa"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                            <span>Kelola</span>
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              setEditingDesa(res);
-                              setActiveStageTab('baSosialisasiAwal');
-                            }}
-                            className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer border border-white/10 w-full"
-                            title="Tinjau Berkas Detail Desa"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>Tinjau</span>
-                          </button>
-                        )}
+                        <div className="flex items-center justify-center gap-1.5">
+                          {!isGuest ? (
+                            <button
+                              onClick={() => {
+                                setEditingDesa(res);
+                                setActiveStageTab(activeStages[0]?.key || 'baSosialisasiAwal');
+                              }}
+                              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm flex-1"
+                              title="Kelola & Upload Dokumen Desa"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>Kelola</span>
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setEditingDesa(res);
+                                setActiveStageTab(activeStages[0]?.key || 'baSosialisasiAwal');
+                              }}
+                              className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer border border-white/10 flex-1"
+                              title="Tinjau Berkas Detail Desa"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>Tinjau</span>
+                            </button>
+                          )}
+
+                          {res.driveFolderId ? (
+                            <a
+                              href={`https://drive.google.com/drive/folders/${res.driveFolderId}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-1.5 bg-sky-500/15 hover:bg-sky-500/30 text-sky-400 hover:text-sky-300 border border-sky-500/30 rounded-xl transition-all cursor-pointer"
+                              title={`Buka Folder Google Drive Desa ${res.desaName}`}
+                            >
+                              <FolderOpen className="w-3.5 h-3.5" />
+                            </a>
+                          ) : (
+                            <button
+                              onClick={async () => {
+                                const folderId = await getOrCreateDesaFolder(res.desaName);
+                                if (folderId) {
+                                  const updated = { ...res, driveFolderId: folderId };
+                                  await saveVillageResume(updated);
+                                  window.open(`https://drive.google.com/drive/folders/${folderId}`, '_blank');
+                                } else {
+                                  alert('Sambungkan Google Drive pada Menu 1: Dashboard Utama agar folder otomatis dibuat di Google Drive.');
+                                }
+                              }}
+                              className="p-1.5 bg-white/5 hover:bg-white/15 text-slate-400 hover:text-white border border-white/10 rounded-xl transition-all cursor-pointer"
+                              title={`Buat Folder Google Drive Desa ${res.desaName}`}
+                            >
+                              <FolderOpen className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1110,7 +1031,7 @@ export default function ResumeProjectPanel({
               </div>
 
               <div className="flex items-center gap-2">
-                {editingDesa.driveFolderId && (
+                {editingDesa.driveFolderId ? (
                   <a
                     href={`https://drive.google.com/drive/folders/${editingDesa.driveFolderId}`}
                     target="_blank"
@@ -1122,6 +1043,25 @@ export default function ResumeProjectPanel({
                     <span>Folder Drive Desa</span>
                     <ExternalLink className="w-3 h-3 text-sky-400" />
                   </a>
+                ) : (
+                  <button
+                    onClick={async () => {
+                      const folderId = await getOrCreateDesaFolder(editingDesa.desaName);
+                      if (folderId) {
+                        const updated = { ...editingDesa, driveFolderId: folderId };
+                        setEditingDesa(updated);
+                        await saveVillageResume(updated);
+                        window.open(`https://drive.google.com/drive/folders/${folderId}`, '_blank');
+                      } else {
+                        alert('Sambungkan Google Drive pada Menu 1: Dashboard Utama agar folder otomatis dibuat di Google Drive.');
+                      }
+                    }}
+                    className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                    title="Buat & Buka Folder Google Drive Desa ini di tab baru"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Buat Folder Drive</span>
+                  </button>
                 )}
 
                 <button
@@ -1135,8 +1075,8 @@ export default function ResumeProjectPanel({
 
             {/* Stage Tabs */}
             <div className="flex border-b border-white/10 bg-slate-950/50 px-4 overflow-x-auto">
-              {STAGES_CONFIG.map((stage) => {
-                const stageData = editingDesa[stage.key];
+              {activeStages.map((stage) => {
+                const stageData = (editingDesa as any)[stage.key];
                 const isActive = activeStageTab === stage.key;
                 return (
                   <button
@@ -1166,8 +1106,8 @@ export default function ResumeProjectPanel({
                 </div>
               )}
               {(() => {
-                const currentStageConfig = STAGES_CONFIG.find(s => s.key === activeStageTab)!;
-                const stageData = editingDesa[activeStageTab] || createEmptyStageDoc();
+                const currentStageConfig = activeStages.find(s => s.key === activeStageTab) || stagesConfig.find(s => s.key === activeStageTab) || stagesConfig[0];
+                const stageData = (editingDesa as any)[activeStageTab] || createEmptyStageDoc();
 
                 return (
                   <div className="space-y-6">
@@ -1562,6 +1502,201 @@ export default function ResumeProjectPanel({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 7. MODAL: PENGATURAN POIN TAHAPAN RESUME PROYEK */}
+      {isSettingsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fadeIn">
+          <div className="glass-card rounded-3xl w-full max-w-2xl border border-amber-500/30 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-white/10 flex items-center justify-between bg-slate-900/95">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30 shrink-0">
+                  <Settings className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-white tracking-tight flex items-center gap-2">
+                    Atur Poin Tahapan Resume Proyek
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Proyek: <span className="text-amber-300 font-bold">{activeProjectName}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsSettingsModalOpen(false)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-5 flex-1 bg-slate-950/60">
+              <div className="p-3.5 bg-amber-500/10 border border-amber-500/25 rounded-2xl flex items-start gap-3 text-xs text-amber-200">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <p className="leading-relaxed">
+                  Setiap jalur transmisi / proyek dapat memiliki tahapan pekerjaan yang berbeda. Poin tahapan yang dinonaktifkan di bawah ini <strong>tidak akan dihitung dalam persentase progres rekap desa</strong> dan disembunyikan dari tabel resume proyek ini.
+                </p>
+              </div>
+
+              {/* Quick Presets */}
+              <div className="space-y-2">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Pilihan Cepat (Presets):
+                </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTempStages(tempStages.map(s => ({ ...s, active: true })));
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-slate-200 transition-all cursor-pointer"
+                  >
+                    Aktifkan Semua (6 Tahap)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTempStages(tempStages.map(s => ({
+                        ...s,
+                        active: s.key !== 'bushClearing'
+                      })));
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-slate-200 transition-all cursor-pointer"
+                  >
+                    Standar ROW (5 Tahap tanpa Bush Clearing)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTempStages(tempStages.map(s => ({
+                        ...s,
+                        active: s.key === 'baSosialisasiAwal' || s.key === 'baPengumuman' || s.key === 'lampiranBapt'
+                      })));
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-slate-200 transition-all cursor-pointer"
+                  >
+                    Tahap Awal (Sos. Pendahuluan, Pengumuman & BAPT)
+                  </button>
+                </div>
+              </div>
+
+              {/* Stage Items List */}
+              <div className="space-y-2.5">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Daftar Poin Tahapan ({tempStages.filter(s => s.active !== false).length} Aktif dari {tempStages.length}):
+                </span>
+                <div className="space-y-2">
+                  {tempStages.map((stage, idx) => {
+                    const isChecked = stage.active !== false;
+                    return (
+                      <div
+                        key={stage.key}
+                        onClick={() => {
+                          setTempStages(prev => prev.map(s => s.key === stage.key ? { ...s, active: !isChecked } : s));
+                        }}
+                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                          isChecked 
+                            ? 'bg-amber-500/10 border-amber-500/40 shadow-sm' 
+                            : 'bg-slate-900/40 border-white/5 opacity-60 hover:opacity-80'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {}} // handled by parent onClick
+                            className="w-4 h-4 rounded text-amber-500 focus:ring-amber-500 bg-slate-900 border-white/20 cursor-pointer"
+                          />
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-extrabold text-white">
+                                {stage.label}
+                              </span>
+                              <span className="text-xs text-slate-400 font-medium hidden sm:inline">
+                                ({stage.fullName})
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 pt-1 text-[10px] text-slate-400">
+                              {stage.hasPdf && (
+                                <span className="bg-amber-500/15 text-amber-300 px-1.5 py-0.5 rounded font-bold">
+                                  Ada Berkas BA (PDF)
+                                </span>
+                              )}
+                              {stage.hasPhoto && (
+                                <span className="bg-purple-500/15 text-purple-300 px-1.5 py-0.5 rounded font-bold">
+                                  Ada Foto Dokumentasi
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <span className={`text-[10px] font-mono font-bold px-2 py-1 rounded-full shrink-0 ${
+                          isChecked
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'bg-slate-800 text-slate-500 border border-slate-700'
+                        }`}>
+                          {isChecked ? 'AKTIF' : 'NONAKTIF'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-white/10 bg-slate-900 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setTempStages(JSON.parse(JSON.stringify(DEFAULT_RESUME_STAGES)));
+                }}
+                className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white text-xs font-bold transition-all cursor-pointer"
+              >
+                Reset ke Standar
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsModalOpen(false)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={isSavingSettings}
+                  onClick={async () => {
+                    setIsSavingSettings(true);
+                    try {
+                      if (onUpdateResumeStages) {
+                        await onUpdateResumeStages(tempStages);
+                      }
+                      setIsSettingsModalOpen(false);
+                      setSaveFeedback({
+                        type: 'success',
+                        text: `Pengaturan poin tahapan resume proyek "${activeProjectName}" berhasil disimpan!`
+                      });
+                      setTimeout(() => setSaveFeedback(null), 5000);
+                    } catch (err: any) {
+                      alert('Gagal menyimpan pengaturan: ' + (err?.message || 'Terjadi kesalahan.'));
+                    } finally {
+                      setIsSavingSettings(false);
+                    }
+                  }}
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs font-black shadow-lg shadow-amber-600/20 cursor-pointer disabled:opacity-50 flex items-center gap-2"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{isSavingSettings ? 'Menyimpan...' : 'Simpan Pengaturan Poin'}</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
