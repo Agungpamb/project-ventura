@@ -7,9 +7,32 @@ import {
   deleteDoc, 
   query, 
   where,
+  limit,
   onSnapshot 
 } from 'firebase/firestore';
-import type { VillageResume, AgencyLetter, VillageStageDoc, StageStatus } from '../types';
+import * as XLSX from 'xlsx';
+import { fetchResumesFromGoogleSheet, saveVillageResumeToSheet, saveAgencyLetterToSheet } from './googleApi';
+import type { VillageResume, AgencyLetter, VillageStageDoc, StageStatus, LandRecord, ProjectConfig } from '../types';
+
+/**
+ * Remove undefined values recursively before saving to Firestore
+ */
+export function sanitizeForFirestore<T>(data: T): T {
+  if (data === null || data === undefined) return null as any;
+  if (Array.isArray(data)) {
+    return data.map(sanitizeForFirestore) as any;
+  }
+  if (typeof data === 'object') {
+    const clean: any = {};
+    for (const [key, value] of Object.entries(data as any)) {
+      if (value !== undefined) {
+        clean[key] = sanitizeForFirestore(value);
+      }
+    }
+    return clean;
+  }
+  return data;
+}
 
 export const createEmptyStageDoc = (status: StageStatus = 'BELUM'): VillageStageDoc => ({
   status,
@@ -113,7 +136,28 @@ export function compressImageFile(file: File, maxWidth = 1000, maxHeight = 1000,
 
 // ----------------- VILLAGE RESUME FUNCTIONS -----------------
 
-export async function loadVillageResumes(projectId: string): Promise<VillageResume[]> {
+export async function loadVillageResumes(
+  projectId: string,
+  googleContext?: { accessToken?: string; spreadsheetId?: string }
+): Promise<VillageResume[]> {
+  // 1. Primary Engine: If Google Sheets connection is available, pull directly from RESUME_SEMUA_JALUR
+  if (googleContext?.accessToken && googleContext?.spreadsheetId) {
+    try {
+      const sheetResumes = await fetchResumesFromGoogleSheet(
+        googleContext.accessToken,
+        googleContext.spreadsheetId,
+        projectId
+      );
+      if (sheetResumes.length > 0) {
+        localStorage.setItem(`${VILLAGE_CACHE_PREFIX}${projectId}`, JSON.stringify(sheetResumes));
+        return sheetResumes;
+      }
+    } catch (sheetErr) {
+      console.warn("Gagal memuat resumes dari Google Sheets tab RESUME_SEMUA_JALUR:", sheetErr);
+    }
+  }
+
+  // 2. Firestore Cloud query
   try {
     const resumesRef = collection(db, 'village_resumes');
     const q = query(resumesRef, where('projectId', '==', projectId));
@@ -132,7 +176,7 @@ export async function loadVillageResumes(projectId: string): Promise<VillageResu
     console.warn('Gagal memuat village resumes dari Firestore, beralih ke cache lokal:', err);
   }
 
-  // Fallback to local storage
+  // 3. Fallback to local storage
   const cached = localStorage.getItem(`${VILLAGE_CACHE_PREFIX}${projectId}`);
   if (cached) {
     try {
@@ -144,7 +188,17 @@ export async function loadVillageResumes(projectId: string): Promise<VillageResu
   return [];
 }
 
-export async function saveVillageResume(resume: VillageResume): Promise<{ success: boolean; cloudSynced: boolean; error?: string }> {
+export async function saveVillageResume(
+  resume: VillageResume,
+  googleContext?: { 
+    accessToken?: string; 
+    spreadsheetId?: string; 
+    projectName?: string; 
+    totalBidang?: number; 
+    totalLuas?: number; 
+    progressPct?: number; 
+  }
+): Promise<{ success: boolean; cloudSynced: boolean; sheetSynced?: boolean; error?: string }> {
   const updatedResume: VillageResume = {
     ...resume,
     lastUpdated: Date.now()
@@ -170,22 +224,497 @@ export async function saveVillageResume(resume: VillageResume): Promise<{ succes
     console.warn('Gagal menyimpan ke cache lokal:', err);
   }
 
-  // 2. Persist to Firestore with safety timeout
+  // 2. Persist directly to Google Sheets RESUME_SEMUA_JALUR (1 Workbook)
+  let sheetSynced = false;
+  if (googleContext?.accessToken && googleContext?.spreadsheetId) {
+    try {
+      const sheetRes = await saveVillageResumeToSheet(
+        googleContext.accessToken,
+        googleContext.spreadsheetId,
+        updatedResume,
+        googleContext.projectName || 'Proyek Ventura',
+        googleContext.totalBidang || 0,
+        googleContext.totalLuas || 0,
+        googleContext.progressPct || 0
+      );
+      sheetSynced = sheetRes.success;
+      if (sheetSynced) {
+        console.log(`[1 Workbook Sheet] Desa ${resume.desaName} berhasil disimpan ke tab RESUME_SEMUA_JALUR di Google Sheets!`);
+      }
+    } catch (sheetErr) {
+      console.warn("Gagal simpan ke Google Sheets tab RESUME_SEMUA_JALUR:", sheetErr);
+    }
+  }
+
+  // 3. Persist to Firestore with safety timeout (Dual Engine)
+  let cloudSynced = false;
+  let firestoreError: string | undefined;
   try {
     const resumeRef = doc(db, 'village_resumes', resume.id);
-    await withTimeout(setDoc(resumeRef, updatedResume, { merge: true }), 12000);
+    const sanitized = sanitizeForFirestore(updatedResume);
+    await withTimeout(setDoc(resumeRef, sanitized, { merge: true }), 12000);
     console.log(`[Resume Project] Desa ${resume.desaName} berhasil disinkronkan ke Firestore Cloud!`);
-    return { success: true, cloudSynced: true };
+    cloudSynced = true;
   } catch (err: any) {
     const errMessage = err?.message || String(err);
     console.warn('Gagal menyimpan village resume ke Firestore:', err);
+    firestoreError = errMessage.includes('exceeds maximum size') 
+      ? 'Ukuran berkas melebihi batas 1MB Firestore.' 
+      : 'Firestore dibatasi izin.';
+  }
+
+  return {
+    success: true,
+    cloudSynced,
+    sheetSynced,
+    error: (!cloudSynced && !sheetSynced) ? firestoreError : undefined
+  };
+}
+
+/**
+ * Export all resumes for a specific project as JSON string
+ */
+export function exportVillageResumesJson(projectId: string): string {
+  const cached = localStorage.getItem(`${VILLAGE_CACHE_PREFIX}${projectId}`);
+  if (!cached) return JSON.stringify([], null, 2);
+  try {
+    const list = JSON.parse(cached);
+    return JSON.stringify(list, null, 2);
+  } catch {
+    return JSON.stringify([], null, 2);
+  }
+}
+
+/**
+ * Import resumes for a project from JSON string, saving to local cache and pushing to Firestore
+ */
+export async function importVillageResumesJson(
+  projectId: string, 
+  jsonString: string
+): Promise<{ success: boolean; count: number; cloudSyncedCount: number; error?: string }> {
+  try {
+    const parsed = JSON.parse(jsonString);
+    if (!Array.isArray(parsed)) {
+      return { success: false, count: 0, cloudSyncedCount: 0, error: 'Format data JSON tidak valid (harus berupa daftar array desa)' };
+    }
+
+    const cached = localStorage.getItem(`${VILLAGE_CACHE_PREFIX}${projectId}`);
+    let current: VillageResume[] = [];
+    if (cached) {
+      try { current = JSON.parse(cached); } catch {}
+    }
+
+    const currentMap = new Map<string, VillageResume>();
+    current.forEach(item => currentMap.set(item.id, item));
+
+    let cloudSyncedCount = 0;
+    const now = Date.now();
+
+    for (const rawItem of parsed) {
+      if (!rawItem.id || !rawItem.desaName) continue;
+      const item: VillageResume = {
+        ...rawItem,
+        projectId,
+        lastUpdated: rawItem.lastUpdated || now
+      };
+      currentMap.set(item.id, item);
+
+      // Attempt push to Firestore
+      try {
+        const resumeRef = doc(db, 'village_resumes', item.id);
+        const sanitized = sanitizeForFirestore(item);
+        await withTimeout(setDoc(resumeRef, sanitized, { merge: true }), 5000);
+        cloudSyncedCount++;
+      } catch (e) {
+        // Continue even if Firestore push fails for individual item
+      }
+    }
+
+    const mergedList = Array.from(currentMap.values());
+    localStorage.setItem(`${VILLAGE_CACHE_PREFIX}${projectId}`, JSON.stringify(mergedList));
+
     return { 
       success: true, 
-      cloudSynced: false, 
-      error: errMessage.includes('exceeds maximum size') 
-        ? 'Ukuran berkas melebihi batas 1MB Firestore. Gunakan file yang lebih kecil atau hubungkan Google Drive.' 
-        : 'Gagal terkirim ke Cloud Firestore. Tersimpan di memori perangkat ini (Offline).'
+      count: parsed.length, 
+      cloudSyncedCount 
     };
+  } catch (err: any) {
+    return { 
+      success: false, 
+      count: 0, 
+      cloudSyncedCount: 0, 
+      error: `Gagal membaca format JSON: ${err?.message || String(err)}` 
+    };
+  }
+}
+
+/**
+ * Generates and downloads 1 Master Excel Workbook (.xlsx)
+ * accommodating ALL JALUR (Projects), Village Resumes, Status, Google Drive Links, and Land Parcels.
+ */
+export function generateMasterWorkbookExcel(
+  projects: ProjectConfig[],
+  allResumes: VillageResume[],
+  allRecords: LandRecord[] = []
+): void {
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1: RESUME_SEMUA_JALUR
+  const resumeRows = allResumes.map((r, idx) => {
+    const proj = projects.find(p => p.id === r.projectId);
+    const projName = proj?.name || r.projectId;
+
+    let points = 0;
+    const stages = [r.baSosialisasiAwal, r.baPengumuman, r.lampiranBapt, r.baPenyampaianNilai, r.baSerahTerimaRekening, r.bushClearing];
+    stages.forEach(s => {
+      if (s?.status === 'SELESAI') points += 100 / 6;
+      else if (s?.status === 'PROSES') points += 50 / 6;
+    });
+    const pct = Math.round(points);
+
+    return {
+      'NO': idx + 1,
+      'JALUR KOMPENSASI': projName,
+      'ID JALUR': r.projectId,
+      'DESA': r.desaName,
+      'KECAMATAN': r.kecamatan || '',
+      'KABUPATEN': r.kabupaten || '',
+      'PROGRES (%)': `${pct}%`,
+      '1. PENDAHULUAN - STATUS': r.baSosialisasiAwal?.status || 'BELUM',
+      '1. PENDAHULUAN - TANGGAL': r.baSosialisasiAwal?.date || '',
+      '1. PENDAHULUAN - LINK DRIVE': r.baSosialisasiAwal?.pdfUrl || '',
+      '1. PENDAHULUAN - CATATAN': r.baSosialisasiAwal?.notes || '',
+      '2. PENGUMUMAN INV - STATUS': r.baPengumuman?.status || 'BELUM',
+      '2. PENGUMUMAN INV - TANGGAL': r.baPengumuman?.date || '',
+      '2. PENGUMUMAN INV - LINK DRIVE': r.baPengumuman?.pdfUrl || '',
+      '2. PENGUMUMAN INV - CATATAN': r.baPengumuman?.notes || '',
+      '3. BAPT REGISTER - STATUS': r.lampiranBapt?.status || 'BELUM',
+      '3. BAPT REGISTER - TANGGAL': r.lampiranBapt?.date || '',
+      '3. BAPT REGISTER - LINK DRIVE': r.lampiranBapt?.pdfUrl || '',
+      '3. BAPT REGISTER - CATATAN': r.lampiranBapt?.notes || '',
+      '4. PENYAMPAIAN NILAI - STATUS': r.baPenyampaianNilai?.status || 'BELUM',
+      '4. PENYAMPAIAN NILAI - TANGGAL': r.baPenyampaianNilai?.date || '',
+      '4. PENYAMPAIAN NILAI - LINK DRIVE': r.baPenyampaianNilai?.pdfUrl || '',
+      '4. PENYAMPAIAN NILAI - CATATAN': r.baPenyampaianNilai?.notes || '',
+      '5. PEMBAYARAN KOMP - STATUS': r.baSerahTerimaRekening?.status || 'BELUM',
+      '5. PEMBAYARAN KOMP - TANGGAL': r.baSerahTerimaRekening?.date || '',
+      '5. PEMBAYARAN KOMP - LINK DRIVE': r.baSerahTerimaRekening?.pdfUrl || '',
+      '5. PEMBAYARAN KOMP - CATATAN': r.baSerahTerimaRekening?.notes || '',
+      '6. BUSH CLEARING - STATUS': r.bushClearing?.status || 'BELUM',
+      '6. BUSH CLEARING - TANGGAL': r.bushClearing?.date || '',
+      '6. BUSH CLEARING - LINK DRIVE': r.bushClearing?.pdfUrl || (r.bushClearing?.docPhotos?.[0] || ''),
+      '6. BUSH CLEARING - CATATAN': r.bushClearing?.notes || '',
+      'FOLDER DRIVE DESA': r.driveFolderId ? `https://drive.google.com/drive/folders/${r.driveFolderId}` : '',
+      'TERAKHIR DIPERBARUI': new Date(r.lastUpdated || Date.now()).toLocaleDateString('id-ID'),
+      'PETUGAS': r.updatedBy || 'Operator'
+    };
+  });
+
+  const wsResume = XLSX.utils.json_to_sheet(resumeRows);
+  XLSX.utils.book_append_sheet(wb, wsResume, "RESUME_SEMUA_JALUR");
+
+  // Sheet 2: DAFTAR_BIDANG_MASTER (if records exist)
+  if (allRecords.length > 0) {
+    const recordRows = allRecords.map((r, idx) => ({
+      'NO': idx + 1,
+      'DESA': r.DESA || '',
+      'SPAN': r.SPAN || '',
+      'NO BIDANG': r.NOBID || '',
+      'KODE BIDANG': r.CODE || '',
+      'NAMA PEMILIK': r.NAMA || '',
+      'NIK': r.NIK || '',
+      'LUAS (M2)': r.LUAS || '',
+      'PENUTUP LAHAN': r.PENUTUP_LAHAN || '',
+      'STATUS HAK': r.STATUS_KEPEMILIKAN || '',
+      'QC STATUS': r.QC_STATUS || '',
+      'LINK ALAS HAK DRIVE': r.LINK_ALAS_HAK || '',
+      'LINK KTP DRIVE': r.LINK_KTP || '',
+      'FOLDER DRIVE': r.DRIVE_FOLDER_ID ? `https://drive.google.com/drive/folders/${r.DRIVE_FOLDER_ID}` : ''
+    }));
+    const wsRecords = XLSX.utils.json_to_sheet(recordRows);
+    XLSX.utils.book_append_sheet(wb, wsRecords, "DAFTAR_BIDANG_MASTER");
+  }
+
+  const dateStr = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, `SIP_Master_Database_1_Workbook_${dateStr}.xlsx`);
+}
+
+/**
+ * Generates and downloads 1 Excel Workbook (.xlsx) dedicated to a SINGLE JALUR (Project).
+ * Accommodates:
+ * 1. RESUME_PROYEK (Nama desa otomatis digenerate dari data yang ada di daftar nominatif & resume)
+ * 2. SURAT_INSTANSI (Data surat menyurat dinas/instansi untuk jalur ini)
+ * 3. DAFTAR_NOMINATIF (Rincian bidang tanah, pemilik, alas hak, dan link drive)
+ * 
+ * Memenuhi kebutuhan pengguna agar excel dibuat perjalur untuk mempermudah QC,
+ * pengamatan, dan maintenance, serta surat instansi langsung diwadahi dalam satu file terpadu.
+ */
+export function generateJalurWorkbookExcel(
+  project: ProjectConfig,
+  villageResumes: VillageResume[],
+  records: LandRecord[],
+  letters: AgencyLetter[] = []
+): void {
+  const wb = XLSX.utils.book_new();
+
+  // 1. OTOMATIS GENERATE NAMA DESA DARI DATA YANG ADA
+  const desasFromRecords = Array.from(new Set(records.map(r => (r.DESA || '').trim().toUpperCase()).filter(Boolean)));
+  const desasFromResumes = Array.from(new Set(villageResumes.map(r => (r.desaName || '').trim().toUpperCase()).filter(Boolean)));
+  const allUniqueDesas = Array.from(new Set([...desasFromRecords, ...desasFromResumes])).sort((a, b) => a.localeCompare(b));
+
+  const activeStages = (project.resumeStages || DEFAULT_RESUME_STAGES).filter(s => s.active !== false);
+
+  const resumeRows = allUniqueDesas.map((desaName, idx) => {
+    const existingResume = villageResumes.find(r => (r.desaName || '').trim().toUpperCase() === desaName);
+    const desaRecords = records.filter(r => (r.DESA || '').trim().toUpperCase() === desaName);
+    
+    const totalBidang = desaRecords.length;
+    const totalLuas = desaRecords.reduce((sum, r) => sum + (parseFloat(String(r.LUAS || '0').replace(',', '.')) || 0), 0);
+    const kecamatan = existingResume?.kecamatan || desaRecords[0]?.KECAMATAN || '';
+    const kabupaten = existingResume?.kabupaten || desaRecords[0]?.KABUPATEN || '';
+
+    // Hitung persentase progres berdasarkan tahapan aktif
+    let points = 0;
+    activeStages.forEach(st => {
+      const stageDoc = existingResume ? (existingResume as any)[st.key] : null;
+      if (stageDoc?.status === 'SELESAI') points += 100 / activeStages.length;
+      else if (stageDoc?.status === 'PROSES') points += 50 / activeStages.length;
+    });
+    const pct = Math.min(100, Math.round(points));
+
+    return {
+      'NO': idx + 1,
+      'JALUR KOMPENSASI': project.name,
+      'DESA': desaName,
+      'KECAMATAN': kecamatan,
+      'KABUPATEN': kabupaten,
+      'TOTAL BIDANG': totalBidang > 0 ? totalBidang : (existingResume ? '-' : 0),
+      'TOTAL LUAS (M2)': totalLuas > 0 ? Math.round(totalLuas * 100) / 100 : '-',
+      'PROGRES (%)': `${pct}%`,
+      '1. PENDAHULUAN - STATUS': existingResume?.baSosialisasiAwal?.status || 'BELUM',
+      '1. PENDAHULUAN - TANGGAL': existingResume?.baSosialisasiAwal?.date || '',
+      '1. PENDAHULUAN - LINK BUKTI DRIVE': existingResume?.baSosialisasiAwal?.pdfUrl || '',
+      '1. PENDAHULUAN - CATATAN': existingResume?.baSosialisasiAwal?.notes || '',
+      '2. PENGUMUMAN INV - STATUS': existingResume?.baPengumuman?.status || 'BELUM',
+      '2. PENGUMUMAN INV - TANGGAL': existingResume?.baPengumuman?.date || '',
+      '2. PENGUMUMAN INV - LINK BUKTI DRIVE': existingResume?.baPengumuman?.pdfUrl || '',
+      '2. PENGUMUMAN INV - CATATAN': existingResume?.baPengumuman?.notes || '',
+      '3. BAPT REGISTER - STATUS': existingResume?.lampiranBapt?.status || 'BELUM',
+      '3. BAPT REGISTER - TANGGAL': existingResume?.lampiranBapt?.date || '',
+      '3. BAPT REGISTER - LINK BUKTI DRIVE': existingResume?.lampiranBapt?.pdfUrl || '',
+      '3. BAPT REGISTER - CATATAN': existingResume?.lampiranBapt?.notes || '',
+      '4. PENYAMPAIAN NILAI - STATUS': existingResume?.baPenyampaianNilai?.status || 'BELUM',
+      '4. PENYAMPAIAN NILAI - TANGGAL': existingResume?.baPenyampaianNilai?.date || '',
+      '4. PENYAMPAIAN NILAI - LINK BUKTI DRIVE': existingResume?.baPenyampaianNilai?.pdfUrl || '',
+      '4. PENYAMPAIAN NILAI - CATATAN': existingResume?.baPenyampaianNilai?.notes || '',
+      '5. PEMBAYARAN KOMP - STATUS': existingResume?.baSerahTerimaRekening?.status || 'BELUM',
+      '5. PEMBAYARAN KOMP - TANGGAL': existingResume?.baSerahTerimaRekening?.date || '',
+      '5. PEMBAYARAN KOMP - LINK BUKTI DRIVE': existingResume?.baSerahTerimaRekening?.pdfUrl || '',
+      '5. PEMBAYARAN KOMP - CATATAN': existingResume?.baSerahTerimaRekening?.notes || '',
+      '6. BUSH CLEARING - STATUS': existingResume?.bushClearing?.status || 'BELUM',
+      '6. BUSH CLEARING - TANGGAL': existingResume?.bushClearing?.date || '',
+      '6. BUSH CLEARING - LINK BUKTI DRIVE': existingResume?.bushClearing?.pdfUrl || (existingResume?.bushClearing?.docPhotos?.[0] || ''),
+      '6. BUSH CLEARING - CATATAN': existingResume?.bushClearing?.notes || '',
+      'LINK FOLDER DESA DRIVE': existingResume?.driveFolderId ? `https://drive.google.com/drive/folders/${existingResume.driveFolderId}` : '',
+      'TERAKHIR DIPERBARUI': existingResume?.lastUpdated ? new Date(existingResume.lastUpdated).toLocaleDateString('id-ID') : new Date().toLocaleDateString('id-ID'),
+      'PETUGAS': existingResume?.updatedBy || 'Operator'
+    };
+  });
+
+  const wsResume = XLSX.utils.json_to_sheet(resumeRows.length > 0 ? resumeRows : [{
+    'NO': 1,
+    'JALUR KOMPENSASI': project.name,
+    'DESA': 'Belum ada data desa',
+    'PROGRES (%)': '0%'
+  }]);
+  XLSX.utils.book_append_sheet(wb, wsResume, "RESUME_PROYEK");
+
+  // Sheet 2: SURAT_INSTANSI (Terintegrasi langsung dalam workbook jalur ini)
+  const suratRows = letters.map((l, idx) => ({
+    'NO': idx + 1,
+    'JALUR': project.name,
+    'INSTANSI TUJUAN': l.instansiName,
+    'NO SURAT': l.noSurat,
+    'TANGGAL SURAT': l.tanggalSurat,
+    'PERIHAL': l.perihal,
+    'STATUS': l.status,
+    'PIC INSTANSI': l.picInstansi || '',
+    'CATATAN TINDAK LANJUT': l.catatanTindakLanjut || '',
+    'LINK DOKUMEN / PDF SURAT': l.suratPdfUrl || (l.docPhotos?.[0] || ''),
+    'NAMA BERKAS': l.suratPdfName || '',
+    'TANGGAL INPUT': new Date(l.createdAt || Date.now()).toLocaleDateString('id-ID'),
+    'PETUGAS': l.updatedBy || 'Operator'
+  }));
+
+  const wsSurat = XLSX.utils.json_to_sheet(suratRows.length > 0 ? suratRows : [{
+    'NO': 1,
+    'JALUR': project.name,
+    'INSTANSI TUJUAN': 'BPN / Balai Jalan / DLH / Camat / Desa',
+    'NO SURAT': 'Contoh: 120/VTR/ROW/2026',
+    'TANGGAL SURAT': new Date().toISOString().slice(0, 10),
+    'PERIHAL': 'Permohonan Data Alas Hak dan Inventarisasi',
+    'STATUS': 'SUDAH_MASUK',
+    'CATATAN TINDAK LANJUT': 'Menunggu konfirmasi audiensi',
+    'LINK DOKUMEN / PDF SURAT': ''
+  }]);
+  XLSX.utils.book_append_sheet(wb, wsSurat, "SURAT_INSTANSI");
+
+  // Sheet 3: DAFTAR_NOMINATIF (Data Bidang Tanah Jalur Ini)
+  const nominatifRows = records.map((r, idx) => ({
+    'NO': idx + 1,
+    'KODE BIDANG': r.CODE || '',
+    'DESA': r.DESA || '',
+    'SPAN': r.SPAN || '',
+    'NO BIDANG': r.NOBID || '',
+    'NAMA PEMILIK': r.NAMA || '',
+    'NIK': r.NIK || '',
+    'LUAS (M2)': r.LUAS || '',
+    'PENUTUP LAHAN': r.PENUTUP_LAHAN || '',
+    'STATUS HAK': r.STATUS_KEPEMILIKAN || '',
+    'STATUS DESA': r.STATUS_DESA || '',
+    'PROGRES PEMBERKASAN': r.PROGRES_PEMBERKASAN || '',
+    'PROGRES UPLOAD TRABAS': r.PROGRES_UPLOAD_TRABAS || '',
+    'QC STATUS': r.QC_STATUS || 'PENDING',
+    'CATATAN QC': r.QC_NOTES || '',
+    'LINK ALAS HAK DRIVE': r.LINK_ALAS_HAK || '',
+    'LINK KTP DRIVE': r.LINK_KTP || '',
+    'LINK KK DRIVE': r.LINK_KK || '',
+    'FOLDER DRIVE BIDANG': r.DRIVE_FOLDER_ID ? `https://drive.google.com/drive/folders/${r.DRIVE_FOLDER_ID}` : '',
+    'TANGGAL PELAKSANAAN': r.TANGGAL_PELAKSANAAN || ''
+  }));
+
+  const wsNominatif = XLSX.utils.json_to_sheet(nominatifRows.length > 0 ? nominatifRows : [{
+    'NO': 1,
+    'KODE BIDANG': 'Belum ada data bidang',
+    'DESA': '',
+    'NAMA PEMILIK': ''
+  }]);
+  XLSX.utils.book_append_sheet(wb, wsNominatif, "DAFTAR_NOMINATIF");
+
+  const cleanProjName = project.name.replace(/[\/\\?%*:|"<>\s]/g, '_').substring(0, 40);
+  const dateStr = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, `QC_Database_${cleanProjName}_${dateStr}.xlsx`);
+}
+
+/**
+ * Convenience helper to download the full 3-sheet Excel workbook for a project,
+ * automatically retrieving resumes and agency letters if not passed.
+ */
+export async function downloadJalurWorkbook(
+  project: ProjectConfig,
+  records: LandRecord[],
+  passedResumes?: VillageResume[],
+  passedLetters?: AgencyLetter[]
+): Promise<void> {
+  const resumes = passedResumes || await loadVillageResumes(project.id);
+  const letters = passedLetters || await loadAgencyLetters(project.id);
+  generateJalurWorkbookExcel(project, resumes, records, letters);
+}
+
+/**
+ * Imports village resumes from an uploaded Excel Workbook (.xlsx)
+ */
+export async function importMasterWorkbookExcel(
+  file: File,
+  activeProjectId: string
+): Promise<{ success: boolean; count: number; error?: string }> {
+  try {
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: 'array' });
+
+    const sheetName = wb.SheetNames.find(n => n.toUpperCase().includes('RESUME')) || wb.SheetNames[0];
+    if (!sheetName) {
+      return { success: false, count: 0, error: 'Tidak ditemukan sheet resume di dalam workbook Excel.' };
+    }
+
+    const ws = wb.Sheets[sheetName];
+    const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+    if (rows.length <= 1) {
+      return { success: false, count: 0, error: 'Sheet resume tidak memiliki baris data.' };
+    }
+
+    const dataRows = rows.slice(1);
+    const cached = localStorage.getItem(`${VILLAGE_CACHE_PREFIX}${activeProjectId}`);
+    let current: VillageResume[] = [];
+    if (cached) {
+      try { current = JSON.parse(cached); } catch {}
+    }
+    const currentMap = new Map<string, VillageResume>();
+    current.forEach(item => currentMap.set(item.id, item));
+
+    let importedCount = 0;
+    const now = Date.now();
+
+    for (const row of dataRows) {
+      if (!row || row.length === 0) continue;
+      const desaName = String(row[3] || row[2] || '').trim().toUpperCase();
+      if (!desaName) continue;
+
+      const projId = String(row[2] || activeProjectId).trim() || activeProjectId;
+      const id = `${projId}_${desaName.replace(/[^a-zA-Z0-9]/g, '_')}`;
+
+      const resume: VillageResume = {
+        id,
+        projectId: projId,
+        desaName,
+        kecamatan: String(row[4] || ''),
+        kabupaten: String(row[5] || ''),
+        baSosialisasiAwal: {
+          status: (row[7] as any) || 'BELUM',
+          date: String(row[8] || ''),
+          pdfUrl: row[9] ? String(row[9]) : undefined,
+          notes: String(row[10] || ''),
+          docPhotos: []
+        },
+        baPengumuman: {
+          status: (row[11] as any) || 'BELUM',
+          date: String(row[12] || ''),
+          pdfUrl: row[13] ? String(row[13]) : undefined,
+          notes: String(row[14] || ''),
+          docPhotos: []
+        },
+        lampiranBapt: {
+          status: (row[15] as any) || 'BELUM',
+          date: String(row[16] || ''),
+          pdfUrl: row[17] ? String(row[17]) : undefined,
+          notes: String(row[18] || ''),
+          docPhotos: []
+        },
+        baPenyampaianNilai: {
+          status: (row[19] as any) || 'BELUM',
+          date: String(row[20] || ''),
+          pdfUrl: row[21] ? String(row[21]) : undefined,
+          notes: String(row[22] || ''),
+          docPhotos: []
+        },
+        baSerahTerimaRekening: {
+          status: (row[23] as any) || 'BELUM',
+          date: String(row[24] || ''),
+          pdfUrl: row[25] ? String(row[25]) : undefined,
+          notes: String(row[26] || ''),
+          docPhotos: []
+        },
+        bushClearing: {
+          status: (row[27] as any) || 'BELUM',
+          date: String(row[28] || ''),
+          pdfUrl: row[29] ? String(row[29]) : undefined,
+          notes: String(row[30] || ''),
+          docPhotos: []
+        },
+        lastUpdated: now,
+        updatedBy: 'Excel Import'
+      };
+
+      currentMap.set(id, resume);
+      importedCount++;
+    }
+
+    const merged = Array.from(currentMap.values());
+    localStorage.setItem(`${VILLAGE_CACHE_PREFIX}${activeProjectId}`, JSON.stringify(merged));
+
+    return { success: true, count: importedCount };
+  } catch (err: any) {
+    return { success: false, count: 0, error: err?.message || String(err) };
   }
 }
 
@@ -215,7 +744,7 @@ export async function deleteVillageResume(projectId: string, resumeId: string): 
 export function subscribeVillageResumes(
   projectId: string, 
   callback: (resumes: VillageResume[]) => void,
-  onStatusChange?: (isConnected: boolean) => void
+  onStatusChange?: (isConnected: boolean, error?: { code?: string; message?: string }) => void
 ) {
   try {
     const resumesRef = collection(db, 'village_resumes');
@@ -230,12 +759,22 @@ export function subscribeVillageResumes(
       if (onStatusChange) onStatusChange(true);
     }, (err) => {
       console.warn('Realtime listener error for village resumes:', err);
-      if (onStatusChange) onStatusChange(false);
+      if (onStatusChange) onStatusChange(false, { code: err?.code, message: err?.message });
     });
-  } catch (e) {
+  } catch (e: any) {
     console.warn('Could not initialize snapshot listener for village resumes:', e);
-    if (onStatusChange) onStatusChange(false);
+    if (onStatusChange) onStatusChange(false, { code: e?.code, message: e?.message });
     return () => {};
+  }
+}
+
+export async function testCloudConnection(): Promise<{ connected: boolean; error?: string }> {
+  try {
+    const resumesRef = collection(db, 'village_resumes');
+    await withTimeout(getDocs(query(resumesRef, limit(1))), 6000);
+    return { connected: true };
+  } catch (err: any) {
+    return { connected: false, error: err?.code || err?.message || String(err) };
   }
 }
 
@@ -355,7 +894,14 @@ export async function loadAgencyLetters(projectId: string): Promise<AgencyLetter
   return seeds;
 }
 
-export async function saveAgencyLetter(letter: AgencyLetter): Promise<void> {
+export async function saveAgencyLetter(
+  letter: AgencyLetter,
+  options?: {
+    accessToken?: string;
+    spreadsheetId?: string;
+    projectName?: string;
+  }
+): Promise<{ cloudSynced: boolean; sheetSynced: boolean; error?: string }> {
   const updatedLetter: AgencyLetter = {
     ...letter,
     updatedAt: Date.now()
@@ -382,13 +928,38 @@ export async function saveAgencyLetter(letter: AgencyLetter): Promise<void> {
     console.warn('Gagal update local agency letters:', err);
   }
 
+  let cloudSynced = false;
+  let sheetSynced = false;
+  let lastError: string | undefined;
+
   // 2. Firestore
   try {
     const letterRef = doc(db, 'agency_letters', letter.id);
     await withTimeout(setDoc(letterRef, updatedLetter, { merge: true }), 2500);
-  } catch (err) {
+    cloudSynced = true;
+  } catch (err: any) {
     console.warn('Gagal simpan agency letter ke Firestore:', err);
+    lastError = err?.message || 'Gagal menyimpan ke Firestore';
   }
+
+  // 3. Google Sheets (1 Workbook - Tab SURAT_INSTANSI)
+  if (options?.accessToken && options?.spreadsheetId) {
+    try {
+      const sheetRes = await saveAgencyLetterToSheet(
+        options.accessToken,
+        options.spreadsheetId,
+        updatedLetter,
+        options.projectName || ''
+      );
+      if (sheetRes.success) {
+        sheetSynced = true;
+      }
+    } catch (err: any) {
+      console.warn('Gagal simpan surat instansi ke Google Sheets:', err);
+    }
+  }
+
+  return { cloudSynced, sheetSynced, error: lastError };
 }
 
 export async function deleteAgencyLetter(projectId: string, letterId: string): Promise<void> {

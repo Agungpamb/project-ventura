@@ -593,14 +593,37 @@ export const DEFAULT_RESUME_STAGES: ResumeStageConfig[] = [
   }
 ];
 
+export const getAgencyLetterSheetHeaders = (): string[] => [
+  "NO",
+  "ID_SURAT",
+  "INSTANSI",
+  "NO_SURAT",
+  "TANGGAL_SURAT",
+  "PERIHAL",
+  "STATUS",
+  "CATATAN_TINDAK_LANJUT",
+  "PIC_INSTANSI",
+  "LINK_PDF_SURAT",
+  "LINK_FOTO_TANDA_TERIMA",
+  "DIPERBARUI_OLEH",
+  "TERAKHIR_DIPERBARUI"
+];
+
 export interface ProjectConfig {
   id: string;
   name: string;
   folderId: string | null;
-  spreadsheetId: string | null;
   uploadsFolderId: string | null;
+  // 1. Data Lahan (267 Kolom)
+  spreadsheetId: string | null;
   publicCsvUrl?: string | null;
+  // 2. Resume Project (36 Kolom)
+  resumeSpreadsheetId?: string | null;
+  resumePublicCsvUrl?: string | null;
   resumeStages?: ResumeStageConfig[];
+  // 3. Surat Instansi (12 Kolom)
+  agencyLetterSpreadsheetId?: string | null;
+  agencyLetterPublicCsvUrl?: string | null;
 }
 
 

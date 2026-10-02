@@ -11,6 +11,7 @@ let firestoreDb: Firestore;
 try {
   firestoreDb = initializeFirestore(app, {
     experimentalForceLongPolling: true,
+    ignoreUndefinedProperties: true,
   });
 } catch (e) {
   firestoreDb = getFirestore(app);

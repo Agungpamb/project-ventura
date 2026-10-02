@@ -5,7 +5,9 @@ import {
 } from './lib/firebase';
 import { doc, getDoc, setDoc, collection, addDoc, getDocs, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { 
-  findOrCreateSpreadsheet, fetchSpreadsheetRecords, saveRecordToSpreadsheet, setupProjectDriveStructure, findOrCreateFolder, fetchWithTimeout, registerTokenRefreshHandler, deleteSpreadsheetRow 
+  findOrCreateSpreadsheet, fetchSpreadsheetRecords, saveRecordToSpreadsheet, setupProjectDriveStructure, findOrCreateFolder, fetchWithTimeout, registerTokenRefreshHandler, deleteSpreadsheetRow,
+  createDedicatedResumeSpreadsheet,
+  createDedicatedAgencyLetterSpreadsheet
 } from './lib/googleApi';
 import { executeDeleteParcel } from './lib/parcelManagement';
 import {
@@ -23,12 +25,23 @@ import {
   type ActivityLog, 
   type ProjectConfig,
   type ResumeStageConfig,
-  DEFAULT_RESUME_STAGES 
+  DEFAULT_RESUME_STAGES,
+  getSheetHeaders,
+  getAgencyLetterSheetHeaders
 } from './types';
 import { saveActivityLog, saveIntegrityLog } from './lib/activityStorage';
 import CacheDiffModal from './components/CacheDiffModal';
 import ModuleLoadingFallback from './components/ModuleLoadingFallback';
 import { TutorialGuideModal } from './components/TutorialGuideModal';
+import { CsvPublishGuideModal } from './components/CsvPublishGuideModal';
+import { 
+  downloadSheetHeaderTemplate, 
+  downloadResumeHeaderTemplate, 
+  downloadAgencyLetterHeaderTemplate, 
+  copySheetHeadersToClipboard, 
+  copyResumeHeadersToClipboard, 
+  copyAgencyLetterHeadersToClipboard 
+} from './lib/sheetTemplateHelper';
 
 // Code-splitting with React.lazy for high performance and reduced initial memory footprint
 const Dashboard = lazy(() => import('./components/Dashboard'));
@@ -47,7 +60,7 @@ import {
   RefreshCw, FileSpreadsheet, KeyRound, CheckSquare,
   Plus, User, UserCheck, Settings, Folder, Key, Eye, EyeOff, Lock, Unlock, Info, ShieldCheck, HelpCircle, Briefcase, Filter,
   Pin, Menu, Clock, LayoutGrid, Sun, Moon, Copy, Users, ExternalLink, Layers, Trash2, X, Globe, GitCompare,
-  CheckCircle2, AlertCircle, FileText, Landmark, Mail, Sparkles, BookOpen, Save
+  CheckCircle2, AlertCircle, FileText, Landmark, Mail, Sparkles, BookOpen, Save, Download, Table
 } from 'lucide-react';
 
 const DEFAULT_PROJECTS: ProjectConfig[] = [
@@ -120,11 +133,13 @@ function formatGoogleCsvUrl(url: string): string {
   return clean;
 }
 
-// Resilient CSV fetch with timeout and CORS fallback
+// Resilient CSV fetch with timeout and multi-proxy CORS fallback
 async function fetchPublicCsvContent(url: string): Promise<string> {
   const formattedUrl = formatGoogleCsvUrl(url);
+  
+  // 1. Direct fetch
   try {
-    const res = await fetchWithTimeout(formattedUrl, { mode: 'cors' }, 15000);
+    const res = await fetchWithTimeout(formattedUrl, { mode: 'cors' }, 12000);
     if (res.ok) {
       const text = await res.text();
       if (text && !text.trim().startsWith('<!DOCTYPE') && !text.trim().startsWith('<html')) {
@@ -135,9 +150,10 @@ async function fetchPublicCsvContent(url: string): Promise<string> {
     // Ignore direct fetch error
   }
 
+  // 2. AllOrigins proxy fallback
   try {
     const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(formattedUrl)}`;
-    const res = await fetchWithTimeout(proxyUrl, {}, 15000);
+    const res = await fetchWithTimeout(proxyUrl, {}, 12000);
     if (res.ok) {
       const text = await res.text();
       if (text && !text.trim().startsWith('<!DOCTYPE') && !text.trim().startsWith('<html')) {
@@ -148,7 +164,21 @@ async function fetchPublicCsvContent(url: string): Promise<string> {
     // Ignore proxy error
   }
 
-  throw new Error("Tautan CSV publik tidak dapat diakses (CORS atau URL tidak valid)");
+  // 3. CodeTabs proxy fallback
+  try {
+    const proxyUrl2 = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(formattedUrl)}`;
+    const res = await fetchWithTimeout(proxyUrl2, {}, 12000);
+    if (res.ok) {
+      const text = await res.text();
+      if (text && !text.trim().startsWith('<!DOCTYPE') && !text.trim().startsWith('<html')) {
+        return text;
+      }
+    }
+  } catch (proxyErr2) {
+    // Ignore proxy error 2
+  }
+
+  throw new Error("Tautan CSV publik tidak dapat diakses atau spreadsheet belum dipublikasikan ke web. Pastikan Anda telah memilih menu File ➔ Bagikan ➔ Publikasikan ke Web (format .CSV).");
 }
 
 import { rowToRecord } from './types';
@@ -397,10 +427,18 @@ export default function App() {
   // Admin specific states
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
-  const [newProjectSpreadsheetId, setNewProjectSpreadsheetId] = useState('');
   const [newProjectFolderId, setNewProjectFolderId] = useState('');
   const [newProjectUploadsFolderId, setNewProjectUploadsFolderId] = useState('');
+  // File 1: Data Lahan
+  const [newProjectSpreadsheetId, setNewProjectSpreadsheetId] = useState('');
   const [newProjectPublicCsvUrl, setNewProjectPublicCsvUrl] = useState('');
+  // File 2: Resume Project
+  const [newProjectResumeSpreadsheetId, setNewProjectResumeSpreadsheetId] = useState('');
+  const [newProjectResumePublicCsvUrl, setNewProjectResumePublicCsvUrl] = useState('');
+  // File 3: Surat Instansi
+  const [newProjectAgencyLetterSpreadsheetId, setNewProjectAgencyLetterSpreadsheetId] = useState('');
+  const [newProjectAgencyLetterPublicCsvUrl, setNewProjectAgencyLetterPublicCsvUrl] = useState('');
+
   const [showPinSettings, setShowPinSettings] = useState(false);
   const [newAdminPin, setNewAdminPin] = useState('');
   const [newFieldPin, setNewFieldPin] = useState('');
@@ -413,14 +451,28 @@ export default function App() {
 
   // Project ID configuration & Syncing tools
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
-  const [editSpreadsheetId, setEditSpreadsheetId] = useState('');
   const [editFolderId, setEditFolderId] = useState('');
   const [editUploadsFolderId, setEditUploadsFolderId] = useState('');
+  // File 1: Data Lahan
+  const [editSpreadsheetId, setEditSpreadsheetId] = useState('');
   const [editPublicCsvUrl, setEditPublicCsvUrl] = useState('');
+  // File 2: Resume Project
+  const [editResumeSpreadsheetId, setEditResumeSpreadsheetId] = useState('');
+  const [editResumePublicCsvUrl, setEditResumePublicCsvUrl] = useState('');
+  // File 3: Surat Instansi
+  const [editAgencyLetterSpreadsheetId, setEditAgencyLetterSpreadsheetId] = useState('');
+  const [editAgencyLetterPublicCsvUrl, setEditAgencyLetterPublicCsvUrl] = useState('');
+
   const [editingStagesProjectId, setEditingStagesProjectId] = useState<string | null>(null);
   const [tempProjectStages, setTempProjectStages] = useState<ResumeStageConfig[]>(DEFAULT_RESUME_STAGES);
+
+  // CSV Web Publish Test & Guide state
+  const [isCsvGuideModalOpen, setIsCsvGuideModalOpen] = useState(false);
+  const [isTestingCsv, setIsTestingCsv] = useState(false);
+  const [csvTestFeedback, setCsvTestFeedback] = useState<{ success: boolean; message: string; rows?: number } | null>(null);
   
   const [showBackupTools, setShowBackupTools] = useState(false);
+  const [projectDisplayMode, setProjectDisplayMode] = useState<'cards' | 'table'>('table');
   const [projectSubTab, setProjectSubTab] = useState<'projects' | 'geojson' | 'operators' | 'pins' | 'migration'>('projects');
   const [backupJsonString, setBackupJsonString] = useState('');
   const [importStatus, setImportStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -1168,7 +1220,7 @@ export default function App() {
         setIsLiveGoogleConnected(false);
         setSpreadsheetId('guest_bypass');
         setProjectUploadsFolderId('guest_bypass');
-        setSheetNameInfo(`${activeProj.name} (Mode Tamu / Offline)`);
+        setSheetNameInfo(`${activeProj.name} (Mode Tamu / Cadangan)`);
 
         // Try to fetch from public CSV URL first if configured
         if (activeProj.publicCsvUrl) {
@@ -1180,15 +1232,26 @@ export default function App() {
             if (csvRows.length > 1) {
               const dataRows = csvRows.slice(1);
               const parsedRecords = dataRows
-                .filter(row => row && row.length > 0 && row[0] && row[0] !== 'CODE') // Ensure CODE is present and not header
+                .filter(row => row && row.length > 0 && row.some(cell => cell && String(cell).trim() !== '') && String(row[0]).trim().toUpperCase() !== 'CODE' && String(row[1]).trim().toUpperCase() !== 'DESA')
                 .map((row, idx) => {
                   const record = rowToRecord(row, idx);
                   record.rowNumber = idx + 2;
+                  if (!record.CODE || record.CODE.trim() === '') {
+                    const cleanDesa = (record.DESA || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
+                    const cleanSpan = (record.SPAN || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
+                    const cleanNobid = (record.NOBID || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
+                    if (cleanDesa && cleanSpan && cleanNobid) {
+                      record.CODE = `${cleanDesa}_${cleanSpan}_${cleanNobid}`;
+                    } else {
+                      record.CODE = `BIDANG_${idx + 2}`;
+                    }
+                  }
                   return record;
                 });
               
               const sorted = [...parsedRecords].sort(compareLandRecords);
               setRecords(sorted);
+              setSheetNameInfo(`${activeProj.name} (Web Publish CSV)`);
               
               // Cache in local storage safely
               try {
@@ -1199,7 +1262,7 @@ export default function App() {
               if (options?.isManualSync) {
                 setSyncFeedback({
                   type: 'success',
-                  message: `Berhasil memuat ${sorted.length} data bidang dari CSV Publik.`,
+                  message: `Berhasil memuat ${sorted.length} data bidang dari Web Publish CSV Google Sheet (${activeProj.name}).`,
                   timestamp: Date.now()
                 });
               }
@@ -1424,10 +1487,20 @@ export default function App() {
           if (csvRows.length > 1) {
             const dataRows = csvRows.slice(1);
             const parsedRecords = dataRows
-              .filter(row => row && row.length > 0 && row[0] && row[0] !== 'CODE')
+              .filter(row => row && row.length > 0 && row.some(cell => cell && String(cell).trim() !== '') && String(row[0]).trim().toUpperCase() !== 'CODE' && String(row[1]).trim().toUpperCase() !== 'DESA')
               .map((row, idx) => {
                 const record = rowToRecord(row, idx);
                 record.rowNumber = idx + 2;
+                if (!record.CODE || record.CODE.trim() === '') {
+                  const cleanDesa = (record.DESA || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
+                  const cleanSpan = (record.SPAN || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
+                  const cleanNobid = (record.NOBID || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
+                  if (cleanDesa && cleanSpan && cleanNobid) {
+                    record.CODE = `${cleanDesa}_${cleanSpan}_${cleanNobid}`;
+                  } else {
+                    record.CODE = `BIDANG_${idx + 2}`;
+                  }
+                }
                 return record;
               });
             const sorted = [...parsedRecords].sort(compareLandRecords);
@@ -1450,7 +1523,7 @@ export default function App() {
         String(err?.message || '').includes('Failed to fetch');
 
       if (loadedFromFallback) {
-        setSheetNameInfo(`${activeProj?.name || ''} (Mode Cadangan Cloud / Offline)`);
+        setSheetNameInfo(`${activeProj?.name || ''} (Cadangan Cloud Firestore)`);
         if (isAuthIssue) {
           setDataError('Sesi Google Sheets telah kedaluwarsa atau belum terhubung. Klik "Perbarui Sesi Google" untuk menyinkronkan data langsung dari Google Spreadsheet.');
           setSyncFeedback({
@@ -1495,6 +1568,23 @@ export default function App() {
       message: 'Sedang menghubungkan ke Google Sheets & menyinkronkan data terbaru...',
       timestamp: Date.now()
     });
+
+    // If user is in GUEST mode, sync directly from public CSV or cloud cache without Google OAuth
+    if (role === 'GUEST') {
+      try {
+        await loadProjectData('GUEST_BYPASS', activeProjectId, { isManualSync: true });
+        setSyncFeedback({
+          type: 'success',
+          message: 'Data proyek berhasil dimuat ulang untuk Mode Tamu.',
+          timestamp: Date.now()
+        });
+      } catch (guestErr: any) {
+        console.warn("Guest sync issue:", guestErr);
+      } finally {
+        setIsLoadingData(false);
+      }
+      return;
+    }
 
     let currentToken = token;
 
@@ -2187,9 +2277,17 @@ export default function App() {
       id: `proj-${Date.now()}`,
       name: newProjectName.trim().toUpperCase(),
       folderId: newProjectFolderId.trim() || null,
-      spreadsheetId: newProjectSpreadsheetId.trim() || null,
       uploadsFolderId: newProjectUploadsFolderId.trim() || null,
-      publicCsvUrl: newProjectPublicCsvUrl.trim() || null
+      // File 1: Data Lahan (267 Kolom)
+      spreadsheetId: newProjectSpreadsheetId.trim() || null,
+      publicCsvUrl: newProjectPublicCsvUrl.trim() || null,
+      // File 2: Resume Project (36 Kolom)
+      resumeSpreadsheetId: newProjectResumeSpreadsheetId.trim() || null,
+      resumePublicCsvUrl: newProjectResumePublicCsvUrl.trim() || null,
+      // File 3: Surat Instansi (13 Kolom)
+      agencyLetterSpreadsheetId: newProjectAgencyLetterSpreadsheetId.trim() || null,
+      agencyLetterPublicCsvUrl: newProjectAgencyLetterPublicCsvUrl.trim() || null,
+      resumeStages: DEFAULT_RESUME_STAGES
     };
 
     const updated = [...projects, newProj];
@@ -2209,10 +2307,14 @@ export default function App() {
     });
     
     setNewProjectName('');
-    setNewProjectSpreadsheetId('');
     setNewProjectFolderId('');
     setNewProjectUploadsFolderId('');
+    setNewProjectSpreadsheetId('');
     setNewProjectPublicCsvUrl('');
+    setNewProjectResumeSpreadsheetId('');
+    setNewProjectResumePublicCsvUrl('');
+    setNewProjectAgencyLetterSpreadsheetId('');
+    setNewProjectAgencyLetterPublicCsvUrl('');
     setIsAddingProject(false);
   };
 
@@ -2259,19 +2361,30 @@ export default function App() {
   // Start editing manual Spreadsheet & Folder IDs for a project
   const startEditingProject = (proj: ProjectConfig) => {
     setEditingProjectId(proj.id);
-    setEditSpreadsheetId(proj.spreadsheetId || '');
     setEditFolderId(proj.folderId || '');
     setEditUploadsFolderId(proj.uploadsFolderId || '');
+    // File 1: Data Lahan
+    setEditSpreadsheetId(proj.spreadsheetId || '');
     setEditPublicCsvUrl(proj.publicCsvUrl || '');
+    // File 2: Resume Project
+    setEditResumeSpreadsheetId(proj.resumeSpreadsheetId || '');
+    setEditResumePublicCsvUrl(proj.resumePublicCsvUrl || '');
+    // File 3: Surat Instansi
+    setEditAgencyLetterSpreadsheetId(proj.agencyLetterSpreadsheetId || '');
+    setEditAgencyLetterPublicCsvUrl(proj.agencyLetterPublicCsvUrl || '');
   };
 
   // Cancel editing IDs
   const cancelEditingProject = () => {
     setEditingProjectId(null);
-    setEditSpreadsheetId('');
     setEditFolderId('');
     setEditUploadsFolderId('');
+    setEditSpreadsheetId('');
     setEditPublicCsvUrl('');
+    setEditResumeSpreadsheetId('');
+    setEditResumePublicCsvUrl('');
+    setEditAgencyLetterSpreadsheetId('');
+    setEditAgencyLetterPublicCsvUrl('');
   };
 
   // Save manual Spreadsheet & Folder IDs
@@ -2283,10 +2396,17 @@ export default function App() {
       if (p.id === editingProjectId) {
         return {
           ...p,
-          spreadsheetId: editSpreadsheetId.trim() || null,
           folderId: editFolderId.trim() || null,
           uploadsFolderId: editUploadsFolderId.trim() || null,
-          publicCsvUrl: editPublicCsvUrl.trim() || null
+          // File 1: Data Lahan
+          spreadsheetId: editSpreadsheetId.trim() || null,
+          publicCsvUrl: editPublicCsvUrl.trim() || null,
+          // File 2: Resume Project
+          resumeSpreadsheetId: editResumeSpreadsheetId.trim() || null,
+          resumePublicCsvUrl: editResumePublicCsvUrl.trim() || null,
+          // File 3: Surat Instansi
+          agencyLetterSpreadsheetId: editAgencyLetterSpreadsheetId.trim() || null,
+          agencyLetterPublicCsvUrl: editAgencyLetterPublicCsvUrl.trim() || null
         };
       }
       return p;
@@ -2306,7 +2426,361 @@ export default function App() {
     }
 
     cancelEditingProject();
-    alert("Konfigurasi ID Google Drive / Sheets berhasil disimpan!");
+    alert("Konfigurasi 3 Spreadsheet & Folder ID berhasil disimpan!");
+  };
+
+  const [isAutoCreatingSheet, setIsAutoCreatingSheet] = useState(false);
+
+  // Update spreadsheet ID for a project
+  const handleUpdateProjectSpreadsheetId = async (projId: string, newSpreadsheetId: string) => {
+    const updated = projects.map(p => {
+      if (p.id === projId) {
+        return { ...p, spreadsheetId: newSpreadsheetId };
+      }
+      return p;
+    });
+    setProjects(updated);
+    localStorage.setItem('project_ventura_projects', JSON.stringify(updated));
+    saveProjectsToCloud(updated);
+    if (activeProjectId === projId) {
+      setSpreadsheetId(newSpreadsheetId);
+    }
+  };
+
+  // Update public CSV URL for a project
+  const handleUpdateProjectPublicCsvUrl = async (projId: string, newCsvUrl: string) => {
+    const updated = projects.map(p => {
+      if (p.id === projId) {
+        return { ...p, publicCsvUrl: newCsvUrl };
+      }
+      return p;
+    });
+    setProjects(updated);
+    localStorage.setItem('project_ventura_projects', JSON.stringify(updated));
+    saveProjectsToCloud(updated);
+  };
+
+  // Test any public CSV URL live
+  const handleTestPublicCsv = async (urlToTest: string) => {
+    if (!urlToTest || !urlToTest.trim()) {
+      setCsvTestFeedback({
+        success: false,
+        message: 'Tautan CSV belum diisi. Masukkan URL hasil publikasi web Google Sheets.'
+      });
+      return;
+    }
+
+    setIsTestingCsv(true);
+    setCsvTestFeedback(null);
+    try {
+      const csvText = await fetchPublicCsvContent(urlToTest.trim());
+      const parsedRows = parseCSV(csvText);
+      if (parsedRows.length <= 1) {
+        setCsvTestFeedback({
+          success: false,
+          message: 'Tautan berhasil diakses, namun belum ada baris data lahan (hanya baris header atau berkas kosong).'
+        });
+      } else {
+        const rowCount = parsedRows.length - 1;
+        setCsvTestFeedback({
+          success: true,
+          message: `✅ Berhasil terhubung! Ditemukan ${rowCount} baris data nominatif pada Google Spreadsheet.`,
+          rows: rowCount
+        });
+      }
+    } catch (err: any) {
+      console.error("Test CSV Error:", err);
+      setCsvTestFeedback({
+        success: false,
+        message: `Gagal mengakses CSV: ${err?.message || 'Pastikan Google Sheet telah dipublikasikan ke web dengan format Nilai yang dipisahkan koma (.csv).'}`
+      });
+    } finally {
+      setIsTestingCsv(false);
+    }
+  };
+
+  // Copy 267 Headers in TSV format to clipboard for pasting directly into cell A1
+  const handleCopyHeadersA1 = async () => {
+    const ok = await copySheetHeadersToClipboard();
+    if (ok) {
+      setSyncFeedback({
+        type: 'success',
+        message: '📋 267 Header Standar berhasil disalin! Buka Google Sheets baru dan tekan Ctrl+V di sel A1.',
+        timestamp: Date.now()
+      });
+      alert("📋 Seluruh 267 Header Standar berhasil disalin ke clipboard!\n\nLangkah cepat:\n1. Buka spreadsheet baru di Google Sheets\n2. Klik sel A1\n3. Tekan tombol Ctrl+V (atau Cmd+V)\nSeluruh 267 kolom akan langsung terisi rapi!");
+    } else {
+      alert("Gagal menyalin ke clipboard. Silakan buka 'Panduan Web CSV' untuk petunjuk manual.");
+    }
+  };
+
+  // Auto-generate Google Drive Folder & Spreadsheet (267 Kolom) for a project
+  const handleAutoCreateProjectSpreadsheet = async (proj: ProjectConfig) => {
+    let currentToken = token;
+    if (!currentToken || currentToken === 'GUEST_BYPASS' || currentToken === 'null') {
+      try {
+        currentToken = (await handleRefreshGoogleAuth()) || null;
+      } catch (e) {
+        console.warn("Auth failed:", e);
+      }
+    }
+    if (!currentToken) {
+      alert("Silakan hubungkan akun Google Anda terlebih dahulu untuk membuat Spreadsheet di Google Drive.");
+      return;
+    }
+
+    setIsAutoCreatingSheet(true);
+    setSyncFeedback({
+      type: 'info',
+      message: `Sedang menyiapkan folder Google Drive & Google Spreadsheet 267 kolom untuk "${proj.name}"...`,
+      timestamp: Date.now()
+    });
+
+    try {
+      const setup = await setupProjectDriveStructure(currentToken, proj.name);
+
+      const updated = projects.map(p => {
+        if (p.id === proj.id) {
+          return {
+            ...p,
+            folderId: setup.folderId,
+            spreadsheetId: setup.spreadsheetId,
+            uploadsFolderId: setup.uploadsFolderId
+          };
+        }
+        return p;
+      });
+
+      setProjects(updated);
+      localStorage.setItem('project_ventura_projects', JSON.stringify(updated));
+      saveProjectsToCloud(updated);
+
+      if (activeProjectId === proj.id) {
+        setSpreadsheetId(setup.spreadsheetId);
+        setProjectUploadsFolderId(setup.uploadsFolderId);
+      }
+
+      setSyncFeedback({
+        type: 'success',
+        message: `✨ Berhasil membuat Google Spreadsheet & Folder Drive untuk "${proj.name}"! Spreadsheet ID: ${setup.spreadsheetId}`,
+        timestamp: Date.now()
+      });
+
+      const openNow = window.confirm(
+        `✨ Google Spreadsheet Lahan (267 Kolom Standar) untuk "${proj.name}" berhasil dibuat di Google Drive Anda!\n\nID Spreadsheet: ${setup.spreadsheetId}\nFolder Drive: ${setup.folderId}\nFolder Berkas PDF: ${setup.uploadsFolderId}\n\nApakah Anda ingin membuka Google Spreadsheet tersebut sekarang untuk melihat dan mengeditnya?`
+      );
+      if (openNow) {
+        window.open(`https://docs.google.com/spreadsheets/d/${setup.spreadsheetId}/edit`, '_blank');
+      }
+    } catch (err: any) {
+      console.error("Gagal membuat Spreadsheet Lahan:", err);
+      alert("Gagal membuat Spreadsheet: " + (err?.message || err));
+      setSyncFeedback({
+        type: 'error',
+        message: `Gagal membuat Spreadsheet: ${err?.message || err}`,
+        timestamp: Date.now()
+      });
+    } finally {
+      setIsAutoCreatingSheet(false);
+    }
+  };
+
+  // Auto create dedicated resume spreadsheet for a project
+  const handleAutoCreateResumeSpreadsheetForProject = async (proj: ProjectConfig) => {
+    let currentToken = token;
+    if (!currentToken || currentToken === 'GUEST_BYPASS' || currentToken === 'null') {
+      try {
+        currentToken = (await handleRefreshGoogleAuth()) || null;
+      } catch (e) {
+        console.warn("Auth failed:", e);
+      }
+    }
+    if (!currentToken) {
+      alert("Silakan hubungkan akun Google Anda terlebih dahulu untuk membuat Spreadsheet di Google Drive.");
+      return;
+    }
+
+    setIsAutoCreatingSheet(true);
+    try {
+      const result = await createDedicatedResumeSpreadsheet(
+        currentToken,
+        proj.name,
+        proj.uploadsFolderId || proj.folderId
+      );
+
+      const updated = projects.map(p => {
+        if (p.id === proj.id) {
+          return {
+            ...p,
+            resumeSpreadsheetId: result.spreadsheetId
+          };
+        }
+        return p;
+      });
+
+      setProjects(updated);
+      localStorage.setItem('project_ventura_projects', JSON.stringify(updated));
+      saveProjectsToCloud(updated);
+
+      setSyncFeedback({
+        type: 'success',
+        message: `✨ Berhasil membuat Spreadsheet Resume untuk "${proj.name}" di Google Drive! ID: ${result.spreadsheetId}`,
+        timestamp: Date.now()
+      });
+
+      const openNow = window.confirm(
+        `✨ Google Spreadsheet Resume (36 Kolom) untuk "${proj.name}" berhasil dibuat di Google Drive Anda!\n\nID: ${result.spreadsheetId}\n\nApakah Anda ingin membuka Spreadsheet tersebut sekarang untuk melihat dan mengeditnya?`
+      );
+      if (openNow) {
+        window.open(result.spreadsheetUrl, '_blank');
+      }
+    } catch (err: any) {
+      console.error("Gagal membuat Spreadsheet Resume:", err);
+      alert("Gagal membuat Spreadsheet: " + (err?.message || err));
+    } finally {
+      setIsAutoCreatingSheet(false);
+    }
+  };
+
+  // Auto create dedicated Agency Letter spreadsheet for a project (File 3)
+  const handleAutoCreateAgencyLetterSpreadsheetForProject = async (proj: ProjectConfig) => {
+    let currentToken = token;
+    if (!currentToken || currentToken === 'GUEST_BYPASS' || currentToken === 'null') {
+      try {
+        currentToken = (await handleRefreshGoogleAuth()) || null;
+      } catch (e) {
+        console.warn("Auth failed:", e);
+      }
+    }
+    if (!currentToken) {
+      alert("Silakan hubungkan akun Google Anda terlebih dahulu untuk membuat Spreadsheet di Google Drive.");
+      return;
+    }
+
+    setIsAutoCreatingSheet(true);
+    try {
+      const result = await createDedicatedAgencyLetterSpreadsheet(
+        currentToken,
+        proj.name,
+        proj.uploadsFolderId || proj.folderId
+      );
+
+      const updated = projects.map(p => {
+        if (p.id === proj.id) {
+          return {
+            ...p,
+            agencyLetterSpreadsheetId: result.spreadsheetId
+          };
+        }
+        return p;
+      });
+
+      setProjects(updated);
+      localStorage.setItem('project_ventura_projects', JSON.stringify(updated));
+      saveProjectsToCloud(updated);
+
+      setSyncFeedback({
+        type: 'success',
+        message: `✨ Berhasil membuat Spreadsheet Surat Instansi untuk "${proj.name}" di Google Drive! ID: ${result.spreadsheetId}`,
+        timestamp: Date.now()
+      });
+
+      const openNow = window.confirm(
+        `✨ Google Spreadsheet Surat Instansi (13 Kolom) untuk "${proj.name}" berhasil dibuat di Google Drive Anda!\n\nID: ${result.spreadsheetId}\n\nApakah Anda ingin membuka Spreadsheet tersebut sekarang untuk melihat dan mengeditnya?`
+      );
+      if (openNow) {
+        window.open(result.spreadsheetUrl, '_blank');
+      }
+    } catch (err: any) {
+      console.error("Gagal membuat Spreadsheet Surat Instansi:", err);
+      alert("Gagal membuat Spreadsheet: " + (err?.message || err));
+    } finally {
+      setIsAutoCreatingSheet(false);
+    }
+  };
+
+  // Auto create ALL 3 spreadsheets & folder structure in 1 click
+  const handleAutoCreateAllSpreadsheetsForProject = async (proj: ProjectConfig) => {
+    let currentToken = token;
+    if (!currentToken || currentToken === 'GUEST_BYPASS' || currentToken === 'null') {
+      try {
+        currentToken = (await handleRefreshGoogleAuth()) || null;
+      } catch (e) {
+        console.warn("Auth failed:", e);
+      }
+    }
+    if (!currentToken) {
+      alert("Silakan hubungkan akun Google Anda terlebih dahulu untuk membuat Spreadsheet di Google Drive.");
+      return;
+    }
+
+    setIsAutoCreatingSheet(true);
+    setSyncFeedback({
+      type: 'info',
+      message: `Sedang membuat lengkap 3 Google Spreadsheet & Folder Drive untuk "${proj.name}"...`,
+      timestamp: Date.now()
+    });
+
+    try {
+      // 1. Folder + File 1: Data Lahan (267 Kolom)
+      const setup = await setupProjectDriveStructure(currentToken, proj.name);
+      
+      // 2. File 2: Resume Project (36 Kolom)
+      const resumeResult = await createDedicatedResumeSpreadsheet(
+        currentToken,
+        proj.name,
+        setup.uploadsFolderId || setup.folderId
+      );
+
+      // 3. File 3: Surat Instansi (13 Kolom)
+      const letterResult = await createDedicatedAgencyLetterSpreadsheet(
+        currentToken,
+        proj.name,
+        setup.uploadsFolderId || setup.folderId
+      );
+
+      const updated = projects.map(p => {
+        if (p.id === proj.id) {
+          return {
+            ...p,
+            folderId: setup.folderId,
+            uploadsFolderId: setup.uploadsFolderId,
+            spreadsheetId: setup.spreadsheetId,
+            resumeSpreadsheetId: resumeResult.spreadsheetId,
+            agencyLetterSpreadsheetId: letterResult.spreadsheetId
+          };
+        }
+        return p;
+      });
+
+      setProjects(updated);
+      localStorage.setItem('project_ventura_projects', JSON.stringify(updated));
+      saveProjectsToCloud(updated);
+
+      if (activeProjectId === proj.id) {
+        setSpreadsheetId(setup.spreadsheetId);
+        setProjectUploadsFolderId(setup.uploadsFolderId);
+      }
+
+      setSyncFeedback({
+        type: 'success',
+        message: `✨ Selesai! Berhasil membuat 3 Google Spreadsheet lengkap untuk "${proj.name}" di Google Drive!`,
+        timestamp: Date.now()
+      });
+
+      alert(
+        `✨ Berhasil membuat 3 Google Spreadsheet lengkap untuk "${proj.name}" di Google Drive!\n\n` +
+        `1. File Data Lahan (267 Kolom): ${setup.spreadsheetId}\n` +
+        `2. File Resume Proyek (36 Kolom): ${resumeResult.spreadsheetId}\n` +
+        `3. File Surat Instansi (13 Kolom): ${letterResult.spreadsheetId}\n\n` +
+        `Seluruh file telah tersimpan rapi di folder Google Drive proyek ini.`
+      );
+    } catch (err: any) {
+      console.error("Gagal membuat 3 spreadsheet:", err);
+      alert("Gagal membuat spreadsheet: " + (err?.message || err));
+    } finally {
+      setIsAutoCreatingSheet(false);
+    }
   };
 
   // Open Stage Config Modal for a Project
@@ -2523,15 +2997,24 @@ export default function App() {
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                       Live Sheets
                     </span>
+                  ) : role === 'GUEST' && projects.find(p => p.id === activeProjectId)?.publicCsvUrl ? (
+                    <span 
+                      onClick={() => handleManualSync(false)}
+                      className="text-[9px] font-bold text-sky-400 bg-sky-500/10 border border-sky-500/20 px-2.5 py-1 rounded-md flex items-center gap-1.5 font-mono cursor-pointer hover:bg-sky-500/20 transition-all"
+                      title="Mode Tamu: Terhubung ke Tautan Publik CSV Google Sheets. Klik untuk memuat ulang data."
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse"></span>
+                      Web CSV Live
+                    </span>
                   ) : (
                     <button
                       type="button"
                       onClick={() => handleManualSync(true)}
                       className="text-[9px] font-bold text-amber-400 bg-amber-500/15 border border-amber-500/30 px-2 py-1 rounded-md flex items-center gap-1 font-mono hover:bg-amber-500/25 transition-all cursor-pointer"
-                      title="Menggunakan Data Cadangan Cloud. Klik untuk menghubungkan Google Account & Sync Live"
+                      title={role === 'GUEST' ? "Mode Tamu (Read-Only). Klik untuk memuat ulang data." : "Menggunakan Data Cadangan Cloud. Klik untuk menghubungkan Google Account & Sync Live"}
                     >
                       <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-                      Mode Cadangan (Hubungkan)
+                      {role === 'GUEST' ? 'Mode Tamu' : 'Mode Cadangan (Hubungkan)'}
                     </button>
                   )}
                 </div>
@@ -3940,6 +4423,8 @@ export default function App() {
                     userEmail={user?.email || 'operator@ventura.id'}
                     operatorName={operatorName}
                     accessToken={token || undefined}
+                    spreadsheetId={projects.find(p => p.id === activeProjectId)?.resumeSpreadsheetId || spreadsheetId || projects.find(p => p.id === activeProjectId)?.spreadsheetId || undefined}
+                    allProjects={projects}
                     uploadsFolderId={projectUploadsFolderId || undefined}
                     onRefreshGoogleToken={handleRefreshGoogleAuth}
                     onNavigateToInput={(rec) => {
@@ -3947,8 +4432,15 @@ export default function App() {
                       setActiveMenu('input');
                     }}
                     resumeStages={projects.find(p => p.id === activeProjectId)?.resumeStages || DEFAULT_RESUME_STAGES}
+                    publicCsvUrl={projects.find(p => p.id === activeProjectId)?.resumePublicCsvUrl || projects.find(p => p.id === activeProjectId)?.publicCsvUrl || undefined}
                     onUpdateResumeStages={async (newStages) => {
                       await handleUpdateProjectStages(activeProjectId, newStages);
+                    }}
+                    onUpdateProjectSpreadsheetId={async (newId) => {
+                      await handleUpdateProjectSpreadsheetId(activeProjectId, newId);
+                    }}
+                    onUpdateProjectPublicCsvUrl={async (newUrl) => {
+                      await handleUpdateProjectPublicCsvUrl(activeProjectId, newUrl);
                     }}
                   />
                 )}
@@ -3963,6 +4455,9 @@ export default function App() {
                     operatorName={operatorName}
                     accessToken={token || undefined}
                     uploadsFolderId={projectUploadsFolderId || undefined}
+                    spreadsheetId={projects.find(p => p.id === activeProjectId)?.agencyLetterSpreadsheetId || undefined}
+                    publicCsvUrl={projects.find(p => p.id === activeProjectId)?.agencyLetterPublicCsvUrl || undefined}
+                    onRefreshGoogleToken={handleRefreshGoogleAuth}
                   />
                 )}
                 
@@ -4173,153 +4668,774 @@ export default function App() {
 
                         {/* List of current projects with Delete & Edit option */}
                         <div className="glass-card p-6 rounded-2xl border border-white/10 shadow-xl space-y-4">
-                          <div className="flex justify-between items-center">
-                            <span className="text-xs font-bold text-slate-200 uppercase tracking-wider block">Daftar Jalur Saat Ini & ID Koneksi ({projects.length})</span>
-                            {!isAddingProject && (
+                          {/* Banner 3 Spreadsheet Terpisah Per Jalur & Web Publish CSV */}
+                          <div className="p-4 bg-gradient-to-r from-sky-950/40 via-slate-900 to-amber-950/30 border border-sky-500/30 rounded-2xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+                            <div className="flex items-start gap-3">
+                              <div className="w-10 h-10 rounded-xl bg-sky-500/15 border border-sky-500/30 flex items-center justify-center text-sky-400 shrink-0">
+                                <FileSpreadsheet className="w-5 h-5" />
+                              </div>
+                              <div className="space-y-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                                    Arsitektur 3 Google Spreadsheet Terpisah Per Jalur
+                                  </h4>
+                                  <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono">
+                                    1. Data Lahan (267 Kolom)
+                                  </span>
+                                  <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-mono">
+                                    2. Resume Proyek (36 Kolom)
+                                  </span>
+                                  <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30 font-mono">
+                                    3. Surat Instansi (13 Kolom)
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-400 leading-relaxed max-w-3xl">
+                                  Setiap jalur transmisi memiliki 3 file Google Spreadsheet terpisah agar data independen, bebas bentrok, dan mudah dibagikan. Masing-masing file dapat dimasukkan <strong>Tautan Web Publish CSV</strong> (read-only) untuk tamu/stakeholder tanpa perlu login Google.
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 shrink-0">
                               <button
-                                onClick={() => setIsAddingProject(true)}
-                                className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5"
+                                type="button"
+                                onClick={() => setIsCsvGuideModalOpen(true)}
+                                className="px-3 py-2 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                                title="Buka Panduan Publikasi Google Sheets ke Web CSV (3 File)"
                               >
-                                <Plus className="w-3.5 h-3.5" />
-                                Tambah Jalur Baru
+                                <HelpCircle className="w-3.5 h-3.5 text-sky-400" />
+                                Panduan Web CSV
                               </button>
-                            )}
+                              <button
+                                type="button"
+                                onClick={() => downloadSheetHeaderTemplate('xlsx', projects.find(p => p.id === activeProjectId)?.name || 'Jalur_Kompensasi')}
+                                className="px-2.5 py-2 bg-emerald-600/80 hover:bg-emerald-500 text-white rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+                                title="Unduh Template Excel Data Lahan (267 Kolom)"
+                              >
+                                <Download className="w-3.5 h-3.5 text-emerald-300" />
+                                Template Lahan (.xlsx)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => downloadResumeHeaderTemplate('xlsx', projects.find(p => p.id === activeProjectId)?.name || 'Jalur_Kompensasi')}
+                                className="px-2.5 py-2 bg-amber-600/80 hover:bg-amber-500 text-white rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+                                title="Unduh Template Excel Resume Proyek (36 Kolom)"
+                              >
+                                <Download className="w-3.5 h-3.5 text-amber-300" />
+                                Template Resume (.xlsx)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => downloadAgencyLetterHeaderTemplate('xlsx', projects.find(p => p.id === activeProjectId)?.name || 'Jalur_Kompensasi')}
+                                className="px-2.5 py-2 bg-sky-600/80 hover:bg-sky-500 text-white rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+                                title="Unduh Template Excel Surat Instansi (13 Kolom)"
+                              >
+                                <Download className="w-3.5 h-3.5 text-sky-300" />
+                                Template Surat (.xlsx)
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Controls & View Switcher */}
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-2.5">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-slate-200 uppercase tracking-wider block">
+                                  Manajemen Data Jalur & Koneksi 3 File Spreadsheet ({projects.length} Jalur)
+                                </span>
+                                <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                                  +4 Kolom Manajemen
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-400 mt-0.5">
+                                Kolom 1-2: Spreadsheet & CSV Resume Proyek | Kolom 3-4: Spreadsheet & CSV Surat Instansi
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              {/* View Mode Toggle */}
+                              <div className="bg-slate-950/80 p-1 rounded-xl border border-white/10 flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setProjectDisplayMode('table')}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                                    projectDisplayMode === 'table'
+                                      ? 'bg-amber-500 text-slate-950 font-black shadow-sm'
+                                      : 'text-slate-400 hover:text-white'
+                                  }`}
+                                  title="Tampilkan dalam Tabel Manajemen Data (+4 Kolom Tambahan)"
+                                >
+                                  <Table className="w-3.5 h-3.5" />
+                                  <span>Tabel Data (+4 Kolom)</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setProjectDisplayMode('cards')}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                                    projectDisplayMode === 'cards'
+                                      ? 'bg-amber-500 text-slate-950 font-black shadow-sm'
+                                      : 'text-slate-400 hover:text-white'
+                                  }`}
+                                  title="Tampilkan dalam bentuk Kartu Jalur Proyek"
+                                >
+                                  <LayoutGrid className="w-3.5 h-3.5" />
+                                  <span>Kartu Jalur</span>
+                                </button>
+                              </div>
+
+                              {!isAddingProject && (
+                                <button
+                                  onClick={() => setIsAddingProject(true)}
+                                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  Tambah Jalur
+                                </button>
+                              )}
+                            </div>
                           </div>
                           
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {projects.map(proj => (
-                              <div key={proj.id} className="flex flex-col gap-2.5 bg-white/5 p-4 rounded-xl border border-white/5">
-                                <div className="flex justify-between items-start text-xs">
-                                  <div className="space-y-1">
-                                    <span className="font-extrabold text-slate-200 text-sm block leading-snug">{proj.name}</span>
-                                    <span className="text-[10px] text-amber-400 font-mono block">ID: {proj.id}</span>
-                                  </div>
-                                  <div className="flex items-center gap-1.5 shrink-0">
-                                    <span className="text-[8px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 uppercase tracking-wider border border-emerald-500/20">
-                                      {proj.spreadsheetId ? 'Tersinkron' : 'Belum Setup'}
-                                    </span>
-                                  </div>
-                                </div>
-                                
-                                {proj.spreadsheetId && (
-                                  <div className="text-[10px] font-mono text-slate-400 space-y-1 pt-2 border-t border-white/5">
-                                    <div className="flex items-center justify-between">
-                                      <span>Spreadsheet ID:</span>
-                                      <span className="text-amber-200 select-all truncate max-w-[200px]">{proj.spreadsheetId}</span>
-                                    </div>
-                                    {proj.publicCsvUrl && (
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-emerald-400">Tautan CSV:</span>
-                                        <span className="text-emerald-200 select-all truncate max-w-[200px]">{proj.publicCsvUrl}</span>
+                          {/* TABEL MANAJEMEN DATA (+4 Kolom Baru) */}
+                          {projectDisplayMode === 'table' ? (
+                            <div className="overflow-x-auto rounded-xl border border-white/10 shadow-lg">
+                              <table className="w-full text-left border-collapse text-xs">
+                                <thead>
+                                  <tr className="bg-slate-950/90 text-slate-300 font-bold border-b border-white/10 text-[11px] whitespace-nowrap">
+                                    <th className="py-3 px-3 w-10 text-center">No</th>
+                                    <th className="py-3 px-3 min-w-[200px]">Jalur Transmisi</th>
+                                    <th className="py-3 px-3 min-w-[210px]">
+                                      <div className="flex items-center gap-1.5 text-emerald-400">
+                                        <FileSpreadsheet className="w-3.5 h-3.5" />
+                                        <span>1. File Data Lahan</span>
                                       </div>
-                                    )}
-                                    {proj.folderId && (
-                                      <div className="flex items-center justify-between">
-                                        <span>Folder ID:</span>
-                                        <span className="text-amber-200 select-all truncate max-w-[200px]">{proj.folderId}</span>
+                                      <span className="text-[9px] font-normal text-slate-400 font-mono">267 Kolom • ID & Link CSV</span>
+                                    </th>
+                                    <th className="py-3 px-3 min-w-[190px] bg-amber-500/5">
+                                      <div className="flex items-center gap-1.5 text-amber-300">
+                                        <Layers className="w-3.5 h-3.5 text-amber-400" />
+                                        <span>2. ID Sheet Resume</span>
+                                        <span className="text-[8px] font-mono font-bold px-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">+Kolom 1</span>
                                       </div>
-                                    )}
-                                    {proj.uploadsFolderId && (
-                                      <div className="flex items-center justify-between">
-                                        <span>Folder PDF ID:</span>
-                                        <span className="text-amber-200 select-all truncate max-w-[200px]">{proj.uploadsFolderId}</span>
+                                      <span className="text-[9px] font-normal text-slate-400 font-mono">36 Kolom Tahapan</span>
+                                    </th>
+                                    <th className="py-3 px-3 min-w-[180px] bg-amber-500/5">
+                                      <div className="flex items-center gap-1.5 text-amber-300">
+                                        <Globe className="w-3.5 h-3.5 text-amber-400" />
+                                        <span>2. Link CSV Resume</span>
+                                        <span className="text-[8px] font-mono font-bold px-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">+Kolom 2</span>
                                       </div>
-                                    )}
-                                  </div>
-                                )}
-
-                                {/* Resume Stages Preview & Configure Button */}
-                                <div className="pt-2 border-t border-white/5 space-y-2">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
-                                      <FileText className="w-3.5 h-3.5 text-amber-400" />
-                                      Tahapan Resume Proyek:
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => startEditingProjectStages(proj)}
-                                      className="text-[11px] font-bold text-amber-300 hover:text-amber-200 px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 rounded-lg border border-amber-500/30 transition-all cursor-pointer flex items-center gap-1"
-                                      title="Atur poin tahapan apa saja yang ditampilkan pada resume proyek ini"
+                                      <span className="text-[9px] font-normal text-slate-400 font-mono">Tautan Publik Tamu</span>
+                                    </th>
+                                    <th className="py-3 px-3 min-w-[190px] bg-sky-500/5">
+                                      <div className="flex items-center gap-1.5 text-sky-300">
+                                        <Mail className="w-3.5 h-3.5 text-sky-400" />
+                                        <span>3. ID Sheet Surat</span>
+                                        <span className="text-[8px] font-mono font-bold px-1 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">+Kolom 3</span>
+                                      </div>
+                                      <span className="text-[9px] font-normal text-slate-400 font-mono">13 Kolom Administrasi</span>
+                                    </th>
+                                    <th className="py-3 px-3 min-w-[180px] bg-sky-500/5">
+                                      <div className="flex items-center gap-1.5 text-sky-300">
+                                        <Globe className="w-3.5 h-3.5 text-sky-400" />
+                                        <span>3. Link CSV Surat</span>
+                                        <span className="text-[8px] font-mono font-bold px-1 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">+Kolom 4</span>
+                                      </div>
+                                      <span className="text-[9px] font-normal text-slate-400 font-mono">Tautan Publik Tamu</span>
+                                    </th>
+                                    <th className="py-3 px-3 min-w-[160px]">Folder Google Drive</th>
+                                    <th className="py-3 px-3 text-center min-w-[160px]">Aksi & Pengaturan</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/5 bg-slate-900/40">
+                                  {projects.map((proj, idx) => (
+                                    <tr 
+                                      key={proj.id} 
+                                      className={`hover:bg-white/5 transition-colors ${activeProjectId === proj.id ? 'bg-amber-500/5' : ''}`}
                                     >
-                                      <Settings className="w-3 h-3" />
-                                      Atur Poin ({((proj.resumeStages || DEFAULT_RESUME_STAGES).filter(s => s.active !== false)).length}/{(proj.resumeStages || DEFAULT_RESUME_STAGES).length})
-                                    </button>
-                                  </div>
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    {(proj.resumeStages || DEFAULT_RESUME_STAGES).map(s => {
-                                      const isActive = s.active !== false;
-                                      return (
-                                        <span 
-                                          key={s.key} 
-                                          className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${
-                                            isActive
-                                              ? 'bg-amber-500/10 text-amber-300 border-amber-500/20'
-                                              : 'bg-slate-800/80 text-slate-500 border-slate-700/50 line-through'
-                                          }`}
-                                          title={isActive ? `${s.fullName} (Aktif)` : `${s.fullName} (Nonaktif)`}
-                                        >
-                                          {s.label}
-                                        </span>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
+                                      {/* No */}
+                                      <td className="py-3 px-3 text-center font-mono font-bold text-slate-400">
+                                        {idx + 1}
+                                      </td>
 
-                                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/5">
-                                  <div className="flex items-center gap-1.5">
-                                    {activeProjectId === proj.id ? (
-                                      <span className="text-[11px] font-extrabold text-amber-400 bg-amber-500/15 px-2.5 py-1 rounded-lg border border-amber-500/25 flex items-center gap-1">
-                                        <CheckCircle2 className="w-3.5 h-3.5" />
-                                        Jalur Aktif
+                                      {/* Nama Jalur */}
+                                      <td className="py-3 px-3">
+                                        <div className="space-y-0.5">
+                                          <span className="font-extrabold text-white block text-xs leading-snug">
+                                            {proj.name}
+                                          </span>
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-[10px] text-amber-400 font-mono">ID: {proj.id}</span>
+                                            {activeProjectId === proj.id && (
+                                              <span className="text-[8px] font-extrabold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                                Jalur Aktif
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </td>
+
+                                      {/* File 1: Data Lahan (267 Kolom) */}
+                                      <td className="py-3 px-3">
+                                        <div className="space-y-1">
+                                          <div className="flex items-center gap-1.5">
+                                            {proj.spreadsheetId ? (
+                                              <span className="text-emerald-300 font-mono text-[10px] truncate max-w-[130px]" title={proj.spreadsheetId}>
+                                                {proj.spreadsheetId}
+                                              </span>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                disabled={isAutoCreatingSheet}
+                                                onClick={() => handleAutoCreateProjectSpreadsheet(proj)}
+                                                className="text-[9px] font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 cursor-pointer flex items-center gap-1"
+                                                title="Buat Google Sheet Lahan (267 Kolom)"
+                                              >
+                                                <Sparkles className="w-2.5 h-2.5" />
+                                                Buat Sheet
+                                              </button>
+                                            )}
+                                            {proj.spreadsheetId && (
+                                              <a
+                                                href={`https://docs.google.com/spreadsheets/d/${proj.spreadsheetId}/edit`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="text-emerald-400 hover:text-emerald-300 shrink-0"
+                                                title="Buka di Google Sheets"
+                                              >
+                                                <ExternalLink className="w-3 h-3" />
+                                              </a>
+                                            )}
+                                          </div>
+                                          {proj.publicCsvUrl ? (
+                                            <div className="flex items-center gap-1.5 text-[9px]">
+                                              <span className="text-sky-300 font-mono truncate max-w-[100px]" title={proj.publicCsvUrl}>CSV Aktif</span>
+                                              <button
+                                                type="button"
+                                                onClick={() => handleTestPublicCsv(proj.publicCsvUrl!)}
+                                                className="text-[8px] font-bold px-1 py-0.2 bg-sky-500/20 text-sky-300 rounded hover:bg-sky-500/30 cursor-pointer"
+                                                title="Uji akses CSV Lahan"
+                                              >
+                                                Uji
+                                              </button>
+                                              <a href={proj.publicCsvUrl} target="_blank" rel="noopener noreferrer" className="text-sky-400">
+                                                <ExternalLink className="w-2.5 h-2.5" />
+                                              </a>
+                                            </div>
+                                          ) : (
+                                            <span className="text-[9px] text-slate-600 italic block">CSV: Belum diisi</span>
+                                          )}
+                                        </div>
+                                      </td>
+
+                                      {/* [KOLOM BARU 1] File 2: ID Sheet Resume */}
+                                      <td className="py-3 px-3 bg-amber-500/5">
+                                        <div className="space-y-1">
+                                          <div className="flex items-center gap-1.5">
+                                            {proj.resumeSpreadsheetId ? (
+                                              <span className="text-amber-300 font-mono text-[10px] truncate max-w-[120px]" title={proj.resumeSpreadsheetId}>
+                                                {proj.resumeSpreadsheetId}
+                                              </span>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                disabled={isAutoCreatingSheet}
+                                                onClick={() => handleAutoCreateResumeSpreadsheetForProject(proj)}
+                                                className="text-[9px] font-bold text-amber-400 hover:text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 cursor-pointer flex items-center gap-1"
+                                                title="Buat Google Sheet Resume (36 Kolom)"
+                                              >
+                                                <Sparkles className="w-2.5 h-2.5" />
+                                                Buat Sheet
+                                              </button>
+                                            )}
+                                            {proj.resumeSpreadsheetId && (
+                                              <a
+                                                href={`https://docs.google.com/spreadsheets/d/${proj.resumeSpreadsheetId}/edit`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="text-amber-400 hover:text-amber-300 shrink-0"
+                                                title="Buka Spreadsheet Resume di Google Sheets"
+                                              >
+                                                <ExternalLink className="w-3 h-3" />
+                                              </a>
+                                            )}
+                                          </div>
+                                          <span className="text-[9px] font-mono text-slate-400 block">36 Kolom Tahapan</span>
+                                        </div>
+                                      </td>
+
+                                      {/* [KOLOM BARU 2] File 2: Link CSV Resume */}
+                                      <td className="py-3 px-3 bg-amber-500/5">
+                                        {proj.resumePublicCsvUrl ? (
+                                          <div className="space-y-1">
+                                            <div className="flex items-center gap-1.5 text-[9px]">
+                                              <span className="text-amber-300 font-mono truncate max-w-[110px]" title={proj.resumePublicCsvUrl}>
+                                                CSV Resume Aktif
+                                              </span>
+                                              <button
+                                                type="button"
+                                                onClick={() => handleTestPublicCsv(proj.resumePublicCsvUrl!)}
+                                                className="text-[8px] font-bold px-1 py-0.2 bg-amber-500/20 text-amber-300 rounded hover:bg-amber-500/30 cursor-pointer"
+                                                title="Uji akses CSV Resume"
+                                              >
+                                                Uji
+                                              </button>
+                                              <a href={proj.resumePublicCsvUrl} target="_blank" rel="noopener noreferrer" className="text-amber-400">
+                                                <ExternalLink className="w-2.5 h-2.5" />
+                                              </a>
+                                            </div>
+                                            <span className="text-[8px] text-emerald-400 font-bold">✓ Siap Mode Tamu</span>
+                                          </div>
+                                        ) : (
+                                          <span className="text-[9px] text-slate-600 italic block">Belum diisi</span>
+                                        )}
+                                      </td>
+
+                                      {/* [KOLOM BARU 3] File 3: ID Sheet Surat Instansi */}
+                                      <td className="py-3 px-3 bg-sky-500/5">
+                                        <div className="space-y-1">
+                                          <div className="flex items-center gap-1.5">
+                                            {proj.agencyLetterSpreadsheetId ? (
+                                              <span className="text-sky-300 font-mono text-[10px] truncate max-w-[120px]" title={proj.agencyLetterSpreadsheetId}>
+                                                {proj.agencyLetterSpreadsheetId}
+                                              </span>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                disabled={isAutoCreatingSheet}
+                                                onClick={() => handleAutoCreateAgencyLetterSpreadsheetForProject(proj)}
+                                                className="text-[9px] font-bold text-sky-400 hover:text-sky-300 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20 cursor-pointer flex items-center gap-1"
+                                                title="Buat Google Sheet Surat Instansi (13 Kolom)"
+                                              >
+                                                <Sparkles className="w-2.5 h-2.5" />
+                                                Buat Sheet
+                                              </button>
+                                            )}
+                                            {proj.agencyLetterSpreadsheetId && (
+                                              <a
+                                                href={`https://docs.google.com/spreadsheets/d/${proj.agencyLetterSpreadsheetId}/edit`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="text-sky-400 hover:text-sky-300 shrink-0"
+                                                title="Buka Spreadsheet Surat di Google Sheets"
+                                              >
+                                                <ExternalLink className="w-3 h-3" />
+                                              </a>
+                                            )}
+                                          </div>
+                                          <span className="text-[9px] font-mono text-slate-400 block">13 Kolom Administrasi</span>
+                                        </div>
+                                      </td>
+
+                                      {/* [KOLOM BARU 4] File 3: Link CSV Surat Instansi */}
+                                      <td className="py-3 px-3 bg-sky-500/5">
+                                        {proj.agencyLetterPublicCsvUrl ? (
+                                          <div className="space-y-1">
+                                            <div className="flex items-center gap-1.5 text-[9px]">
+                                              <span className="text-sky-300 font-mono truncate max-w-[110px]" title={proj.agencyLetterPublicCsvUrl}>
+                                                CSV Surat Aktif
+                                              </span>
+                                              <button
+                                                type="button"
+                                                onClick={() => handleTestPublicCsv(proj.agencyLetterPublicCsvUrl!)}
+                                                className="text-[8px] font-bold px-1 py-0.2 bg-sky-500/20 text-sky-300 rounded hover:bg-sky-500/30 cursor-pointer"
+                                                title="Uji akses CSV Surat Instansi"
+                                              >
+                                                Uji
+                                              </button>
+                                              <a href={proj.agencyLetterPublicCsvUrl} target="_blank" rel="noopener noreferrer" className="text-sky-400">
+                                                <ExternalLink className="w-2.5 h-2.5" />
+                                              </a>
+                                            </div>
+                                            <span className="text-[8px] text-emerald-400 font-bold">✓ Siap Mode Tamu</span>
+                                          </div>
+                                        ) : (
+                                          <span className="text-[9px] text-slate-600 italic block">Belum diisi</span>
+                                        )}
+                                      </td>
+
+                                      {/* Folder Google Drive */}
+                                      <td className="py-3 px-3 font-mono text-[9px]">
+                                        <div className="space-y-0.5">
+                                          <div>
+                                            <span className="text-slate-500">Utama: </span>
+                                            <span className="text-slate-300">{proj.folderId ? `${proj.folderId.slice(0, 10)}...` : '-'}</span>
+                                          </div>
+                                          <div>
+                                            <span className="text-slate-500">PDF: </span>
+                                            <span className="text-slate-300">{proj.uploadsFolderId ? `${proj.uploadsFolderId.slice(0, 10)}...` : '-'}</span>
+                                          </div>
+                                        </div>
+                                      </td>
+
+                                      {/* Aksi & Pengaturan */}
+                                      <td className="py-3 px-3">
+                                        <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                                          {activeProjectId !== proj.id && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleSwitchProject(proj.id)}
+                                              className="px-2 py-1 bg-white/5 hover:bg-white/10 text-slate-200 text-[10px] font-bold rounded cursor-pointer"
+                                              title="Jadikan jalur ini aktif"
+                                            >
+                                              Buka
+                                            </button>
+                                          )}
+
+                                          {(!proj.spreadsheetId || !proj.resumeSpreadsheetId || !proj.agencyLetterSpreadsheetId) && (
+                                            <button
+                                              type="button"
+                                              disabled={isAutoCreatingSheet}
+                                              onClick={() => handleAutoCreateAllSpreadsheetsForProject(proj)}
+                                              className="px-2 py-1 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold rounded cursor-pointer flex items-center gap-1"
+                                              title="Buat Otomatis 3 Spreadsheet Sekaligus di Drive"
+                                            >
+                                              <Sparkles className="w-2.5 h-2.5 text-emerald-400" />
+                                              3 Sheet
+                                            </button>
+                                          )}
+
+                                          <button
+                                            type="button"
+                                            onClick={() => startEditingProject(proj)}
+                                            className="px-2 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 text-[10px] font-bold rounded cursor-pointer flex items-center gap-1"
+                                            title="Edit 3 ID Sheet & 3 Link CSV"
+                                          >
+                                            <Settings className="w-2.5 h-2.5" />
+                                            Edit
+                                          </button>
+
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteProject(proj.id)}
+                                            className="px-1.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-[10px] font-bold rounded cursor-pointer"
+                                            title="Hapus Jalur"
+                                          >
+                                            <Trash2 className="w-2.5 h-2.5" />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            /* TAMPILAN KARTU JALUR PROYEK */
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {projects.map(proj => (
+                                <div key={proj.id} className="flex flex-col gap-2.5 bg-white/5 p-4 rounded-xl border border-white/5 hover:border-white/10 transition-all">
+                                  <div className="flex justify-between items-start text-xs">
+                                    <div className="space-y-1">
+                                      <span className="font-extrabold text-slate-200 text-sm block leading-snug">{proj.name}</span>
+                                      <span className="text-[10px] text-amber-400 font-mono block">ID Jalur: {proj.id}</span>
+                                    </div>
+                                    <div className="flex flex-col items-end gap-1 shrink-0">
+                                      <span className={`text-[8px] font-mono font-bold px-1.5 py-0.5 rounded uppercase tracking-wider border ${
+                                        (proj.spreadsheetId && proj.resumeSpreadsheetId && proj.agencyLetterSpreadsheetId)
+                                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                                          : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                                      }`}>
+                                        {[proj.spreadsheetId, proj.resumeSpreadsheetId, proj.agencyLetterSpreadsheetId].filter(Boolean).length}/3 Sheets Aktif
                                       </span>
-                                    ) : (
+                                      <span className={`text-[8px] font-mono font-bold px-1.5 py-0.5 rounded uppercase tracking-wider border ${
+                                        [proj.publicCsvUrl, proj.resumePublicCsvUrl, proj.agencyLetterPublicCsvUrl].filter(Boolean).length > 0
+                                          ? 'bg-sky-500/10 text-sky-400 border-sky-500/20' 
+                                          : 'bg-slate-800 text-slate-400 border-slate-700'
+                                      }`}>
+                                        {[proj.publicCsvUrl, proj.resumePublicCsvUrl, proj.agencyLetterPublicCsvUrl].filter(Boolean).length}/3 CSV Publik
+                                      </span>
+                                    </div>
+                                  </div>
+                                  
+                                  {/* 3 Kotak Spreadsheet File Per Jalur */}
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-white/5 text-[10px]">
+                                    {/* 1. File Data Lahan */}
+                                    <div className="p-2.5 bg-slate-950/70 rounded-xl border border-white/5 space-y-1.5 flex flex-col justify-between">
+                                      <div className="space-y-1">
+                                        <div className="flex items-center justify-between font-bold">
+                                          <span className="text-slate-200 flex items-center gap-1">
+                                            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                                            1. Data Lahan
+                                          </span>
+                                          <span className={`text-[8px] font-mono font-bold px-1 py-0.2 rounded ${
+                                            proj.spreadsheetId ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'
+                                          }`}>
+                                            {proj.spreadsheetId ? '✓ Ready' : 'Belum Ada'}
+                                          </span>
+                                        </div>
+                                        <p className="text-[9px] text-slate-400">267 Kolom Standar</p>
+                                        {proj.spreadsheetId ? (
+                                          <div className="flex items-center justify-between gap-1 text-[9px] font-mono">
+                                            <span className="text-emerald-300 truncate max-w-[120px]" title={proj.spreadsheetId}>{proj.spreadsheetId}</span>
+                                            <a
+                                              href={`https://docs.google.com/spreadsheets/d/${proj.spreadsheetId}/edit`}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="text-emerald-400 hover:text-emerald-300 shrink-0"
+                                              title="Buka di Google Sheets"
+                                            >
+                                              <ExternalLink className="w-3 h-3" />
+                                            </a>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            disabled={isAutoCreatingSheet}
+                                            onClick={() => handleAutoCreateProjectSpreadsheet(proj)}
+                                            className="text-[9px] font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-0.5 rounded border border-emerald-500/20 cursor-pointer flex items-center gap-1 w-full justify-center"
+                                          >
+                                            <Sparkles className="w-2.5 h-2.5" />
+                                            Buat File (267 Kolom)
+                                          </button>
+                                        )}
+                                      </div>
+                                      <div className="pt-1.5 border-t border-white/5 space-y-1">
+                                        <div className="flex items-center justify-between text-[9px]">
+                                          <span className="text-slate-400">Tautan CSV:</span>
+                                          {proj.publicCsvUrl ? (
+                                            <div className="flex items-center gap-1">
+                                              <button
+                                                type="button"
+                                                onClick={() => handleTestPublicCsv(proj.publicCsvUrl!)}
+                                                className="text-[8px] font-bold px-1.5 py-0.2 bg-sky-500/20 text-sky-300 rounded hover:bg-sky-500/30 cursor-pointer"
+                                                title="Uji akses CSV"
+                                              >
+                                                Uji
+                                              </button>
+                                              <a href={proj.publicCsvUrl} target="_blank" rel="noopener noreferrer" className="text-sky-400">
+                                                <ExternalLink className="w-2.5 h-2.5" />
+                                              </a>
+                                            </div>
+                                          ) : (
+                                            <span className="text-slate-600 italic">Belum diisi</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* 2. File Resume Project */}
+                                    <div className="p-2.5 bg-slate-950/70 rounded-xl border border-white/5 space-y-1.5 flex flex-col justify-between">
+                                      <div className="space-y-1">
+                                        <div className="flex items-center justify-between font-bold">
+                                          <span className="text-slate-200 flex items-center gap-1">
+                                            <Layers className="w-3.5 h-3.5 text-amber-400" />
+                                            2. Resume Proyek
+                                          </span>
+                                          <span className={`text-[8px] font-mono font-bold px-1 py-0.2 rounded ${
+                                            proj.resumeSpreadsheetId ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'
+                                          }`}>
+                                            {proj.resumeSpreadsheetId ? '✓ Ready' : 'Belum Ada'}
+                                          </span>
+                                        </div>
+                                        <p className="text-[9px] text-slate-400">36 Kolom Tahapan</p>
+                                        {proj.resumeSpreadsheetId ? (
+                                          <div className="flex items-center justify-between gap-1 text-[9px] font-mono">
+                                            <span className="text-amber-300 truncate max-w-[120px]" title={proj.resumeSpreadsheetId}>{proj.resumeSpreadsheetId}</span>
+                                            <a
+                                              href={`https://docs.google.com/spreadsheets/d/${proj.resumeSpreadsheetId}/edit`}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="text-amber-400 hover:text-amber-300 shrink-0"
+                                              title="Buka di Google Sheets"
+                                            >
+                                              <ExternalLink className="w-3 h-3" />
+                                            </a>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            disabled={isAutoCreatingSheet}
+                                            onClick={() => handleAutoCreateResumeSpreadsheetForProject(proj)}
+                                            className="text-[9px] font-bold text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/20 cursor-pointer flex items-center gap-1 w-full justify-center"
+                                          >
+                                            <Sparkles className="w-2.5 h-2.5" />
+                                            Buat File (36 Kolom)
+                                          </button>
+                                        )}
+                                      </div>
+                                      <div className="pt-1.5 border-t border-white/5 space-y-1">
+                                        <div className="flex items-center justify-between text-[9px]">
+                                          <span className="text-slate-400">Tautan CSV:</span>
+                                          {proj.resumePublicCsvUrl ? (
+                                            <div className="flex items-center gap-1">
+                                              <button
+                                                type="button"
+                                                onClick={() => handleTestPublicCsv(proj.resumePublicCsvUrl!)}
+                                                className="text-[8px] font-bold px-1.5 py-0.2 bg-amber-500/20 text-amber-300 rounded hover:bg-amber-500/30 cursor-pointer"
+                                                title="Uji akses CSV"
+                                              >
+                                                Uji
+                                              </button>
+                                              <a href={proj.resumePublicCsvUrl} target="_blank" rel="noopener noreferrer" className="text-amber-400">
+                                                <ExternalLink className="w-2.5 h-2.5" />
+                                              </a>
+                                            </div>
+                                          ) : (
+                                            <span className="text-slate-600 italic">Belum diisi</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* 3. File Surat Instansi */}
+                                    <div className="p-2.5 bg-slate-950/70 rounded-xl border border-white/5 space-y-1.5 flex flex-col justify-between">
+                                      <div className="space-y-1">
+                                        <div className="flex items-center justify-between font-bold">
+                                          <span className="text-slate-200 flex items-center gap-1">
+                                            <Mail className="w-3.5 h-3.5 text-sky-400" />
+                                            3. Surat Instansi
+                                          </span>
+                                          <span className={`text-[8px] font-mono font-bold px-1 py-0.2 rounded ${
+                                            proj.agencyLetterSpreadsheetId ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'
+                                          }`}>
+                                            {proj.agencyLetterSpreadsheetId ? '✓ Ready' : 'Belum Ada'}
+                                          </span>
+                                        </div>
+                                        <p className="text-[9px] text-slate-400">13 Kolom Administrasi</p>
+                                        {proj.agencyLetterSpreadsheetId ? (
+                                          <div className="flex items-center justify-between gap-1 text-[9px] font-mono">
+                                            <span className="text-sky-300 truncate max-w-[120px]" title={proj.agencyLetterSpreadsheetId}>{proj.agencyLetterSpreadsheetId}</span>
+                                            <a
+                                              href={`https://docs.google.com/spreadsheets/d/${proj.agencyLetterSpreadsheetId}/edit`}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="text-sky-400 hover:text-sky-300 shrink-0"
+                                              title="Buka di Google Sheets"
+                                            >
+                                              <ExternalLink className="w-3 h-3" />
+                                            </a>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            disabled={isAutoCreatingSheet}
+                                            onClick={() => handleAutoCreateAgencyLetterSpreadsheetForProject(proj)}
+                                            className="text-[9px] font-bold text-sky-400 hover:text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 px-2 py-0.5 rounded border border-sky-500/20 cursor-pointer flex items-center gap-1 w-full justify-center"
+                                          >
+                                            <Sparkles className="w-2.5 h-2.5" />
+                                            Buat File (13 Kolom)
+                                          </button>
+                                        )}
+                                      </div>
+                                      <div className="pt-1.5 border-t border-white/5 space-y-1">
+                                        <div className="flex items-center justify-between text-[9px]">
+                                          <span className="text-slate-400">Tautan CSV:</span>
+                                          {proj.agencyLetterPublicCsvUrl ? (
+                                            <div className="flex items-center gap-1">
+                                              <button
+                                                type="button"
+                                                onClick={() => handleTestPublicCsv(proj.agencyLetterPublicCsvUrl!)}
+                                                className="text-[8px] font-bold px-1.5 py-0.2 bg-sky-500/20 text-sky-300 rounded hover:bg-sky-500/30 cursor-pointer"
+                                                title="Uji akses CSV"
+                                              >
+                                                Uji
+                                              </button>
+                                              <a href={proj.agencyLetterPublicCsvUrl} target="_blank" rel="noopener noreferrer" className="text-sky-400">
+                                                <ExternalLink className="w-2.5 h-2.5" />
+                                              </a>
+                                            </div>
+                                          ) : (
+                                            <span className="text-slate-600 italic">Belum diisi</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Folder IDs info */}
+                                  {(proj.folderId || proj.uploadsFolderId) && (
+                                    <div className="text-[9px] font-mono text-slate-500 flex flex-wrap gap-x-4 gap-y-1 pt-1 border-t border-white/5">
+                                      {proj.folderId && <span>Folder Drive: <span className="text-slate-300 select-all">{proj.folderId}</span></span>}
+                                      {proj.uploadsFolderId && <span>Folder PDF: <span className="text-slate-300 select-all">{proj.uploadsFolderId}</span></span>}
+                                    </div>
+                                  )}
+
+                                  {/* Action Buttons Footer */}
+                                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/5">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      {activeProjectId === proj.id ? (
+                                        <span className="text-[11px] font-extrabold text-amber-400 bg-amber-500/15 px-2.5 py-1 rounded-lg border border-amber-500/25 flex items-center gap-1">
+                                          <CheckCircle2 className="w-3.5 h-3.5" />
+                                          Jalur Aktif
+                                        </span>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleSwitchProject(proj.id)}
+                                          className="text-xs font-bold text-slate-200 hover:text-white px-2.5 py-1 bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 transition-all cursor-pointer"
+                                          title="Jadikan jalur ini sebagai proyek aktif"
+                                        >
+                                          Buka Jalur Ini
+                                        </button>
+                                      )}
+
+                                      {/* Tombol Buat Lengkap 3 Spreadsheet sekaligus jika ada yang belum dibuat */}
+                                      {(!proj.spreadsheetId || !proj.resumeSpreadsheetId || !proj.agencyLetterSpreadsheetId) && (
+                                        <button
+                                          type="button"
+                                          disabled={isAutoCreatingSheet}
+                                          onClick={() => handleAutoCreateAllSpreadsheetsForProject(proj)}
+                                          className="text-[11px] font-bold text-emerald-300 hover:text-emerald-200 px-2.5 py-1 bg-emerald-500/15 hover:bg-emerald-500/25 rounded-lg border border-emerald-500/30 transition-all cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                                          title="Buat Folder Drive dan 3 Spreadsheet (Lahan, Resume, Surat) sekaligus dengan 1 klik"
+                                        >
+                                          <Sparkles className={`w-3.5 h-3.5 ${isAutoCreatingSheet ? 'animate-spin' : 'text-emerald-400'}`} />
+                                          Buat 3 Spreadsheet Lengkap
+                                        </button>
+                                      )}
+
+                                      {/* Unduh Template Dropdown / Buttons */}
+                                      <div className="flex items-center gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => downloadSheetHeaderTemplate('xlsx', proj.name)}
+                                          className="text-[10px] font-bold text-slate-300 hover:text-white px-2 py-1 bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 transition-all cursor-pointer flex items-center gap-1"
+                                          title="Unduh Template Excel Data Lahan (267 Kolom)"
+                                        >
+                                          <Download className="w-3 h-3 text-emerald-400" />
+                                          Excel Lahan
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => downloadResumeHeaderTemplate('xlsx', proj.name)}
+                                          className="text-[10px] font-bold text-slate-300 hover:text-white px-2 py-1 bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 transition-all cursor-pointer flex items-center gap-1"
+                                          title="Unduh Template Excel Resume Proyek (36 Kolom)"
+                                        >
+                                          <Download className="w-3 h-3 text-amber-400" />
+                                          Excel Resume
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => downloadAgencyLetterHeaderTemplate('xlsx', proj.name)}
+                                          className="text-[10px] font-bold text-slate-300 hover:text-white px-2 py-1 bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 transition-all cursor-pointer flex items-center gap-1"
+                                          title="Unduh Template Excel Surat Instansi (13 Kolom)"
+                                        >
+                                          <Download className="w-3 h-3 text-sky-400" />
+                                          Excel Surat
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-1.5">
                                       <button
                                         type="button"
-                                        onClick={() => handleSwitchProject(proj.id)}
-                                        className="text-xs font-bold text-slate-200 hover:text-white px-2.5 py-1 bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 transition-all cursor-pointer"
-                                        title="Jadikan jalur ini sebagai proyek aktif"
+                                        onClick={() => startEditingProject(proj)}
+                                        className="text-amber-400 hover:text-amber-300 text-xs font-bold px-2.5 py-1 bg-amber-500/10 rounded-lg cursor-pointer border border-amber-500/15 hover:bg-amber-500/20 transition-all flex items-center gap-1"
+                                        title="Edit Manual 3 ID Spreadsheet, 3 Link CSV, & Folder"
                                       >
-                                        Buka Jalur Ini
+                                        <Settings className="w-3.5 h-3.5" />
+                                        Edit ID
                                       </button>
-                                    )}
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        if (activeProjectId !== proj.id) {
-                                          handleSwitchProject(proj.id);
-                                        }
-                                        handleLoadDemoData(proj.id);
-                                      }}
-                                      className="text-[11px] font-bold text-amber-300 hover:text-amber-200 px-2 py-1 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg border border-amber-500/20 transition-all cursor-pointer flex items-center gap-1"
-                                      title="Muat data dummy contoh pada jalur ini untuk pengujian"
-                                    >
-                                      <Sparkles className="w-3 h-3" />
-                                      Isi Demo
-                                    </button>
-                                  </div>
-
-                                  <div className="flex items-center gap-1.5">
-                                    <button
-                                      type="button"
-                                      onClick={() => startEditingProject(proj)}
-                                      className="text-amber-400 hover:text-amber-300 text-xs font-bold px-2.5 py-1 bg-amber-500/10 rounded-lg cursor-pointer border border-amber-500/15 hover:bg-amber-500/20 transition-all flex items-center gap-1"
-                                      title="Edit Manual ID Spreadsheet & Folder"
-                                    >
-                                      <Settings className="w-3.5 h-3.5" />
-                                      Edit ID
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteProject(proj.id)}
-                                      className="text-rose-400 hover:text-rose-300 text-xs font-bold px-2.5 py-1 bg-rose-500/10 rounded-lg cursor-pointer border border-rose-500/15 hover:bg-rose-500/20 transition-all"
-                                    >
-                                      Hapus
-                                    </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteProject(proj.id)}
+                                        className="text-rose-400 hover:text-rose-300 text-xs font-bold px-2.5 py-1 bg-rose-500/10 rounded-lg cursor-pointer border border-rose-500/15 hover:bg-rose-500/20 transition-all"
+                                      >
+                                        Hapus
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                            ))}
-                          </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
 
                         {/* Tambah Jalur Kompensasi Baru Form */}
@@ -4328,7 +5444,7 @@ export default function App() {
                             <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
                               <div className="flex items-center gap-1.5 text-amber-300 text-xs font-bold uppercase tracking-wider">
                                 <Plus className="w-4 h-4 text-amber-400" />
-                                Tambah Jalur Kompensasi Baru
+                                Tambah Jalur Kompensasi Baru (3 Spreadsheet & Folder)
                               </div>
                               <button
                                 onClick={() => setIsAddingProject(false)}
@@ -4338,9 +5454,9 @@ export default function App() {
                               </button>
                             </div>
                             <p className="text-xs text-slate-400 leading-normal">
-                              Masukkan nama jalur baru. Jika Anda membiarkan kolom ID Spreadsheet/Folder kosong, sistem akan otomatis membuatnya di Google Drive Anda (memerlukan masuk akun Google). Atau Anda dapat menempelkan ID yang sudah ada langsung di bawah ini.
+                              Masukkan nama jalur baru. Jika Anda membiarkan kolom ID Spreadsheet kosong, sistem dapat otomatis membuatnya di Google Drive Anda (memerlukan masuk akun Google).
                             </p>
-                            <form onSubmit={handleAddProject} className="space-y-3 mt-2">
+                            <form onSubmit={handleAddProject} className="space-y-4 mt-2">
                               <div>
                                 <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Nama Jalur Kompensasi (Wajib)</label>
                                 <input
@@ -4353,29 +5469,97 @@ export default function App() {
                                 />
                               </div>
 
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">ID Google Spreadsheet (Opsional)</label>
-                                  <input
-                                    type="text"
-                                    value={newProjectSpreadsheetId}
-                                    onChange={(e) => setNewProjectSpreadsheetId(e.target.value)}
-                                    placeholder="ID Spreadsheet (Contoh: 1aBcDe...)"
-                                    className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Tautan Publik CSV Google Sheet (Opsional)</label>
-                                  <input
-                                    type="text"
-                                    value={newProjectPublicCsvUrl}
-                                    onChange={(e) => setNewProjectPublicCsvUrl(e.target.value)}
-                                    placeholder="Contoh: https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
-                                    className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
-                                  />
+                              {/* 1. File Data Lahan */}
+                              <div className="p-3.5 bg-slate-950/70 rounded-xl border border-emerald-500/20 space-y-2.5">
+                                <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5 uppercase">
+                                  <FileSpreadsheet className="w-4 h-4" />
+                                  1. File Spreadsheet Data Lahan (267 Kolom)
+                                </span>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">ID Google Spreadsheet Lahan</label>
+                                    <input
+                                      type="text"
+                                      value={newProjectSpreadsheetId}
+                                      onChange={(e) => setNewProjectSpreadsheetId(e.target.value)}
+                                      placeholder="ID Spreadsheet Lahan (Kosongkan jika ingin auto-create)"
+                                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Tautan Web CSV Lahan (Tamu)</label>
+                                    <input
+                                      type="text"
+                                      value={newProjectPublicCsvUrl}
+                                      onChange={(e) => setNewProjectPublicCsvUrl(e.target.value)}
+                                      placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
+                                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                    />
+                                  </div>
                                 </div>
                               </div>
 
+                              {/* 2. File Resume Project */}
+                              <div className="p-3.5 bg-slate-950/70 rounded-xl border border-amber-500/20 space-y-2.5">
+                                <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5 uppercase">
+                                  <Layers className="w-4 h-4" />
+                                  2. File Spreadsheet Resume Proyek (36 Kolom)
+                                </span>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">ID Google Spreadsheet Resume</label>
+                                    <input
+                                      type="text"
+                                      value={newProjectResumeSpreadsheetId}
+                                      onChange={(e) => setNewProjectResumeSpreadsheetId(e.target.value)}
+                                      placeholder="ID Spreadsheet Resume (Kosongkan jika ingin auto-create)"
+                                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Tautan Web CSV Resume (Tamu)</label>
+                                    <input
+                                      type="text"
+                                      value={newProjectResumePublicCsvUrl}
+                                      onChange={(e) => setNewProjectResumePublicCsvUrl(e.target.value)}
+                                      placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
+                                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* 3. File Surat Instansi */}
+                              <div className="p-3.5 bg-slate-950/70 rounded-xl border border-sky-500/20 space-y-2.5">
+                                <span className="text-xs font-bold text-sky-400 flex items-center gap-1.5 uppercase">
+                                  <Mail className="w-4 h-4" />
+                                  3. File Spreadsheet Surat Instansi (13 Kolom)
+                                </span>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">ID Google Spreadsheet Surat</label>
+                                    <input
+                                      type="text"
+                                      value={newProjectAgencyLetterSpreadsheetId}
+                                      onChange={(e) => setNewProjectAgencyLetterSpreadsheetId(e.target.value)}
+                                      placeholder="ID Spreadsheet Surat (Kosongkan jika ingin auto-create)"
+                                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Tautan Web CSV Surat (Tamu)</label>
+                                    <input
+                                      type="text"
+                                      value={newProjectAgencyLetterPublicCsvUrl}
+                                      onChange={(e) => setNewProjectAgencyLetterPublicCsvUrl(e.target.value)}
+                                      placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
+                                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Folder Drive */}
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <div>
                                   <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">ID Folder Utama Drive (Opsional)</label>
@@ -4405,10 +5589,14 @@ export default function App() {
                                   onClick={() => {
                                     setIsAddingProject(false);
                                     setNewProjectName('');
-                                    setNewProjectSpreadsheetId('');
                                     setNewProjectFolderId('');
                                     setNewProjectUploadsFolderId('');
+                                    setNewProjectSpreadsheetId('');
                                     setNewProjectPublicCsvUrl('');
+                                    setNewProjectResumeSpreadsheetId('');
+                                    setNewProjectResumePublicCsvUrl('');
+                                    setNewProjectAgencyLetterSpreadsheetId('');
+                                    setNewProjectAgencyLetterPublicCsvUrl('');
                                   }}
                                   className="px-4 py-2 bg-slate-900 hover:bg-slate-950 text-slate-300 text-xs font-bold rounded-xl border border-white/10 cursor-pointer"
                                 >
@@ -4425,12 +5613,12 @@ export default function App() {
                           </div>
                         )}
 
-                        {/* Manual IDs editor section */}
+                        {/* Manual IDs editor section for 3 Spreadsheets */}
                         {editingProjectId && (
                           <form onSubmit={handleSaveProjectIDs} className="glass-card p-6 rounded-2xl border border-amber-500/30 shadow-xl space-y-4 animate-fadeIn">
                             <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
                               <span className="text-[11px] font-extrabold text-amber-300 uppercase tracking-wider block">
-                                Edit ID Google Drive & Sheets untuk Jalur:
+                                Edit 3 ID Spreadsheet, Tautan CSV & Folder:
                               </span>
                               <button 
                                 type="button"
@@ -4445,30 +5633,143 @@ export default function App() {
                             </p>
                             
                             <div className="space-y-4">
-                              <div>
-                                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Google Spreadsheet ID</label>
-                                <input
-                                  type="text"
-                                  required
-                                  value={editSpreadsheetId}
-                                  onChange={(e) => setEditSpreadsheetId(e.target.value)}
-                                  placeholder="Contoh: 1aBcDeFgH123456789..."
-                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-amber-500"
-                                />
-                                <span className="text-[9px] text-slate-500 leading-none mt-1 block">ID dari URL spreadsheet: https://docs.google.com/spreadsheets/d/<span className="font-bold text-slate-400">SPREADSHEET_ID</span>/edit</span>
+                              {/* File 1: Data Lahan */}
+                              <div className="p-3.5 bg-slate-950/70 rounded-xl border border-emerald-500/20 space-y-2.5">
+                                <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5 uppercase">
+                                  <FileSpreadsheet className="w-4 h-4" />
+                                  1. Google Spreadsheet Data Lahan (267 Kolom)
+                                </span>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">ID Spreadsheet Lahan</label>
+                                    <input
+                                      type="text"
+                                      value={editSpreadsheetId}
+                                      onChange={(e) => setEditSpreadsheetId(e.target.value)}
+                                      placeholder="Contoh: 1aBcDeFgH123456789..."
+                                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-emerald-500"
+                                    />
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center justify-between mb-1">
+                                      <label className="text-[10px] font-bold text-slate-400 uppercase">Tautan Publik CSV Lahan</label>
+                                      {editPublicCsvUrl && (
+                                        <button
+                                          type="button"
+                                          disabled={isTestingCsv}
+                                          onClick={() => handleTestPublicCsv(editPublicCsvUrl)}
+                                          className="text-[9px] font-bold text-emerald-400 hover:text-emerald-300"
+                                        >
+                                          Uji CSV
+                                        </button>
+                                      )}
+                                    </div>
+                                    <input
+                                      type="text"
+                                      value={editPublicCsvUrl}
+                                      onChange={(e) => setEditPublicCsvUrl(e.target.value)}
+                                      placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
+                                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-emerald-500"
+                                    />
+                                  </div>
+                                </div>
                               </div>
 
-                              <div>
-                                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Tautan Publik CSV Google Sheet (Untuk Mode Tamu)</label>
-                                <input
-                                  type="text"
-                                  value={editPublicCsvUrl}
-                                  onChange={(e) => setEditPublicCsvUrl(e.target.value)}
-                                  placeholder="Contoh: https://docs.google.com/spreadsheets/d/e/2PACX-.../pub?output=csv"
-                                  className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-amber-500"
-                                />
-                                <span className="text-[9px] text-slate-500 leading-none block mt-1">Cara mendapatkan: Di Google Sheet, klik <strong>File ➔ Bagikan ➔ Publikasikan ke Web</strong>, pilih format <strong>Nilai Terpisah Koma (.csv)</strong>, klik Publikasikan, lalu salin tautannya.</span>
+                              {/* File 2: Resume Project */}
+                              <div className="p-3.5 bg-slate-950/70 rounded-xl border border-amber-500/20 space-y-2.5">
+                                <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5 uppercase">
+                                  <Layers className="w-4 h-4" />
+                                  2. Google Spreadsheet Resume Proyek (36 Kolom)
+                                </span>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">ID Spreadsheet Resume</label>
+                                    <input
+                                      type="text"
+                                      value={editResumeSpreadsheetId}
+                                      onChange={(e) => setEditResumeSpreadsheetId(e.target.value)}
+                                      placeholder="Contoh: 1XyZ..."
+                                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-amber-500"
+                                    />
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center justify-between mb-1">
+                                      <label className="text-[10px] font-bold text-slate-400 uppercase">Tautan Publik CSV Resume</label>
+                                      {editResumePublicCsvUrl && (
+                                        <button
+                                          type="button"
+                                          disabled={isTestingCsv}
+                                          onClick={() => handleTestPublicCsv(editResumePublicCsvUrl)}
+                                          className="text-[9px] font-bold text-amber-400 hover:text-amber-300"
+                                        >
+                                          Uji CSV
+                                        </button>
+                                      )}
+                                    </div>
+                                    <input
+                                      type="text"
+                                      value={editResumePublicCsvUrl}
+                                      onChange={(e) => setEditResumePublicCsvUrl(e.target.value)}
+                                      placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
+                                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-amber-500"
+                                    />
+                                  </div>
+                                </div>
                               </div>
+
+                              {/* File 3: Surat Instansi */}
+                              <div className="p-3.5 bg-slate-950/70 rounded-xl border border-sky-500/20 space-y-2.5">
+                                <span className="text-xs font-bold text-sky-400 flex items-center gap-1.5 uppercase">
+                                  <Mail className="w-4 h-4" />
+                                  3. Google Spreadsheet Surat Instansi (13 Kolom)
+                                </span>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">ID Spreadsheet Surat</label>
+                                    <input
+                                      type="text"
+                                      value={editAgencyLetterSpreadsheetId}
+                                      onChange={(e) => setEditAgencyLetterSpreadsheetId(e.target.value)}
+                                      placeholder="Contoh: 1AbC..."
+                                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-sky-500"
+                                    />
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center justify-between mb-1">
+                                      <label className="text-[10px] font-bold text-slate-400 uppercase">Tautan Publik CSV Surat</label>
+                                      {editAgencyLetterPublicCsvUrl && (
+                                        <button
+                                          type="button"
+                                          disabled={isTestingCsv}
+                                          onClick={() => handleTestPublicCsv(editAgencyLetterPublicCsvUrl)}
+                                          className="text-[9px] font-bold text-sky-400 hover:text-sky-300"
+                                        >
+                                          Uji CSV
+                                        </button>
+                                      )}
+                                    </div>
+                                    <input
+                                      type="text"
+                                      value={editAgencyLetterPublicCsvUrl}
+                                      onChange={(e) => setEditAgencyLetterPublicCsvUrl(e.target.value)}
+                                      placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
+                                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-sky-500"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Feedback message */}
+                              {csvTestFeedback && (
+                                <div className={`p-2.5 rounded-xl border text-xs flex items-center gap-2 ${
+                                  csvTestFeedback.success 
+                                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' 
+                                    : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                                }`}>
+                                  {csvTestFeedback.success ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+                                  <span>{csvTestFeedback.message}</span>
+                                </div>
+                              )}
                               
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
@@ -4506,7 +5807,7 @@ export default function App() {
                                 type="submit"
                                 className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md"
                               >
-                                Simpan ID & Sinkronkan
+                                Simpan 3 Spreadsheet ID & Sinkronkan
                               </button>
                             </div>
                           </form>
@@ -4682,7 +5983,11 @@ export default function App() {
                                       if (editingStagesProjectId) {
                                         await handleUpdateProjectStages(editingStagesProjectId, tempProjectStages);
                                         setEditingStagesProjectId(null);
-                                        alert("Pengaturan poin tahapan resume proyek berhasil disimpan dan disinkronkan ke Cloud!");
+                                        setSyncFeedback({
+                                          type: 'success',
+                                          message: 'Pengaturan poin tahapan resume proyek berhasil disimpan dan disinkronkan ke Cloud!',
+                                          timestamp: Date.now()
+                                        });
                                       }
                                     }}
                                     className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs font-black shadow-lg shadow-amber-600/20 cursor-pointer flex items-center gap-2"
@@ -5587,6 +6892,14 @@ export default function App() {
         onClose={() => setIsTutorialModalOpen(false)}
         activeProject={projects.find(p => p.id === activeProjectId)}
         userRole={role}
+      />
+
+      {/* CSV Web Publish Guide & 267 Headers Template Modal */}
+      <CsvPublishGuideModal
+        isOpen={isCsvGuideModalOpen}
+        onClose={() => setIsCsvGuideModalOpen(false)}
+        activeSpreadsheetId={projects.find(p => p.id === activeProjectId)?.spreadsheetId}
+        activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
       />
     </div>
   );

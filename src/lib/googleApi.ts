@@ -1,4 +1,13 @@
-import { type LandRecord, type DataIntegrityLog, getSheetHeaders, recordToRow, rowToRecord } from '../types';
+import { 
+  type LandRecord, 
+  type DataIntegrityLog, 
+  type VillageResume, 
+  type AgencyLetter, 
+  getSheetHeaders, 
+  getAgencyLetterSheetHeaders, 
+  recordToRow, 
+  rowToRecord 
+} from '../types';
 
 // Constants
 export const SPREADSHEET_NAME = "Data_Pertanahan_Desa_SIP";
@@ -789,3 +798,876 @@ export async function deleteSpreadsheetRow(
     return false;
   }
 }
+
+// ----------------- RESUME PROYEK 1 WORKBOOK (GOOGLE SHEETS) -----------------
+
+export const RESUME_SHEET_TAB_NAME = "RESUME_SEMUA_JALUR";
+
+export const RESUME_SHEET_HEADERS = [
+  "ID_RESUME",
+  "ID_JALUR",
+  "NAMA_JALUR",
+  "DESA",
+  "KECAMATAN",
+  "KABUPATEN",
+  "TOTAL_BIDANG",
+  "TOTAL_LUAS_M2",
+  "PROGRES_PERSEN",
+  "STATUS_PENDAHULUAN",
+  "TGL_PENDAHULUAN",
+  "LINK_DRIVE_PENDAHULUAN",
+  "CATATAN_PENDAHULUAN",
+  "STATUS_PENGUMUMAN_INV",
+  "TGL_PENGUMUMAN_INV",
+  "LINK_DRIVE_PENGUMUMAN_INV",
+  "CATATAN_PENGUMUMAN_INV",
+  "STATUS_BAPT_REGISTER",
+  "TGL_BAPT_REGISTER",
+  "LINK_DRIVE_BAPT_REGISTER",
+  "CATATAN_BAPT_REGISTER",
+  "STATUS_PENYAMPAIAN_NILAI",
+  "TGL_PENYAMPAIAN_NILAI",
+  "LINK_DRIVE_PENYAMPAIAN_NILAI",
+  "CATATAN_PENYAMPAIAN_NILAI",
+  "STATUS_PEMBAYARAN_KOMP",
+  "TGL_PEMBAYARAN_KOMP",
+  "LINK_DRIVE_PEMBAYARAN_KOMP",
+  "CATATAN_PEMBAYARAN_KOMP",
+  "STATUS_BUSH_CLEARING",
+  "TGL_BUSH_CLEARING",
+  "LINK_DRIVE_BUSH_CLEARING",
+  "CATATAN_BUSH_CLEARING",
+  "LINK_FOLDER_DESA_DRIVE",
+  "TERAKHIR_DIPERBARUI",
+  "OPERATOR"
+];
+
+/**
+ * Creates a brand new dedicated Google Spreadsheet for Project Resumes with all 36 headers
+ */
+export async function createDedicatedResumeSpreadsheet(
+  accessToken: string,
+  projectName: string,
+  folderId?: string | null
+): Promise<{ spreadsheetId: string; spreadsheetUrl: string }> {
+  const cleanName = projectName.replace(/[\/\\?%*:|"<>]/g, '_');
+  const title = `RESUME_PROYEK_${cleanName}`;
+
+  const createRes = await fetchWithTimeout(
+    'https://sheets.googleapis.com/v4/spreadsheets',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        properties: {
+          title
+        },
+        sheets: [
+          {
+            properties: {
+              title: RESUME_SHEET_TAB_NAME,
+              gridProperties: {
+                frozenRowCount: 1
+              },
+              tabColor: { red: 0.95, green: 0.6, blue: 0.1 }
+            }
+          }
+        ]
+      })
+    },
+    20000
+  );
+
+  if (!createRes.ok) {
+    const errText = await createRes.text();
+    throw new Error(`Gagal membuat Spreadsheet: ${errText}`);
+  }
+
+  const data = await createRes.json();
+  const spreadsheetId = data.spreadsheetId;
+  const spreadsheetUrl = data.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+
+  // Write the 36 headers to row 1
+  await fetchWithTimeout(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'${encodeURIComponent(RESUME_SHEET_TAB_NAME)}'!A1?valueInputOption=USER_ENTERED`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        values: [RESUME_SHEET_HEADERS]
+      })
+    },
+    15000
+  );
+
+  // If folderId is provided, move file into folder
+  if (folderId && folderId !== 'guest_bypass') {
+    try {
+      await fetchWithTimeout(
+        `https://www.googleapis.com/drive/v3/files/${spreadsheetId}?addParents=${folderId}&fields=id,parents`,
+        {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${accessToken}`
+          }
+        },
+        10000
+      );
+    } catch (moveErr) {
+      console.warn("Unable to move resume spreadsheet into folder:", moveErr);
+    }
+  }
+
+  return { spreadsheetId, spreadsheetUrl };
+}
+
+export const AGENCY_LETTER_SHEET_TAB_NAME = "SURAT_INSTANSI";
+
+/**
+ * Creates a brand new dedicated Google Spreadsheet for Agency Letters with all 13 headers (File 3)
+ */
+export async function createDedicatedAgencyLetterSpreadsheet(
+  accessToken: string,
+  projectName: string,
+  folderId?: string | null
+): Promise<{ spreadsheetId: string; spreadsheetUrl: string }> {
+  const cleanName = projectName.replace(/[\/\\?%*:|"<>]/g, '_');
+  const title = `SURAT_INSTANSI_${cleanName}`;
+  const headers = getAgencyLetterSheetHeaders();
+
+  const createRes = await fetchWithTimeout(
+    'https://sheets.googleapis.com/v4/spreadsheets',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        properties: {
+          title
+        },
+        sheets: [
+          {
+            properties: {
+              title: AGENCY_LETTER_SHEET_TAB_NAME,
+              gridProperties: {
+                frozenRowCount: 1
+              },
+              tabColor: { red: 0.15, green: 0.55, blue: 0.95 }
+            }
+          }
+        ]
+      })
+    },
+    20000
+  );
+
+  if (!createRes.ok) {
+    const errText = await createRes.text();
+    throw new Error(`Gagal membuat Spreadsheet Surat Instansi: ${errText}`);
+  }
+
+  const data = await createRes.json();
+  const spreadsheetId = data.spreadsheetId;
+  const spreadsheetUrl = data.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+
+  // Write the 13 headers to row 1
+  await fetchWithTimeout(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'${encodeURIComponent(AGENCY_LETTER_SHEET_TAB_NAME)}'!A1?valueInputOption=USER_ENTERED`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        values: [headers]
+      })
+    },
+    15000
+  );
+
+  // If folderId is provided, move file into folder
+  if (folderId && folderId !== 'guest_bypass') {
+    try {
+      await fetchWithTimeout(
+        `https://www.googleapis.com/drive/v3/files/${spreadsheetId}?addParents=${folderId}&fields=id,parents`,
+        {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${accessToken}`
+          }
+        },
+        10000
+      );
+    } catch (moveErr) {
+      console.warn("Unable to move agency letter spreadsheet into folder:", moveErr);
+    }
+  }
+
+  return { spreadsheetId, spreadsheetUrl };
+}
+
+/**
+ * Ensures that the RESUME_SEMUA_JALUR tab exists in the active Google Sheets workbook.
+ */
+export async function ensureResumeSheetTab(accessToken: string, spreadsheetId: string): Promise<boolean> {
+  try {
+    const metaRes = await fetchWithTimeout(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties.title`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      12000
+    );
+    if (!metaRes.ok) return false;
+    const metaData = await metaRes.json();
+    const sheets: any[] = metaData.sheets || [];
+    const exists = sheets.some((s: any) => s.properties?.title === RESUME_SHEET_TAB_NAME);
+
+    if (!exists) {
+      // Create new tab inside the same workbook
+      const addSheetRes = await fetchWithTimeout(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            requests: [
+              {
+                addSheet: {
+                  properties: {
+                    title: RESUME_SHEET_TAB_NAME,
+                    tabColor: { red: 0.95, green: 0.6, blue: 0.1 }
+                  }
+                }
+              }
+            ]
+          })
+        },
+        15000
+      );
+      if (!addSheetRes.ok) return false;
+
+      // Write column headers
+      await fetchWithTimeout(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'${encodeURIComponent(RESUME_SHEET_TAB_NAME)}'!A1?valueInputOption=USER_ENTERED`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            values: [RESUME_SHEET_HEADERS]
+          })
+        },
+        15000
+      );
+    }
+    return true;
+  } catch (err) {
+    console.warn("ensureResumeSheetTab error:", err);
+    return false;
+  }
+}
+
+/**
+ * Maps a VillageResume object to an array of cell values for Google Sheets.
+ */
+export function villageResumeToSheetRow(
+  resume: VillageResume, 
+  projectName: string, 
+  totalBidang = 0, 
+  totalLuas = 0,
+  progressPct = 0
+): any[] {
+  return [
+    resume.id,
+    resume.projectId,
+    projectName,
+    resume.desaName,
+    resume.kecamatan || '',
+    resume.kabupaten || '',
+    totalBidang > 0 ? totalBidang : '',
+    totalLuas > 0 ? totalLuas : '',
+    `${progressPct}%`,
+    resume.baSosialisasiAwal?.status || 'BELUM',
+    resume.baSosialisasiAwal?.date || '',
+    resume.baSosialisasiAwal?.pdfUrl || '',
+    resume.baSosialisasiAwal?.notes || '',
+    resume.baPengumuman?.status || 'BELUM',
+    resume.baPengumuman?.date || '',
+    resume.baPengumuman?.pdfUrl || '',
+    resume.baPengumuman?.notes || '',
+    resume.lampiranBapt?.status || 'BELUM',
+    resume.lampiranBapt?.date || '',
+    resume.lampiranBapt?.pdfUrl || '',
+    resume.lampiranBapt?.notes || '',
+    resume.baPenyampaianNilai?.status || 'BELUM',
+    resume.baPenyampaianNilai?.date || '',
+    resume.baPenyampaianNilai?.pdfUrl || '',
+    resume.baPenyampaianNilai?.notes || '',
+    resume.baSerahTerimaRekening?.status || 'BELUM',
+    resume.baSerahTerimaRekening?.date || '',
+    resume.baSerahTerimaRekening?.pdfUrl || '',
+    resume.baSerahTerimaRekening?.notes || '',
+    resume.bushClearing?.status || 'BELUM',
+    resume.bushClearing?.date || '',
+    resume.bushClearing?.pdfUrl || (resume.bushClearing?.docPhotos?.[0] || ''),
+    resume.bushClearing?.notes || '',
+    resume.driveFolderId ? `https://drive.google.com/drive/folders/${resume.driveFolderId}` : '',
+    new Date(resume.lastUpdated || Date.now()).toLocaleString('id-ID'),
+    resume.updatedBy || 'Operator'
+  ];
+}
+
+/**
+ * Maps a row from Google Sheets back into a VillageResume object.
+ */
+export function sheetRowToVillageResume(row: any[]): VillageResume {
+  const id = row[0] || '';
+  const projectId = row[1] || 'proj-1';
+  const desaName = row[3] || '';
+  const kecamatan = row[4] || '';
+  const kabupaten = row[5] || '';
+
+  return {
+    id: id || `${projectId}_${desaName.toUpperCase().replace(/[^a-zA-Z0-9]/g, '_')}`,
+    projectId,
+    desaName: desaName.toUpperCase(),
+    kecamatan,
+    kabupaten,
+    baSosialisasiAwal: {
+      status: (row[9] as any) || 'BELUM',
+      date: row[10] || '',
+      pdfUrl: row[11] || undefined,
+      notes: row[12] || '',
+      docPhotos: []
+    },
+    baPengumuman: {
+      status: (row[13] as any) || 'BELUM',
+      date: row[14] || '',
+      pdfUrl: row[15] || undefined,
+      notes: row[16] || '',
+      docPhotos: []
+    },
+    lampiranBapt: {
+      status: (row[17] as any) || 'BELUM',
+      date: row[18] || '',
+      pdfUrl: row[19] || undefined,
+      notes: row[20] || '',
+      docPhotos: []
+    },
+    baPenyampaianNilai: {
+      status: (row[21] as any) || 'BELUM',
+      date: row[22] || '',
+      pdfUrl: row[23] || undefined,
+      notes: row[24] || '',
+      docPhotos: []
+    },
+    baSerahTerimaRekening: {
+      status: (row[25] as any) || 'BELUM',
+      date: row[26] || '',
+      pdfUrl: row[27] || undefined,
+      notes: row[28] || '',
+      docPhotos: []
+    },
+    bushClearing: {
+      status: (row[29] as any) || 'BELUM',
+      date: row[30] || '',
+      pdfUrl: row[31] || undefined,
+      notes: row[32] || '',
+      docPhotos: []
+    },
+    lastUpdated: Date.now(),
+    updatedBy: row[35] || 'Google Sheet'
+  };
+}
+
+/**
+ * Fetches all village resumes from the Google Sheets workbook tab RESUME_SEMUA_JALUR.
+ */
+export async function fetchResumesFromGoogleSheet(
+  accessToken: string,
+  spreadsheetId: string,
+  projectId?: string
+): Promise<VillageResume[]> {
+  try {
+    const range = `'${RESUME_SHEET_TAB_NAME}'!A:ZZ`;
+    const response = await fetchWithTimeout(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueRenderOption=FORMATTED_VALUE`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      15000
+    );
+    if (!response.ok) {
+      return [];
+    }
+    const data = await response.json();
+    const rows: any[][] = data.values || [];
+    if (rows.length <= 1) return [];
+
+    const dataRows = rows.slice(1);
+    const result: VillageResume[] = [];
+    for (const r of dataRows) {
+      if (!r || r.length === 0 || !r[3]) continue;
+      if (projectId && r[1] && r[1] !== projectId) continue;
+      result.push(sheetRowToVillageResume(r));
+    }
+    return result;
+  } catch (err) {
+    console.warn("fetchResumesFromGoogleSheet error:", err);
+    return [];
+  }
+}
+
+/**
+ * Saves a single village resume row to the Google Sheets workbook tab RESUME_SEMUA_JALUR.
+ */
+export async function saveVillageResumeToSheet(
+  accessToken: string,
+  spreadsheetId: string,
+  resume: VillageResume,
+  projectName: string,
+  totalBidang = 0,
+  totalLuas = 0,
+  progressPct = 0
+): Promise<{ success: boolean; rowNumber?: number; error?: string }> {
+  try {
+    await ensureResumeSheetTab(accessToken, spreadsheetId);
+
+    // Read column A to check existing rows
+    const rangeA = `'${RESUME_SHEET_TAB_NAME}'!A:D`;
+    const checkRes = await fetchWithTimeout(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(rangeA)}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      15000
+    );
+
+    let targetRow = -1;
+    if (checkRes.ok) {
+      const checkData = await checkRes.json();
+      const existingRows: string[][] = checkData.values || [];
+      for (let i = 1; i < existingRows.length; i++) {
+        const idVal = existingRows[i]?.[0];
+        const projVal = existingRows[i]?.[1];
+        const desaVal = existingRows[i]?.[3];
+
+        if (idVal === resume.id || (projVal === resume.projectId && desaVal?.trim().toUpperCase() === resume.desaName.trim().toUpperCase())) {
+          targetRow = i + 1;
+          break;
+        }
+      }
+    }
+
+    const rowData = villageResumeToSheetRow(resume, projectName, totalBidang, totalLuas, progressPct);
+
+    if (targetRow > 1) {
+      const updateRange = `'${RESUME_SHEET_TAB_NAME}'!A${targetRow}:AJ${targetRow}`;
+      const putRes = await fetchWithTimeout(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(updateRange)}?valueInputOption=USER_ENTERED`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ values: [rowData] })
+        },
+        15000
+      );
+      if (putRes.ok) return { success: true, rowNumber: targetRow };
+    } else {
+      const appendRange = `'${RESUME_SHEET_TAB_NAME}'!A1`;
+      const postRes = await fetchWithTimeout(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(appendRange)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ values: [rowData] })
+        },
+        15000
+      );
+      if (postRes.ok) return { success: true };
+    }
+    return { success: false, error: 'Gagal memperbarui Google Sheet' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * Ensures that the SURAT_INSTANSI tab exists in the active Google Sheets workbook.
+ */
+export async function ensureAgencyLetterSheetTab(accessToken: string, spreadsheetId: string): Promise<boolean> {
+  try {
+    const metaRes = await fetchWithTimeout(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties.title`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      12000
+    );
+    if (!metaRes.ok) return false;
+    const metaData = await metaRes.json();
+    const sheets: any[] = metaData.sheets || [];
+    const exists = sheets.some((s: any) => s.properties?.title === AGENCY_LETTER_SHEET_TAB_NAME);
+
+    if (!exists) {
+      const addSheetRes = await fetchWithTimeout(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            requests: [
+              {
+                addSheet: {
+                  properties: {
+                    title: AGENCY_LETTER_SHEET_TAB_NAME,
+                    tabColor: { red: 0.15, green: 0.55, blue: 0.95 }
+                  }
+                }
+              }
+            ]
+          })
+        },
+        12000
+      );
+      if (!addSheetRes.ok) return false;
+
+      // Write headers
+      const headers = getAgencyLetterSheetHeaders();
+      await fetchWithTimeout(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'${encodeURIComponent(AGENCY_LETTER_SHEET_TAB_NAME)}'!A1?valueInputOption=USER_ENTERED`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            values: [headers]
+          })
+        },
+        12000
+      );
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function agencyLetterToSheetRow(letter: AgencyLetter, index: number = 1): any[] {
+  return [
+    index,
+    letter.id,
+    letter.instansiName,
+    letter.noSurat,
+    letter.tanggalSurat || '',
+    letter.perihal,
+    letter.status,
+    letter.catatanTindakLanjut || '',
+    letter.picInstansi || '',
+    letter.suratPdfUrl || '',
+    (letter.docPhotos && letter.docPhotos.length > 0) ? letter.docPhotos.join(' ; ') : '',
+    letter.updatedBy || 'Operator',
+    new Date(letter.updatedAt || Date.now()).toLocaleString('id-ID')
+  ];
+}
+
+export function sheetRowToAgencyLetter(row: any[], projectId: string): AgencyLetter {
+  const id = row[1] || `${projectId}_letter_${Date.now()}`;
+  const instansiName = row[2] || '';
+  const noSurat = row[3] || '';
+  const tanggalSurat = row[4] || '';
+  const perihal = row[5] || '';
+  const rawStatus = (row[6] || '').trim().toUpperCase();
+  const status = ['SUDAH_MASUK', 'ON_PROGRESS', 'TINDAK_LANJUT', 'SELESAI'].includes(rawStatus)
+    ? rawStatus as any
+    : 'SUDAH_MASUK';
+  const catatanTindakLanjut = row[7] || '';
+  const picInstansi = row[8] || '';
+  const suratPdfUrl = row[9] || undefined;
+  const rawPhotos = row[10] || '';
+  const docPhotos = typeof rawPhotos === 'string' && rawPhotos.trim()
+    ? rawPhotos.split(';').map((s: string) => s.trim()).filter(Boolean)
+    : [];
+  const updatedBy = row[11] || 'Google Sheet';
+
+  return {
+    id,
+    projectId,
+    instansiName,
+    noSurat,
+    tanggalSurat,
+    perihal,
+    status,
+    catatanTindakLanjut,
+    picInstansi,
+    suratPdfUrl,
+    docPhotos,
+    updatedBy,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+}
+
+export async function fetchAgencyLettersFromGoogleSheet(
+  accessToken: string,
+  spreadsheetId: string,
+  projectId: string
+): Promise<AgencyLetter[]> {
+  try {
+    const range = `'${AGENCY_LETTER_SHEET_TAB_NAME}'!A:M`;
+    const response = await fetchWithTimeout(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueRenderOption=FORMATTED_VALUE`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      15000
+    );
+    if (!response.ok) {
+      // Fallback: check first sheet
+      const fallbackRes = await fetchWithTimeout(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A:M?valueRenderOption=FORMATTED_VALUE`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        15000
+      );
+      if (!fallbackRes.ok) return [];
+      const fbData = await fallbackRes.json();
+      const fbRows: any[][] = fbData.values || [];
+      if (fbRows.length <= 1) return [];
+      return fbRows.slice(1).filter(r => r && r[2]).map(r => sheetRowToAgencyLetter(r, projectId));
+    }
+    const data = await response.json();
+    const rows: any[][] = data.values || [];
+    if (rows.length <= 1) return [];
+
+    return rows.slice(1).filter(r => r && r[2]).map(r => sheetRowToAgencyLetter(r, projectId));
+  } catch (err) {
+    console.warn("fetchAgencyLettersFromGoogleSheet error:", err);
+    return [];
+  }
+}
+
+export async function fetchAgencyLettersFromPublicCsv(
+  publicCsvUrl: string,
+  projectId: string
+): Promise<AgencyLetter[]> {
+  try {
+    const csvText = await fetchPublicCsvContent(publicCsvUrl);
+    const parsed = parseCSV(csvText);
+    if (parsed.length <= 1) return [];
+
+    const dataRows = parsed.slice(1);
+    return dataRows.filter(r => r && r.length > 2 && r[2]?.trim()).map(r => sheetRowToAgencyLetter(r, projectId));
+  } catch (err) {
+    console.warn("fetchAgencyLettersFromPublicCsv error:", err);
+    return [];
+  }
+}
+
+export async function saveAgencyLetterToSheet(
+  accessToken: string,
+  spreadsheetId: string,
+  letter: AgencyLetter
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await ensureAgencyLetterSheetTab(accessToken, spreadsheetId);
+
+    // Read column B (ID_SURAT)
+    const rangeB = `'${AGENCY_LETTER_SHEET_TAB_NAME}'!B:B`;
+    const checkRes = await fetchWithTimeout(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(rangeB)}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      12000
+    );
+
+    let targetRow = -1;
+    let nextIndex = 1;
+    if (checkRes.ok) {
+      const checkData = await checkRes.json();
+      const existingRows: string[][] = checkData.values || [];
+      nextIndex = Math.max(1, existingRows.length);
+      for (let i = 1; i < existingRows.length; i++) {
+        if (existingRows[i]?.[0] === letter.id) {
+          targetRow = i + 1;
+          nextIndex = i;
+          break;
+        }
+      }
+    }
+
+    const rowData = agencyLetterToSheetRow(letter, nextIndex);
+
+    if (targetRow > 1) {
+      const updateRange = `'${AGENCY_LETTER_SHEET_TAB_NAME}'!A${targetRow}:M${targetRow}`;
+      const putRes = await fetchWithTimeout(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(updateRange)}?valueInputOption=USER_ENTERED`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ values: [rowData] })
+        },
+        15000
+      );
+      if (putRes.ok) return { success: true };
+    } else {
+      const appendRange = `'${AGENCY_LETTER_SHEET_TAB_NAME}'!A1`;
+      const postRes = await fetchWithTimeout(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(appendRange)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ values: [rowData] })
+        },
+        15000
+      );
+      if (postRes.ok) return { success: true };
+    }
+    return { success: false, error: 'Gagal memperbarui Google Sheet Surat Instansi' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+// RFC-compliant CSV Parser
+export function parseCSV(text: string): string[][] {
+  const result: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let inQuotes = false;
+  
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+    
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        cell += '"';
+        i++; // skip next quote
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      row.push(cell);
+      cell = '';
+    } else if ((char === '\r' || char === '\n') && !inQuotes) {
+      if (char === '\r' && nextChar === '\n') {
+        i++; // skip \n
+      }
+      row.push(cell);
+      if (row.length > 1 || row[0] !== '') {
+        result.push(row);
+      }
+      row = [];
+      cell = '';
+    } else {
+      cell += char;
+    }
+  }
+  if (row.length > 0 || cell !== '') {
+    row.push(cell);
+    result.push(row);
+  }
+  return result;
+}
+
+// Helper to transform Google Sheets URL to direct CSV export URL
+export function formatGoogleCsvUrl(url: string): string {
+  if (!url) return url;
+  let clean = url.trim();
+  
+  // Case 1: Already has /pub?output=csv or contains output=csv
+  if (clean.includes('output=csv')) {
+    return clean;
+  }
+  
+  // Case 2: Google web pubhtml format
+  if (clean.includes('/pubhtml')) {
+    return clean.replace(/\/pubhtml.*$/, '/pub?output=csv');
+  }
+  
+  // Case 3: Google web /pub without query
+  if (clean.includes('/pub')) {
+    return clean.replace(/\/pub.*$/, '/pub?output=csv');
+  }
+  
+  // Case 4: Standard Google Sheet edit URL (convert to direct export CSV)
+  const match = clean.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (match && match[1]) {
+    const sheetId = match[1];
+    const gidMatch = clean.match(/gid=([0-9]+)/);
+    const gidParam = gidMatch ? `&gid=${gidMatch[1]}` : '';
+    return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv${gidParam}`;
+  }
+  
+  return clean;
+}
+
+// Resilient CSV fetch with timeout and multi-proxy CORS fallback
+export async function fetchPublicCsvContent(url: string): Promise<string> {
+  const formattedUrl = formatGoogleCsvUrl(url);
+  
+  // 1. Direct fetch
+  try {
+    const res = await fetchWithTimeout(formattedUrl, { mode: 'cors' }, 12000);
+    if (res.ok) {
+      const text = await res.text();
+      if (text && !text.trim().startsWith('<!DOCTYPE') && !text.trim().startsWith('<html')) {
+        return text;
+      }
+    }
+  } catch (directErr) {
+    // Ignore direct fetch error
+  }
+
+  // 2. AllOrigins proxy fallback
+  try {
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(formattedUrl)}`;
+    const res = await fetchWithTimeout(proxyUrl, {}, 12000);
+    if (res.ok) {
+      const text = await res.text();
+      if (text && !text.trim().startsWith('<!DOCTYPE') && !text.trim().startsWith('<html')) {
+        return text;
+      }
+    }
+  } catch (proxyErr) {
+    // Ignore proxy error
+  }
+
+  // 3. CodeTabs proxy fallback
+  try {
+    const proxyUrl2 = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(formattedUrl)}`;
+    const res = await fetchWithTimeout(proxyUrl2, {}, 12000);
+    if (res.ok) {
+      const text = await res.text();
+      if (text && !text.trim().startsWith('<!DOCTYPE') && !text.trim().startsWith('<html')) {
+        return text;
+      }
+    }
+  } catch (proxyErr2) {
+    // Ignore proxy error 2
+  }
+
+  throw new Error("Tautan CSV publik tidak dapat diakses atau spreadsheet belum dipublikasikan ke web. Pastikan Anda telah memilih menu File ➔ Bagikan ➔ Publikasikan ke Web (format .CSV).");
+}
+

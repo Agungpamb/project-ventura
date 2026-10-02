@@ -26,7 +26,9 @@ import {
   ArrowRight,
   Sparkles,
   ClipboardList,
-  RefreshCw
+  RefreshCw,
+  FileSpreadsheet,
+  Globe
 } from 'lucide-react';
 import type { AgencyLetter, AgencyLetterStatus } from '../types';
 import { 
@@ -36,7 +38,13 @@ import {
   subscribeAgencyLetters, 
   fileToBase64 
 } from '../lib/projectResumeStorage';
-import { uploadFileToDrive } from '../lib/googleApi';
+import { 
+  uploadFileToDrive, 
+  fetchAgencyLettersFromGoogleSheet, 
+  fetchAgencyLettersFromPublicCsv, 
+  saveAgencyLetterToSheet 
+} from '../lib/googleApi';
+import { downloadAgencyLetterHeaderTemplate } from '../lib/sheetTemplateHelper';
 
 interface SuratInstansiPanelProps {
   activeProjectId: string;
@@ -46,6 +54,9 @@ interface SuratInstansiPanelProps {
   operatorName?: string;
   accessToken?: string;
   uploadsFolderId?: string;
+  spreadsheetId?: string;
+  publicCsvUrl?: string;
+  onRefreshGoogleToken?: () => Promise<string | null>;
 }
 
 const COMMON_INSTANSI_SUGGESTIONS = [
@@ -69,13 +80,17 @@ export default function SuratInstansiPanel({
   userEmail = 'operator@ventura.id',
   operatorName = 'Operator',
   accessToken,
-  uploadsFolderId
+  uploadsFolderId,
+  spreadsheetId,
+  publicCsvUrl,
+  onRefreshGoogleToken
 }: SuratInstansiPanelProps) {
   const isGuest = role === 'GUEST';
 
   // State
   const [letters, setLetters] = useState<AgencyLetter[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | AgencyLetterStatus>('ALL');
   const [selectedInstansiFilter, setSelectedInstansiFilter] = useState<string>('ALL');
@@ -111,12 +126,87 @@ export default function SuratInstansiPanel({
     photos?: string[];
   }>({ isOpen: false, title: '' });
 
-  // Load Letters
+  // Sync from source (Google Sheets / Web CSV / Local)
+  const handleSyncFromSource = async (showToast = true) => {
+    setIsSyncing(true);
+    let synced = false;
+    try {
+      // 1. If public CSV is provided and user is GUEST (or wants live CSV sync)
+      if (publicCsvUrl && (isGuest || !accessToken || accessToken === 'GUEST_BYPASS')) {
+        const csvLetters = await fetchAgencyLettersFromPublicCsv(publicCsvUrl, activeProjectId);
+        if (csvLetters.length > 0) {
+          setLetters(csvLetters);
+          synced = true;
+          if (showToast) {
+            setActionFeedback({ type: 'success', message: `🟢 Berhasil memuat ${csvLetters.length} surat dari Tautan Web CSV Publik!` });
+            setTimeout(() => setActionFeedback(null), 3500);
+          }
+        }
+      } else if (spreadsheetId && accessToken && accessToken !== 'GUEST_BYPASS') {
+        // 2. Fetch from Google Sheets
+        const sheetLetters = await fetchAgencyLettersFromGoogleSheet(accessToken, spreadsheetId, activeProjectId);
+        if (sheetLetters.length > 0) {
+          setLetters(sheetLetters);
+          synced = true;
+          if (showToast) {
+            setActionFeedback({ type: 'success', message: `🟢 Berhasil sinkronisasi ${sheetLetters.length} surat dari Google Spreadsheet!` });
+            setTimeout(() => setActionFeedback(null), 3500);
+          }
+        }
+      }
+      
+      if (!synced) {
+        const localData = await loadAgencyLetters(activeProjectId);
+        setLetters(localData);
+        if (showToast) {
+          setActionFeedback({ type: 'success', message: `Berhasil menyinkronkan data surat (${localData.length} surat).` });
+          setTimeout(() => setActionFeedback(null), 3000);
+        }
+      }
+    } catch (err: any) {
+      console.warn("Sync agency letters error:", err);
+      if (showToast) {
+        setActionFeedback({ type: 'error', message: `Gagal sinkronisasi: ${err.message || 'Periksa koneksi internet/spreadsheet'}` });
+        setTimeout(() => setActionFeedback(null), 4000);
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Load Letters on init or project switch
   useEffect(() => {
     let unsubscribe = () => {};
     setIsLoading(true);
 
     const init = async () => {
+      // Priority 1: Public CSV for GUEST
+      if (isGuest && publicCsvUrl) {
+        try {
+          const csvData = await fetchAgencyLettersFromPublicCsv(publicCsvUrl, activeProjectId);
+          if (csvData.length > 0) {
+            setLetters(csvData);
+            setIsLoading(false);
+            return;
+          }
+        } catch (csvErr) {
+          console.warn("Gagal muat agency letter dari CSV:", csvErr);
+        }
+      } else if (!isGuest && accessToken && spreadsheetId && accessToken !== 'GUEST_BYPASS') {
+        // Priority 2: Google Sheets for logged in
+        try {
+          const sheetData = await fetchAgencyLettersFromGoogleSheet(accessToken, spreadsheetId, activeProjectId);
+          if (sheetData.length > 0) {
+            setLetters(sheetData);
+            setIsLoading(false);
+            return;
+          }
+        } catch (sheetErr) {
+          console.warn("Gagal muat agency letter dari Google Sheet:", sheetErr);
+        }
+      }
+
+      // Priority 3: Firestore + LocalStorage
       const data = await loadAgencyLetters(activeProjectId);
       setLetters(data);
       setIsLoading(false);
@@ -128,7 +218,7 @@ export default function SuratInstansiPanel({
 
     init();
     return () => unsubscribe();
-  }, [activeProjectId]);
+  }, [activeProjectId, publicCsvUrl, spreadsheetId, accessToken, isGuest]);
 
   // Unique Agencies List for Filter
   const uniqueAgencies = useMemo(() => {
@@ -298,11 +388,20 @@ export default function SuratInstansiPanel({
     });
     setTimeout(() => setActionFeedback(null), 3500);
 
-    // 2. Persist in background with timeout safety
+    // 2. Persist in background with timeout safety (Firestore + LocalStorage)
     try {
       await saveAgencyLetter(letterToSave);
     } catch (err) {
       console.warn('Background save agency letter failed:', err);
+    }
+
+    // 3. Write row to Google Sheets if connected
+    if (accessToken && spreadsheetId && accessToken !== 'GUEST_BYPASS') {
+      try {
+        saveAgencyLetterToSheet(accessToken, spreadsheetId, letterToSave);
+      } catch (sheetErr) {
+        console.warn('Background save agency letter to Google Sheet failed:', sheetErr);
+      }
     }
   };
 
@@ -446,6 +545,57 @@ export default function SuratInstansiPanel({
           </div>
 
           <div className="flex items-center gap-2.5 flex-wrap">
+            {/* Connection Badges */}
+            {spreadsheetId && (
+              <span 
+                className="px-2.5 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-xl text-[10px] font-mono font-bold flex items-center gap-1.5 shadow-sm"
+                title={`ID Spreadsheet: ${spreadsheetId}`}
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Sheet Aktif</span>
+                <a 
+                  href={`https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="hover:text-emerald-200"
+                  title="Buka di Google Sheets"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </span>
+            )}
+
+            {publicCsvUrl && (
+              <span 
+                className="px-2.5 py-1.5 bg-sky-500/10 text-sky-400 border border-sky-500/30 rounded-xl text-[10px] font-mono font-bold flex items-center gap-1.5 shadow-sm"
+                title="Tautan Publik CSV Google Sheets aktif"
+              >
+                <Globe className="w-3.5 h-3.5 text-sky-400" />
+                <span>Web CSV Live</span>
+              </span>
+            )}
+
+            {/* Sync Button */}
+            <button
+              onClick={() => handleSyncFromSource(true)}
+              disabled={isSyncing}
+              className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-sky-300 rounded-xl border border-sky-500/30 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
+              title="Sinkronkan ulang data dari Google Sheet / Web CSV"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-sky-400' : ''}`} />
+              <span>{isSyncing ? 'Menyinkronkan...' : 'Sinkronkan'}</span>
+            </button>
+
+            {/* Template Download */}
+            <button
+              onClick={() => downloadAgencyLetterHeaderTemplate('xlsx', activeProjectName)}
+              className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-white/10 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+              title="Unduh Template Excel Berisi 13 Kolom Surat Instansi"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Template (.xlsx)</span>
+            </button>
+
             <button
               onClick={handleExportCSV}
               className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-white/10 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-sm"
