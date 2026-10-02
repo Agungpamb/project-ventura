@@ -4363,6 +4363,8 @@ export default function App() {
                   <Dashboard 
                     records={records} 
                     role={role} 
+                    activeProjectId={activeProjectId}
+                    activeProject={projects.find(p => p.id === activeProjectId)}
                     activeProjectName={projects.find(p => p.id === activeProjectId)?.name} 
                     hideZeroLuas={hideZeroLuas}
                     onNavigateToNominatif={() => setActiveMenu('nominatif')}
@@ -4370,6 +4372,12 @@ export default function App() {
                     onForceSyncMaster={() => handleManualSync(false)}
                     onRefreshGoogleToken={() => handleManualSync(true)}
                     isSyncingMaster={isLoadingData}
+                    accessToken={token || undefined}
+                    spreadsheetId={projects.find(p => p.id === activeProjectId)?.spreadsheetId || undefined}
+                    resumeSpreadsheetId={projects.find(p => p.id === activeProjectId)?.resumeSpreadsheetId || undefined}
+                    resumePublicCsvUrl={projects.find(p => p.id === activeProjectId)?.resumePublicCsvUrl || undefined}
+                    agencyLetterSpreadsheetId={projects.find(p => p.id === activeProjectId)?.agencyLetterSpreadsheetId || undefined}
+                    agencyLetterPublicCsvUrl={projects.find(p => p.id === activeProjectId)?.agencyLetterPublicCsvUrl || undefined}
                   />
                 )}
 

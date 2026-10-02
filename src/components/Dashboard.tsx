@@ -1,14 +1,34 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, 
   PieChart, Pie, Cell 
 } from 'recharts';
 import { 
-  TrendingUp, FileText, CheckCircle2, Clock, AlertCircle, Map, Home, Sprout,
-  ShieldCheck, FolderCheck, CloudUpload, MapPin, Search, X, FileDown, Filter, FileSpreadsheet
+  TrendingUp, FileText, CheckCircle2, Clock, AlertCircle, Map as MapIcon, Home, Sprout,
+  ShieldCheck, FolderCheck, CloudUpload, MapPin, Search, X, FileDown, Filter, FileSpreadsheet,
+  CheckSquare, Square, Download, ChevronRight, Layers, Mail, Settings, RefreshCw, Eye, Check,
+  Calendar, Building2, Briefcase, ChevronDown, Sparkles, Printer, UserCheck, Award, FileCheck,
+  AlignLeft, Compass, Info
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
-import type { LandRecord } from '../types';
+import { DANANTARA_BASE64, IDSURVEY_BASE64, SURVEYOR_BASE64 } from '../lib/embeddedLogos';
+import type { LandRecord, ProjectConfig, VillageResume, AgencyLetter } from '../types';
+import { 
+  generateIntegratedReportPDF, 
+  type ExportReportOptions 
+} from '../lib/integratedReportGenerator';
+import { 
+  loadVillageResumes, 
+  loadAgencyLetters, 
+  generateJalurWorkbookExcel, 
+  createDefaultVillageResume 
+} from '../lib/projectResumeStorage';
+import { 
+  fetchResumesFromPublicCsv, 
+  fetchAgencyLettersFromPublicCsv, 
+  fetchResumesFromGoogleSheet, 
+  fetchAgencyLettersFromGoogleSheet 
+} from '../lib/googleApi';
 
 export type AlasHakCategoryKey = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I';
 
@@ -126,6 +146,8 @@ function classifyAlasHakRecord(rawVal: string | null | undefined): AlasHakCatego
 interface DashboardProps {
   records: LandRecord[];
   role?: string | null;
+  activeProjectId?: string;
+  activeProject?: ProjectConfig;
   activeProjectName?: string;
   hideZeroLuas?: boolean;
   onNavigateToNominatif?: () => void;
@@ -133,22 +155,187 @@ interface DashboardProps {
   onForceSyncMaster?: () => void;
   onRefreshGoogleToken?: () => void;
   isSyncingMaster?: boolean;
+  accessToken?: string;
+  spreadsheetId?: string;
+  resumeSpreadsheetId?: string;
+  resumePublicCsvUrl?: string;
+  agencyLetterSpreadsheetId?: string;
+  agencyLetterPublicCsvUrl?: string;
 }
 
 export default function Dashboard({ 
   records, 
   role, 
+  activeProjectId,
+  activeProject,
   activeProjectName, 
   hideZeroLuas = false, 
   onNavigateToNominatif,
   isLiveConnected = false,
   onForceSyncMaster,
   onRefreshGoogleToken,
-  isSyncingMaster = false
+  isSyncingMaster = false,
+  accessToken,
+  spreadsheetId,
+  resumeSpreadsheetId,
+  resumePublicCsvUrl,
+  agencyLetterSpreadsheetId,
+  agencyLetterPublicCsvUrl
 }: DashboardProps) {
   // Dashboard Local Filters State (Desa & Span)
   const [selectedDesa, setSelectedDesa] = useState<string>('ALL');
   const [selectedSpan, setSelectedSpan] = useState<string>('ALL');
+
+  // Integrated Report Data State: Resume Project & Surat Instansi
+  const [villageResumes, setVillageResumes] = useState<VillageResume[]>([]);
+  const [agencyLetters, setAgencyLetters] = useState<AgencyLetter[]>([]);
+  const [isLoadingExtraData, setIsLoadingExtraData] = useState<boolean>(false);
+  const [showExportModal, setShowExportModal] = useState<boolean>(false);
+  const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
+  const [isExportingExcel, setIsExportingExcel] = useState<boolean>(false);
+
+  // Modular export toggles (defaults to all active so complete report is generated)
+  const [exportIncludeLahan, setExportIncludeLahan] = useState<boolean>(true);
+  const [exportIncludeResume, setExportIncludeResume] = useState<boolean>(true);
+  const [exportIncludeSurat, setExportIncludeSurat] = useState<boolean>(true);
+
+  // Professional customization options (Style, Orientation, Signatures)
+  const [exportReportStyle, setExportReportStyle] = useState<'BUMN_OFFICIAL' | 'MODERN_EXECUTIVE'>('BUMN_OFFICIAL');
+  const [exportOrientation, setExportOrientation] = useState<'portrait' | 'landscape'>('portrait');
+  const [exportIncludeSignatures, setExportIncludeSignatures] = useState<boolean>(true);
+  const [exportSignCity, setExportSignCity] = useState<string>('Semarang');
+  const [exportSignOfficer, setExportSignOfficer] = useState<string>('Tim Pengadaan Tanah & ROW');
+  const [exportSignOfficerTitle, setExportSignOfficerTitle] = useState<string>('Koordinator Pelaksana Lapangan');
+  const [exportSignApprover, setExportSignApprover] = useState<string>('Darmawan Dwi Sanjaya');
+  const [exportSignApproverTitle, setExportSignApproverTitle] = useState<string>('Project Manager / Team Leader');
+  const [exportModalTab, setExportModalTab] = useState<'MODULES' | 'FORMAT' | 'PREVIEW'>('MODULES');
+  const [exportFeedbackMessage, setExportFeedbackMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Load Extra Report Data (Resume Proyek 6 Tahapan & Surat Instansi)
+  useEffect(() => {
+    let isMounted = true;
+    async function loadExtraReportData() {
+      if (!activeProjectId) return;
+      setIsLoadingExtraData(true);
+      try {
+        // 1. Load Village Resumes
+        let resumes: VillageResume[] = [];
+        if (resumePublicCsvUrl) {
+          try {
+            resumes = await fetchResumesFromPublicCsv(resumePublicCsvUrl, activeProjectId);
+          } catch (e) {
+            console.warn("Fallback public CSV resumes failed", e);
+          }
+        }
+        if (resumes.length === 0 && resumeSpreadsheetId && accessToken && accessToken !== 'GUEST_BYPASS') {
+          try {
+            resumes = await fetchResumesFromGoogleSheet(accessToken, resumeSpreadsheetId, activeProjectId);
+          } catch (e) {
+            console.warn("Fallback google sheet resumes failed", e);
+          }
+        }
+        if (resumes.length === 0) {
+          resumes = await loadVillageResumes(activeProjectId, {
+            accessToken,
+            spreadsheetId: resumeSpreadsheetId || spreadsheetId
+          });
+        }
+        if (isMounted) setVillageResumes(resumes);
+
+        // 2. Load Agency Letters
+        let letters: AgencyLetter[] = [];
+        if (agencyLetterPublicCsvUrl) {
+          try {
+            letters = await fetchAgencyLettersFromPublicCsv(agencyLetterPublicCsvUrl, activeProjectId);
+          } catch (e) {
+            console.warn("Fallback public CSV letters failed", e);
+          }
+        }
+        if (letters.length === 0 && agencyLetterSpreadsheetId && accessToken && accessToken !== 'GUEST_BYPASS') {
+          try {
+            letters = await fetchAgencyLettersFromGoogleSheet(accessToken, agencyLetterSpreadsheetId, activeProjectId);
+          } catch (e) {
+            console.warn("Fallback google sheet letters failed", e);
+          }
+        }
+        if (letters.length === 0) {
+          letters = await loadAgencyLetters(activeProjectId);
+        }
+        if (isMounted) setAgencyLetters(letters);
+      } catch (err) {
+        console.warn("Gagal memuat data resume atau surat instansi untuk laporan:", err);
+      } finally {
+        if (isMounted) setIsLoadingExtraData(false);
+      }
+    }
+
+    loadExtraReportData();
+    return () => { isMounted = false; };
+  }, [activeProjectId, resumePublicCsvUrl, resumeSpreadsheetId, agencyLetterPublicCsvUrl, agencyLetterSpreadsheetId, accessToken, spreadsheetId]);
+
+  // Combined Village Resumes ensuring every village in records is represented
+  const combinedVillageResumes = useMemo(() => {
+    const recVillages = Array.from(new Set(records.map(r => (r.DESA || '').trim()).filter(Boolean)));
+    const map = new Map<string, VillageResume>();
+
+    villageResumes.forEach(vr => {
+      if (vr.desaName) {
+        map.set(vr.desaName.trim().toUpperCase(), vr);
+      }
+    });
+
+    recVillages.forEach(vName => {
+      const key = vName.toUpperCase();
+      if (!map.has(key)) {
+        const dummy = createDefaultVillageResume(activeProjectId || 'default', vName);
+        map.set(key, dummy);
+      }
+    });
+
+    return (Array.from(map.values()) as VillageResume[]).sort((a, b) => a.desaName.localeCompare(b.desaName, 'id'));
+  }, [villageResumes, records, activeProjectId]);
+
+  // Summary statistics for Resume Proyek
+  const resumeSummary = useMemo(() => {
+    const totalDesa = combinedVillageResumes.length;
+    let tuntasDesa = 0;
+    let prosesDesa = 0;
+    let belumDesa = 0;
+    let totalPct = 0;
+
+    combinedVillageResumes.forEach(vr => {
+      const stages = [
+        vr.baSosialisasiAwal?.status,
+        vr.baPengumuman?.status,
+        vr.lampiranBapt?.status,
+        vr.baPenyampaianNilai?.status,
+        vr.baSerahTerimaRekening?.status,
+        vr.bushClearing?.status,
+      ];
+      let pts = 0;
+      stages.forEach(st => {
+        if (st === 'SELESAI') pts += 100 / 6;
+        else if (st === 'PROSES') pts += 50 / 6;
+      });
+      const pct = Math.min(100, Math.round(pts));
+      totalPct += pct;
+      if (pct === 100) tuntasDesa++;
+      else if (pct > 0) prosesDesa++;
+      else belumDesa++;
+    });
+
+    const avgProgress = totalDesa > 0 ? Math.round(totalPct / totalDesa) : 0;
+    return { totalDesa, tuntasDesa, prosesDesa, belumDesa, avgProgress };
+  }, [combinedVillageResumes]);
+
+  // Summary statistics for Surat Instansi
+  const suratSummary = useMemo(() => {
+    const total = agencyLetters.length;
+    const selesai = agencyLetters.filter(l => l.status === 'SELESAI').length;
+    const tindakLanjut = agencyLetters.filter(l => l.status === 'TINDAK_LANJUT').length;
+    const onProgress = agencyLetters.filter(l => l.status === 'ON_PROGRESS' || l.status === 'SUDAH_MASUK').length;
+    return { total, selesai, tindakLanjut, onProgress };
+  }, [agencyLetters]);
 
   // Unique list of villages for filter dropdown
   const uniqueDesaList = useMemo(() => {
@@ -465,553 +652,79 @@ export default function Dashboard({
     ];
   }, [activeFilteredRecords, stats]);
 
-  const handleExportPDF = () => {
+  const handleExportPDF = async (customOptions?: ExportReportOptions) => {
+    setIsExportingPdf(true);
+    setExportFeedbackMessage(null);
     try {
-      const doc = new jsPDF('p', 'mm', 'a4');
-      
-      // Set metadata
-      doc.setProperties({
-        title: `Laporan Progres - ${activeProjectName || 'Project Ventura'}`,
-        subject: 'Progres Pembebasan Lahan & Pemberkasan',
-        author: 'Project Ventura GIS System',
+      const options: ExportReportOptions = {
+        includeLahan: customOptions?.includeLahan !== undefined ? customOptions.includeLahan : exportIncludeLahan,
+        includeResume: customOptions?.includeResume !== undefined ? customOptions.includeResume : exportIncludeResume,
+        includeSurat: customOptions?.includeSurat !== undefined ? customOptions.includeSurat : exportIncludeSurat,
+        reportStyle: customOptions?.reportStyle || exportReportStyle,
+        orientation: customOptions?.orientation || exportOrientation,
+      };
+
+      const doc = await generateIntegratedReportPDF({
+        activeProjectName,
+        records: activeFilteredRecords,
+        stats,
+        combinedVillageResumes,
+        resumeSummary,
+        agencyLetters,
+        suratSummary,
+        alasHakAnalysis,
+        desaProgressData,
+        options,
       });
 
-      const primaryColor = [79, 70, 229]; // Indigo hex #4f46e5
-      const darkSlate = [15, 23, 42]; // Slate-900 hex #0f172a
-      const textGray = [71, 85, 105]; // Slate-600 hex #475569
-      const lightGray = [241, 245, 249]; // Slate-100 hex #f1f5f9
-      const borderGray = [226, 232, 240]; // Slate-200 hex #e2e8f0
-
-      // Timestamp & Metadata (Footer & Headers)
       const today = new Date();
-      const formattedDate = today.toLocaleDateString('id-ID', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      }) + ' WIB';
-
-      // Keep track of current page
-      let pageNum = 1;
-
-      // Clean footer drawing function
-      const drawFooter = (docInstance: typeof doc, pNum: number) => {
-        docInstance.setFont('helvetica', 'italic');
-        docInstance.setFontSize(7.5);
-        docInstance.setTextColor(148, 163, 184); // slate-400
-        
-        // Draw a clean divider line near the bottom
-        docInstance.setDrawColor(226, 232, 240); // slate-200
-        docInstance.setLineWidth(0.15);
-        docInstance.line(15, 280, 195, 280);
-        
-        docInstance.text(`Sistem Informasi Terintegrasi - Project Ventura GIS`, 15, 285);
-        docInstance.text(`Dicetak pada: ${formattedDate}   |   Halaman ${pNum}`, 190, 285, { align: 'right' });
-      };
-
-      // Draw initial footer for page 1
-      drawFooter(doc, pageNum);
-
-      // Header Banner
-      doc.setFillColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.rect(15, 15, 180, 28, 'F');
-
-      // Title in Header
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(13);
-      doc.setTextColor(255, 255, 255);
-      doc.text('LAPORAN PROGRES PERTANAHAN & PEMBEBASAN', 20, 24);
-
-      doc.setFontSize(9.5);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(251, 191, 36); // amber-400 for contrast
-      doc.text(`JALUR PROYEK: ${activeProjectName ? activeProjectName.toUpperCase() : 'SEMUA JALUR'}`, 20, 31);
-
-      let y = 52;
-
-      // --- SECTION 1: RINGKASAN UTAMA ---
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(11);
-      doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.text('1. RINGKASAN CAPAIAN PROYEK', 15, y);
-      
-      // Draw decorative indicator
-      doc.setDrawColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-      doc.setLineWidth(0.8);
-      doc.line(15, y + 2, 60, y + 2);
-      
-      y += 8;
-
-      // KPI Box 1: Total Bidang Lahan
-      doc.setFillColor(lightGray[0], lightGray[1], lightGray[2]);
-      doc.rect(15, y, 42, 18, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(11);
-      doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.text(String(stats.total), 36, y + 8, { align: 'center' });
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8);
-      doc.setTextColor(textGray[0], textGray[1], textGray[2]);
-      doc.text('TOTAL BIDANG', 36, y + 14, { align: 'center' });
-
-      // KPI Box 2: Total Luas Lahan
-      doc.setFillColor(lightGray[0], lightGray[1], lightGray[2]);
-      doc.rect(60, y, 42, 18, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.text(`${stats.totalLuas.toLocaleString('id-ID')} m²`, 81, y + 8, { align: 'center' });
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8);
-      doc.setTextColor(textGray[0], textGray[1], textGray[2]);
-      doc.text('TOTAL LUAS', 81, y + 14, { align: 'center' });
-
-      // KPI Box 3: Total Bangunan
-      doc.setFillColor(lightGray[0], lightGray[1], lightGray[2]);
-      doc.rect(105, y, 42, 18, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(11);
-      doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.text(`${stats.totalBuildings} Unit`, 126, y + 8, { align: 'center' });
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8);
-      doc.setTextColor(textGray[0], textGray[1], textGray[2]);
-      doc.text('BANGUNAN TERDATA', 126, y + 14, { align: 'center' });
-
-      // KPI Box 4: Total Tanaman
-      doc.setFillColor(lightGray[0], lightGray[1], lightGray[2]);
-      doc.rect(150, y, 45, 18, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(11);
-      doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.text(`${stats.totalPlantsCount} Pohon`, 172, y + 8, { align: 'center' });
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8);
-      doc.setTextColor(textGray[0], textGray[1], textGray[2]);
-      doc.text('POHON & TANAMAN', 172, y + 14, { align: 'center' });
-
-      y += 24;
-
-      // --- NEW: GRAPHICAL GRAND TOTAL PROGRESS BAR ---
-      const grandSelesaiPct = stats.total > 0 ? Math.round((stats.pemberkasanSelesai / stats.total) * 100) : 0;
-      const grandKonsinyasiPct = stats.total > 0 ? Math.round((stats.pemberkasanKonsinyasi / stats.total) * 100) : 0;
-      const grandBelumPct = stats.total > 0 ? Math.round((stats.pemberkasanBelumSelesai / stats.total) * 100) : 0;
-
-      doc.setFillColor(248, 250, 252); // slate-50 background card
-      doc.rect(15, y, 180, 22, 'F');
-      doc.setDrawColor(226, 232, 240); // border
-      doc.setLineWidth(0.2);
-      doc.rect(15, y, 180, 22, 'D');
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(71, 85, 105); // slate-600
-      doc.text('AKUMULASI PROGRES PEMBERKASAN JALUR AKTIF:', 20, y + 5);
-
-      const grandBarX = 20;
-      const grandBarY = y + 7.5;
-      const grandBarW = 170;
-      const grandBarH = 5;
-
-      const grandSWidth = (grandSelesaiPct / 100) * grandBarW;
-      const grandKWidth = (grandKonsinyasiPct / 100) * grandBarW;
-      const grandBWidth = (grandBelumPct / 100) * grandBarW;
-
-      let currentGrandX = grandBarX;
-      // Selesai (Emerald)
-      if (grandSWidth > 0) {
-        doc.setFillColor(16, 185, 129); 
-        doc.rect(currentGrandX, grandBarY, grandSWidth, grandBarH, 'F');
-        currentGrandX += grandSWidth;
-      }
-      // Konsinyasi (Amber)
-      if (grandKWidth > 0) {
-        doc.setFillColor(245, 158, 11); 
-        doc.rect(currentGrandX, grandBarY, grandKWidth, grandBarH, 'F');
-        currentGrandX += grandKWidth;
-      }
-      // Belum Selesai (Rose)
-      if (grandBWidth > 0) {
-        doc.setFillColor(244, 63, 94); 
-        doc.rect(currentGrandX, grandBarY, grandBWidth, grandBarH, 'F');
-      }
-
-      // Legend & Counts
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7.5);
-      doc.setTextColor(16, 185, 129);
-      doc.text(`Selesai Berkas: ${stats.pemberkasanSelesai} Bidang (${grandSelesaiPct}%)`, 20, y + 17);
-
-      doc.setTextColor(245, 158, 11);
-      doc.text(`Konsinyasi: ${stats.pemberkasanKonsinyasi} Bidang (${grandKonsinyasiPct}%)`, 80, y + 17);
-
-      doc.setTextColor(244, 63, 94);
-      doc.text(`Belum Selesai: ${stats.pemberkasanBelumSelesai} Bidang (${grandBelumPct}%)`, 140, y + 17);
-
-      y += 28;
-
-      // --- SECTION 2: DETAIL PROGRES ADMINISTRASI & TRABAS ---
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(11);
-      doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.text('2. PROGRES PEMBERKASAN & INTEGRASI TRABAS', 15, y);
-      doc.line(15, y + 2, 90, y + 2);
-
-      y += 8;
-
-      // Let's draw sub-categories with percentages
-      const selesaiPct = stats.total > 0 ? Math.round((stats.pemberkasanSelesai / stats.total) * 100) : 0;
-      const konsinyasiPct = stats.total > 0 ? Math.round((stats.pemberkasanKonsinyasi / stats.total) * 100) : 0;
-      const belumPct = stats.total > 0 ? Math.round((stats.pemberkasanBelumSelesai / stats.total) * 100) : 0;
-      const trabasPct = stats.total > 0 ? Math.round((stats.trabasSudah / stats.total) * 100) : 0;
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
-      
-      // Column left: Pemberkasan
-      doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.setFont('helvetica', 'bold');
-      doc.text('A. Pemberkasan Lapangan:', 15, y);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`• Berkas Selesai:  ${stats.pemberkasanSelesai} Bidang (${selesaiPct}%)`, 20, y + 5);
-      doc.text(`• Berkas Konsinyasi:  ${stats.pemberkasanKonsinyasi} Bidang (${konsinyasiPct}%)`, 20, y + 10);
-      doc.text(`• Belum Diproses:  ${stats.pemberkasanBelumSelesai} Bidang (${belumPct}%)`, 20, y + 15);
-
-      // Column right: TRABAS
-      doc.setFont('helvetica', 'bold');
-      doc.text('B. Integrasi Portal TRABAS:', 110, y);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`• Sudah Upload:  ${stats.trabasSudah} Bidang (${trabasPct}%)`, 115, y + 5);
-      doc.text(`• Belum Upload:  ${stats.trabasBelum} Bidang (${100 - trabasPct}%)`, 115, y + 10);
-
-      y += 24;
-
-      // --- SECTION 3: PROGRESS KOMPARASI PER DESA ---
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(11);
-      doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.text('3. CAPAIAN PROGRES PER WILAYAH DESA (GRAFIK KOMPARASI)', 15, y);
-      doc.line(15, y + 2, 80, y + 2);
-
-      y += 8;
-
-      // Table Header for Graphical Representation
-      doc.setFillColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.rect(15, y, 180, 8, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(255, 255, 255);
-      doc.text('No', 18, y + 5.5);
-      doc.text('Wilayah Desa & Total Bidang', 25, y + 5.5);
-      doc.text('Grafik Progres (Pemberkasan & TRABAS)', 67, y + 5.5);
-      doc.text('Rincian Angka (S/K/B & Sd/Bl)', 127, y + 5.5);
-      doc.text('Persentase', 172, y + 5.5);
-
-      y += 8;
-
-      // Table Rows
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8.5);
-      
-      desaProgressData.forEach((desa, index) => {
-        // Each custom graphical row needs 14mm of height
-        const rowHeight = 14;
-
-        // Check for page break
-        if (y + rowHeight > 270) {
-          doc.addPage();
-          pageNum++;
-          drawFooter(doc, pageNum);
-          y = 20;
-          
-          // Re-draw Table Header on new page
-          doc.setFillColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-          doc.rect(15, y, 180, 8, 'F');
-          doc.setFont('helvetica', 'bold');
-          doc.setFontSize(8);
-          doc.setTextColor(255, 255, 255);
-          doc.text('No', 18, y + 5.5);
-          doc.text('Wilayah Desa & Total Bidang', 25, y + 5.5);
-          doc.text('Grafik Progres (Pemberkasan & TRABAS)', 67, y + 5.5);
-          doc.text('Rincian Angka (S/K/B & Sd/Bl)', 127, y + 5.5);
-          doc.text('Persentase', 172, y + 5.5);
-          y += 8;
-        }
-
-        // Zebra striping
-        if (index % 2 === 0) {
-          doc.setFillColor(248, 250, 252); // slate-50
-        } else {
-          doc.setFillColor(255, 255, 255);
-        }
-        doc.rect(15, y, 180, rowHeight, 'F');
-
-        // Draw left purple indicator line to give premium dashboard look
-        doc.setFillColor(79, 70, 229);
-        doc.rect(15, y, 1.2, rowHeight, 'F');
-
-        // Thin bottom border
-        doc.setDrawColor(borderGray[0], borderGray[1], borderGray[2]);
-        doc.setLineWidth(0.15);
-        doc.line(15, y + rowHeight, 195, y + rowHeight);
-
-        // Column 1: No
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(8.5);
-        doc.setTextColor(15, 23, 42); // slate-900
-        doc.text(String(index + 1), 18, y + 5.5);
-
-        // Column 2: Nama Desa
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
-        doc.setTextColor(15, 23, 42); // slate-900
-        doc.text(desa.name, 25, y + 5.5);
-
-        // Total Bidang subtext
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(7.5);
-        doc.setTextColor(100, 116, 139); // slate-500
-        doc.text(`(${desa.total} Bidang)`, 25, y + 10);
-
-        // --- GRAPH 1: PEMBERKASAN ---
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(7);
-        doc.setTextColor(71, 85, 105); // slate-600
-        doc.text('Pemberkasan:', 67, y + 5);
-
-        const barX = 85;
-        const barWidth = 38; // 38mm fits perfectly without any overlap
-        const barHeight = 2.5;
-
-        const sWidth = desa.total > 0 ? (desa.selesai / desa.total) * barWidth : 0;
-        const kWidth = desa.total > 0 ? (desa.konsinyasi / desa.total) * barWidth : 0;
-        const bWidth = desa.total > 0 ? (desa.belum / desa.total) * barWidth : 0;
-
-        let currentX = barX;
-        // Selesai (Green)
-        if (sWidth > 0) {
-          doc.setFillColor(16, 185, 129); // emerald-500
-          doc.rect(currentX, y + 2.8, sWidth, barHeight, 'F');
-          currentX += sWidth;
-        }
-        // Konsinyasi (Amber)
-        if (kWidth > 0) {
-          doc.setFillColor(245, 158, 11); // amber-500
-          doc.rect(currentX, y + 2.8, kWidth, barHeight, 'F');
-          currentX += kWidth;
-        }
-        // Belum (Rose)
-        if (bWidth > 0) {
-          doc.setFillColor(244, 63, 94); // rose-500
-          doc.rect(currentX, y + 2.8, bWidth, barHeight, 'F');
-        }
-
-        // Border around bar
-        doc.setDrawColor(203, 213, 225); // slate-300
-        doc.setLineWidth(0.1);
-        doc.rect(barX, y + 2.8, barWidth, barHeight, 'D');
-
-        // --- GRAPH 2: TRABAS ---
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(7);
-        doc.setTextColor(71, 85, 105); // slate-600
-        doc.text('Upload TRABAS:', 67, y + 10);
-
-        const trabasSudahWidth = desa.total > 0 ? (desa.trabasSudah / desa.total) * barWidth : 0;
-        const trabasBelumWidth = desa.total > 0 ? (desa.trabasBelum / desa.total) * barWidth : 0;
-
-        // Sudah (Blue)
-        doc.setFillColor(59, 130, 246); // blue-500
-        doc.rect(barX, y + 7.8, trabasSudahWidth, barHeight, 'F');
-
-        // Belum (Gray)
-        doc.setFillColor(203, 213, 225); // slate-300
-        doc.rect(barX + trabasSudahWidth, y + 7.8, trabasBelumWidth, barHeight, 'F');
-
-        // Border around TRABAS bar
-        doc.setDrawColor(203, 213, 225);
-        doc.setLineWidth(0.1);
-        doc.rect(barX, y + 7.8, barWidth, barHeight, 'D');
-
-        // --- Column 3: Rincian Angka ---
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(7.5);
-        doc.setTextColor(15, 23, 42); // slate-900
-        doc.text(`S:${desa.selesai} | K:${desa.konsinyasi} | B:${desa.belum}`, 127, y + 5);
-
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(100, 116, 139); // slate-500
-        doc.text(`Sd:${desa.trabasSudah} | Bl:${desa.trabasBelum}`, 127, y + 10);
-
-        // --- Column 4: Percentages & Summary ---
-        const selesaiPctDesa = desa.total > 0 ? Math.round((desa.selesai / desa.total) * 100) : 0;
-        const trabasPctDesa = desa.total > 0 ? Math.round((desa.trabasSudah / desa.total) * 100) : 0;
-
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(7.5);
-        doc.setTextColor(16, 185, 129); // emerald-500
-        doc.text(`Berkas: ${selesaiPctDesa}%`, 172, y + 5);
-        
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(59, 130, 246); // blue-500
-        doc.text(`TRABAS: ${trabasPctDesa}%`, 172, y + 10);
-
-        y += rowHeight;
-      });
-
-      y += 8;
-
-      // --- SECTION 4: KLASIFIKASI JENIS ALAS HAK & DIAGRAM PIE ---
-      if (y + 60 > 270) {
-        doc.addPage();
-        pageNum++;
-        drawFooter(doc, pageNum);
-        y = 20;
-      }
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(11);
-      doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.text('4. KLASIFIKASI ALAS HAK / BUKTI KEPEMILIKAN LAHAN', 15, y);
-      doc.setDrawColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-      doc.setLineWidth(0.8);
-      doc.line(15, y + 2, 105, y + 2);
-
-      y += 8;
-
-      // Helper function for hex to RGB
-      const hexToRgb = (hex: string): [number, number, number] => {
-        const cleanHex = hex.replace('#', '');
-        const num = parseInt(cleanHex, 16);
-        return [
-          (num >> 16) & 255,
-          (num >> 8) & 255,
-          num & 255
-        ];
-      };
-
-      // Pie/Donut Chart parameters
-      const pieCenterX = 40;
-      const pieCenterY = y + 24;
-      const radius = 17;
-
-      // Draw vector Pie/Donut Chart
-      let currentAngle = 0;
-      const totalAnalyzed = alasHakAnalysis.totalAnalyzed || 1;
-
-      alasHakAnalysis.items.forEach(item => {
-        if (item.count > 0) {
-          const sweepAngle = (item.count / totalAnalyzed) * 360;
-          const rgb = hexToRgb(item.color);
-          
-          doc.setFillColor(rgb[0], rgb[1], rgb[2]);
-          const steps = Math.max(2, Math.ceil(sweepAngle / 2));
-          for (let i = 0; i < steps; i++) {
-            const a1 = (currentAngle + (i / steps) * sweepAngle - 90) * (Math.PI / 180);
-            const a2 = (currentAngle + ((i + 1) / steps) * sweepAngle - 90) * (Math.PI / 180);
-            
-            const x1 = pieCenterX + radius * Math.cos(a1);
-            const y1 = pieCenterY + radius * Math.sin(a1);
-            const x2 = pieCenterX + radius * Math.cos(a2);
-            const y2 = pieCenterY + radius * Math.sin(a2);
-            
-            doc.triangle(pieCenterX, pieCenterY, x1, y1, x2, y2, 'F');
-          }
-          currentAngle += sweepAngle;
-        }
-      });
-
-      // Inner Donut Hole
-      doc.setFillColor(255, 255, 255);
-      doc.circle(pieCenterX, pieCenterY, radius * 0.52, 'F');
-
-      // Center Donut Text
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.text(`${totalAnalyzed}`, pieCenterX, pieCenterY + 1, { align: 'center' });
-      doc.setFontSize(5.5);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(textGray[0], textGray[1], textGray[2]);
-      doc.text('BIDANG', pieCenterX, pieCenterY + 4, { align: 'center' });
-
-      // Table Legend for 9 Categories (x = 72 to 195)
-      const legendX = 72;
-      let legendY = y;
-
-      doc.setFillColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.rect(legendX, legendY, 123, 6, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7.5);
-      doc.setTextColor(255, 255, 255);
-      doc.text('Kategori Alas Hak (9 Klasifikasi)', legendX + 3, legendY + 4);
-      doc.text('Jumlah', legendX + 88, legendY + 4, { align: 'right' });
-      doc.text('Persentase', legendX + 120, legendY + 4, { align: 'right' });
-
-      legendY += 6;
-
-      alasHakAnalysis.items.forEach((item, idx) => {
-        const rowH = 4.6;
-        const rgb = hexToRgb(item.color);
-
-        if (idx % 2 === 0) {
-          doc.setFillColor(248, 250, 252);
-        } else {
-          doc.setFillColor(255, 255, 255);
-        }
-        doc.rect(legendX, legendY, 123, rowH, 'F');
-
-        // Color badge
-        doc.setFillColor(rgb[0], rgb[1], rgb[2]);
-        doc.rect(legendX + 3, legendY + 1.1, 2.8, 2.5, 'F');
-
-        // Category Label
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(6.8);
-        doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-        const shortTxt = `${item.code}. ${item.label}`;
-        const truncatedLabel = shortTxt.length > 38 ? shortTxt.substring(0, 36) + '...' : shortTxt;
-        doc.text(truncatedLabel, legendX + 8, legendY + 3.1);
-
-        // Count
-        doc.setFont('helvetica', 'bold');
-        doc.text(`${item.count}`, legendX + 88, legendY + 3.1, { align: 'right' });
-
-        // Percentage
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(textGray[0], textGray[1], textGray[2]);
-        doc.text(`${item.percentage}%`, legendX + 120, legendY + 3.1, { align: 'right' });
-
-        doc.setDrawColor(borderGray[0], borderGray[1], borderGray[2]);
-        doc.setLineWidth(0.1);
-        doc.line(legendX, legendY + rowH, legendX + 123, legendY + rowH);
-
-        legendY += rowH;
-      });
-
-      y = Math.max(pieCenterY + radius + 8, legendY + 6);
-
-      // Sign off note
-      if (y > 270) {
-        doc.addPage();
-        pageNum++;
-        drawFooter(doc, pageNum);
-        y = 20;
-      }
-      
-      doc.setFont('helvetica', 'italic');
-      doc.setFontSize(8);
-      doc.setTextColor(textGray[0], textGray[1], textGray[2]);
-      doc.text('* Laporan ini dihasilkan secara otomatis oleh Project Ventura GIS & Land Management System.', 15, y);
-      doc.text('* Untuk konfirmasi atau pembaruan berkas, silakan hubungi tim Verifikasi QC atau Administrator.', 15, y + 4.5);
-
-      // Save/Download PDF
       const cleanFileName = (activeProjectName || 'Project_Ventura').toLowerCase().replace(/[^a-z0-9]+/g, '_');
-      doc.save(`Laporan_Progres_${cleanFileName}_${today.toISOString().split('T')[0]}.pdf`);
-    } catch (err) {
+      const prefix = (options.includeResume && options.includeSurat) ? 'Laporan_Terpadu' : 'Laporan_Progres';
+      const orientationSuffix = options.orientation === 'landscape' ? '_landscape' : '_portrait';
+      doc.save(`${prefix}_${cleanFileName}_${today.toISOString().split('T')[0]}${orientationSuffix}.pdf`);
+
+      setExportFeedbackMessage({
+        type: 'success',
+        text: 'Laporan PDF Eksekutif berhasil diunduh!'
+      });
+    } catch (err: any) {
       console.error("Gagal mengekspor PDF:", err);
-      alert("Terjadi kesalahan saat menghasilkan PDF. Silakan coba lagi.");
+      setExportFeedbackMessage({
+        type: 'error',
+        text: 'Gagal membuat berkas PDF: ' + (err?.message || 'Format tidak sesuai')
+      });
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  // Handler for Excel Workbook 3-in-1 Export
+  const handleExportExcel = () => {
+    setIsExportingExcel(true);
+    setExportFeedbackMessage(null);
+    try {
+      const projectConfig: ProjectConfig = activeProject || {
+        id: activeProjectId || 'proj_default',
+        name: activeProjectName || 'Project Ventura',
+        spreadsheetId: spreadsheetId || '',
+        folderId: '',
+        uploadsFolderId: '',
+        resumeSpreadsheetId,
+        agencyLetterSpreadsheetId,
+      };
+      generateJalurWorkbookExcel(projectConfig, combinedVillageResumes, records, agencyLetters);
+      setExportFeedbackMessage({
+        type: 'success',
+        text: 'Master Excel Workbook 3-Sheet berhasil diunduh!'
+      });
+    } catch (err: any) {
+      console.error("Gagal mengekspor Excel Workbook:", err);
+      setExportFeedbackMessage({
+        type: 'error',
+        text: 'Gagal membuat berkas Excel: ' + (err?.message || 'Format tidak sesuai')
+      });
+    } finally {
+      setIsExportingExcel(false);
     }
   };
 
@@ -1039,12 +752,13 @@ export default function Dashboard({
             </button>
           )}
           <button
-            onClick={handleExportPDF}
-            className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] font-bold rounded-xl transition-all shadow-md shadow-amber-600/10 cursor-pointer"
-            title="Ekspor Ringkasan Dashboard ke PDF untuk WhatsApp"
+            onClick={() => setShowExportModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-bold text-[11px] rounded-xl transition-all shadow-md shadow-amber-500/20 cursor-pointer"
+            title="Ekspor Laporan Terpadu (PDF & Excel: Lahan, Resume Proyek & Surat Instansi)"
           >
             <FileDown className="w-4 h-4" />
-            EKSPOR LAPORAN PDF
+            <span>EKSPOR LAPORAN</span>
+            <span className="px-1.5 py-0.5 text-[9px] bg-slate-950/80 text-amber-300 rounded font-semibold ml-0.5">TERPADU</span>
           </button>
           {isLiveConnected ? (
             <button
@@ -1137,7 +851,7 @@ export default function Dashboard({
       <div className={`grid grid-cols-1 sm:grid-cols-2 ${role === 'GUEST' ? '' : 'lg:grid-cols-4'} gap-5`}>
         <div className="glass-card p-5 rounded-2xl shadow-lg flex items-center gap-4 hover:border-white/15 hover:scale-[1.02] transition-all duration-300">
           <div className="p-3.5 rounded-xl bg-white/5 text-slate-300 border border-white/10 shadow-inner">
-            <Map className="w-6 h-6" />
+            <MapIcon className="w-6 h-6" />
           </div>
           <div>
             <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">Total Bidang</p>
@@ -1787,7 +1501,7 @@ export default function Dashboard({
       {/* SECTION D: METRIK PROYEK FISIK & TANAMAN */}
       <div className="space-y-4">
         <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
-          <Map className="w-5 h-5 text-amber-400" />
+          <MapIcon className="w-5 h-5 text-amber-400" />
           Metrik Penghitungan Fisik & Tanaman Lapangan
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
@@ -1828,7 +1542,7 @@ export default function Dashboard({
         {/* Village Lahan Distribution Chart */}
         <div className="glass-card p-6 rounded-2xl shadow-lg space-y-4">
           <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-            <Map className="w-5 h-5 text-amber-400" />
+            <MapIcon className="w-5 h-5 text-amber-400" />
             Distribusi Jumlah Bidang & Luas per Desa
           </h2>
           {desaChartData.length === 0 ? (
@@ -1943,6 +1657,440 @@ export default function Dashboard({
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL EKSPOR LAPORAN TERPADU (PDF & EXCEL 3-IN-1)        */}
+      {/* ======================================================== */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[94vh]">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-white/10 bg-slate-800/60">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                    <FileDown className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-lg font-bold text-white tracking-tight">Studio Ekspor Laporan Eksekutif</h2>
+                      <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full">
+                        3-in-1 Terpadu
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Jalur: <span className="text-amber-400 font-semibold">{activeProjectName || 'Semua Jalur'}</span> · Siap Cetak & Distribusi Resmi
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowExportModal(false)}
+                  className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-all cursor-pointer"
+                  title="Tutup Modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Segmented Tab Controls */}
+              <div className="flex items-center gap-1.5 mt-4 p-1 bg-slate-950/60 rounded-xl border border-white/5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setExportModalTab('MODULES')}
+                  className={`flex-1 py-1.5 px-3 rounded-lg font-semibold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                    exportModalTab === 'MODULES'
+                      ? 'bg-amber-500 text-slate-950 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>1. Modul Data</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setExportModalTab('FORMAT')}
+                  className={`flex-1 py-1.5 px-3 rounded-lg font-semibold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                    exportModalTab === 'FORMAT'
+                      ? 'bg-amber-500 text-slate-950 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Award className="w-3.5 h-3.5" />
+                  <span>2. Format Laporan</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setExportModalTab('PREVIEW')}
+                  className={`flex-1 py-1.5 px-3 rounded-lg font-semibold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                    exportModalTab === 'PREVIEW'
+                      ? 'bg-amber-500 text-slate-950 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>3. Pratinjau Struktur</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 sm:p-6 overflow-y-auto space-y-5 flex-1">
+              {/* Toast Feedback */}
+              {exportFeedbackMessage && (
+                <div
+                  className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+                    exportFeedbackMessage.type === 'success'
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                      : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                  }`}
+                >
+                  <span>{exportFeedbackMessage.text}</span>
+                  <button
+                    type="button"
+                    onClick={() => setExportFeedbackMessage(null)}
+                    className="text-slate-400 hover:text-white text-xs ml-2 cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+
+              {/* TAB 1: MODULES */}
+              {exportModalTab === 'MODULES' && (
+                <div className="space-y-4">
+                  <div className="bg-gradient-to-r from-indigo-950/40 via-slate-800/40 to-emerald-950/30 border border-white/10 rounded-xl p-4">
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      Laporan terpadu menggabungkan seluruh tahapan teknis, yuridis, dan tata usaha dalam satu dokumen resmi berstandar korporat / BUMN:
+                    </p>
+                    <div className="grid grid-cols-3 gap-2.5 mt-3 pt-3 border-t border-white/10">
+                      <div className="text-center p-2 rounded-lg bg-slate-900/60 border border-white/5">
+                        <span className="text-[10px] text-slate-400 block">Data Lahan</span>
+                        <span className="text-sm font-bold text-white">{stats.total} Bidang</span>
+                      </div>
+                      <div className="text-center p-2 rounded-lg bg-slate-900/60 border border-white/5">
+                        <span className="text-[10px] text-slate-400 block">Resume Proyek</span>
+                        <span className="text-sm font-bold text-amber-400">{combinedVillageResumes.length} Desa</span>
+                      </div>
+                      <div className="text-center p-2 rounded-lg bg-slate-900/60 border border-white/5">
+                        <span className="text-[10px] text-slate-400 block">Surat Instansi</span>
+                        <span className="text-sm font-bold text-emerald-400">{agencyLetters.length} Surat</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 uppercase tracking-wider block mb-2.5">
+                      Pilih Modul yang Disertakan dalam Laporan:
+                    </label>
+                    <div className="space-y-2.5">
+                      {/* Module 1: Data Lahan */}
+                      <div 
+                        onClick={() => setExportIncludeLahan(!exportIncludeLahan)}
+                        className={`flex items-start gap-3.5 p-3.5 rounded-xl border transition-all cursor-pointer select-none ${
+                          exportIncludeLahan 
+                            ? 'bg-indigo-500/10 border-indigo-500/40 text-white' 
+                            : 'bg-slate-800/40 border-white/5 text-slate-400 hover:border-white/10'
+                        }`}
+                      >
+                        <div className="mt-0.5">
+                          {exportIncludeLahan ? (
+                            <CheckSquare className="w-5 h-5 text-indigo-400" />
+                          ) : (
+                            <Square className="w-5 h-5 text-slate-500" />
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-200">Bab I - IV: Data Capaian Pertanahan & Nominatif</span>
+                            <span className="text-[10px] px-2 py-0.5 bg-indigo-500/20 text-indigo-300 rounded font-semibold">
+                              {stats.total} Bidang ({stats.totalLuas.toLocaleString('id-ID')} m²)
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-1 leading-normal">
+                            KPI Bidang/Luas/Tanaman/Bangunan, Verifikasi Pemberkasan, Integrasi TRABAS PLN, Grafik Komparasi per Desa, dan Diagram Klasifikasi 9 Alas Hak.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Module 2: Resume Project */}
+                      <div 
+                        onClick={() => setExportIncludeResume(!exportIncludeResume)}
+                        className={`flex items-start gap-3.5 p-3.5 rounded-xl border transition-all cursor-pointer select-none ${
+                          exportIncludeResume 
+                            ? 'bg-amber-500/10 border-amber-500/40 text-white' 
+                            : 'bg-slate-800/40 border-white/5 text-slate-400 hover:border-white/10'
+                        }`}
+                      >
+                        <div className="mt-0.5">
+                          {exportIncludeResume ? (
+                            <CheckSquare className="w-5 h-5 text-amber-400" />
+                          ) : (
+                            <Square className="w-5 h-5 text-slate-500" />
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-200">Bab V: Resume Tahapan Proyek Kompensasi per Desa</span>
+                            <span className="text-[10px] px-2 py-0.5 bg-amber-500/20 text-amber-300 rounded font-semibold">
+                              {combinedVillageResumes.length} Desa ({resumeSummary.avgProgress}% Capaian)
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-1 leading-normal">
+                            Rekapitulasi 6 tahapan kompensasi lapangan: Sosialisasi Awal, Pengumuman Inv., BAPT Register, Sos. Nilai, Pembayaran Kompensasi, dan Bush Clearing beserta tanggal legalitas.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Module 3: Surat Instansi */}
+                      <div 
+                        onClick={() => setExportIncludeSurat(!exportIncludeSurat)}
+                        className={`flex items-start gap-3.5 p-3.5 rounded-xl border transition-all cursor-pointer select-none ${
+                          exportIncludeSurat 
+                            ? 'bg-emerald-500/10 border-emerald-500/40 text-white' 
+                            : 'bg-slate-800/40 border-white/5 text-slate-400 hover:border-white/10'
+                        }`}
+                      >
+                        <div className="mt-0.5">
+                          {exportIncludeSurat ? (
+                            <CheckSquare className="w-5 h-5 text-emerald-400" />
+                          ) : (
+                            <Square className="w-5 h-5 text-slate-500" />
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-200">Bab VI: Agenda & Monitoring Surat Instansi Terkait</span>
+                            <span className="text-[10px] px-2 py-0.5 bg-emerald-500/20 text-emerald-300 rounded font-semibold">
+                              {agencyLetters.length} Surat Masuk/Keluar
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-1 leading-normal">
+                            Buku agenda koordinasi eksternal ke BPN, Pemda, Dinas Kehutanan, Balai Jalan dll., lengkap dengan no surat, perihal, status proses, dan catatan tindak lanjut PIC.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: FORMAT & SIGNATURES */}
+              {exportModalTab === 'FORMAT' && (
+                <div className="space-y-5">
+                  {/* Style Options */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 uppercase tracking-wider block mb-2">
+                      Gaya & Kop Dokumen:
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div
+                        onClick={() => setExportReportStyle('BUMN_OFFICIAL')}
+                        className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                          exportReportStyle === 'BUMN_OFFICIAL'
+                            ? 'bg-amber-500/15 border-amber-500 text-white'
+                            : 'bg-slate-800/40 border-white/10 text-slate-400 hover:border-white/20'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                            <Award className="w-4 h-4 text-amber-400" />
+                            Format Resmi BUMN / Instansi
+                          </span>
+                          {exportReportStyle === 'BUMN_OFFICIAL' && <Check className="w-4 h-4 text-amber-400" />}
+                        </div>
+                        <p className="text-[11px] text-slate-400 leading-normal">
+                          Menggunakan Kop Dokumen Resmi dengan logo Danantara Indonesia, ID Survey, dan Surveyor Indonesia serta garis ganda formal.
+                        </p>
+                      </div>
+
+                      <div
+                        onClick={() => setExportReportStyle('MODERN_EXECUTIVE')}
+                        className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                          exportReportStyle === 'MODERN_EXECUTIVE'
+                            ? 'bg-indigo-500/15 border-indigo-500 text-white'
+                            : 'bg-slate-800/40 border-white/10 text-slate-400 hover:border-white/20'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                            <Sparkles className="w-4 h-4 text-indigo-400" />
+                            Format Modern Dashboard
+                          </span>
+                          {exportReportStyle === 'MODERN_EXECUTIVE' && <Check className="w-4 h-4 text-indigo-400" />}
+                        </div>
+                        <p className="text-[11px] text-slate-400 leading-normal">
+                          Tampilan kontemporer, minimalis, dan ringkas dengan aksen warna modern untuk rapat internal tim dan progres visual.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Orientation Options */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 uppercase tracking-wider block mb-2">
+                      Orientasi Halaman:
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setExportOrientation('portrait')}
+                        className={`p-3 rounded-xl border text-left cursor-pointer transition-all flex items-center gap-3 ${
+                          exportOrientation === 'portrait'
+                            ? 'bg-amber-500/15 border-amber-500 text-white'
+                            : 'bg-slate-800/40 border-white/10 text-slate-400 hover:border-white/20'
+                        }`}
+                      >
+                        <div className="w-7 h-9 rounded border border-current flex items-center justify-center text-[10px] font-bold">
+                          A4
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold block text-slate-200">Portrait (Vertikal)</span>
+                          <span className="text-[10px] text-slate-400">Standar berkas laporan dinas</span>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setExportOrientation('landscape')}
+                        className={`p-3 rounded-xl border text-left cursor-pointer transition-all flex items-center gap-3 ${
+                          exportOrientation === 'landscape'
+                            ? 'bg-amber-500/15 border-amber-500 text-white'
+                            : 'bg-slate-800/40 border-white/10 text-slate-400 hover:border-white/20'
+                        }`}
+                      >
+                        <div className="w-9 h-7 rounded border border-current flex items-center justify-center text-[10px] font-bold">
+                          A4
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold block text-slate-200">Landscape (Bentang)</span>
+                          <span className="text-[10px] text-emerald-400">Terbaik untuk tabel 6 tahap & surat</span>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Pure Report Status Notice */}
+                  <div className="p-4 rounded-xl bg-slate-800/50 border border-white/10 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-emerald-400" />
+                      <span className="text-xs font-bold text-white">Status Dokumen: Murni Sebatas Laporan Monitoring</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-normal">
+                      Dokumen diterbitkan murni sebagai laporan status dan monitoring progres eksekutif tanpa lembar tanda tangan basah. Dilengkapi nomor registrasi otomatis, ringkasan per desa kompak 2-kolom, dan segel verifikasi sistem.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: PREVIEW */}
+              {exportModalTab === 'PREVIEW' && (
+                <div className="space-y-4 text-xs">
+                  <div className="p-4 rounded-xl bg-slate-800/60 border border-white/10 space-y-3">
+                    <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                      <span className="font-bold text-white">Struktur Dokumen yang Akan Dihasilkan:</span>
+                      <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold">
+                        {exportOrientation.toUpperCase()} A4
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span className="text-slate-300">
+                          Kop Surat: <strong className="text-white">{exportReportStyle === 'BUMN_OFFICIAL' ? 'Resmi BUMN PNG (Danantara, IDSurvey, Surveyor)' : 'Modern Executive'}</strong>
+                        </span>
+                      </div>
+
+                      {exportIncludeLahan && (
+                        <div className="flex items-center gap-2">
+                          <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span className="text-slate-300">
+                            Bab I - IV: Ringkasan KPI, Progres Validasi & TRABAS, Komparasi Desa 2-Kolom ({stats.total} Bidang), Klasifikasi 9 Alas Hak
+                          </span>
+                        </div>
+                      )}
+
+                      {exportIncludeResume && (
+                        <div className="flex items-center gap-2">
+                          <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span className="text-slate-300">
+                            Bab V: Resume Tahapan Kompensasi per Desa ({combinedVillageResumes.length} Desa, 6 Tahap Lapangan Kompak)
+                          </span>
+                        </div>
+                      )}
+
+                      {exportIncludeSurat && (
+                        <div className="flex items-center gap-2">
+                          <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span className="text-slate-300">
+                            Bab VI: Agenda Surat Instansi Mitra ({agencyLetters.length} Berkas Surat)
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-2">
+                        <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span className="text-slate-300">
+                          Format Dokumen: <strong>Murni Sebatas Laporan</strong> (Tanpa Lembar TTD, Dilengkapi Segel Sistem & Timestamp)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-slate-300 flex items-start gap-2.5">
+                    <Info className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+                    <p className="text-[11px] leading-relaxed">
+                      Dokumen disusun secara otomatis dengan tata letak ringkas, penomoran bab berurutan, logo resmi PNG beresolusi tinggi, dan footer bertanda waktu real-time.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 border-t border-white/10 bg-slate-800/60">
+              <span className="text-[11px] text-slate-400 italic order-2 sm:order-1 text-center sm:text-left">
+                * Format tersinkronisasi otomatis dengan standar BUMN & Pemerintah
+              </span>
+
+              <div className="flex items-center gap-2.5 w-full sm:w-auto order-1 sm:order-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowExportModal(false)}
+                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl border border-white/10 transition-all cursor-pointer"
+                >
+                  Batal
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleExportExcel}
+                  disabled={isExportingExcel}
+                  className="flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-600/20 cursor-pointer disabled:opacity-50"
+                  title="Unduh Master Excel 3-in-1 (Resume Proyek, Surat Instansi, Nominatif)"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>{isExportingExcel ? 'Menyiapkan...' : 'Master Excel (3 Sheet)'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleExportPDF()}
+                  disabled={isExportingPdf}
+                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-md shadow-amber-500/20 cursor-pointer disabled:opacity-50"
+                  title="Unduh Dokumen Laporan PDF Eksekutif Resmi"
+                >
+                  <FileDown className="w-4 h-4" />
+                  <span>{isExportingPdf ? 'Menghasilkan PDF...' : 'Unduh PDF Eksekutif'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

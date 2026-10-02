@@ -13,6 +13,7 @@ import {
 import * as XLSX from 'xlsx';
 import { fetchResumesFromGoogleSheet, saveVillageResumeToSheet, saveAgencyLetterToSheet } from './googleApi';
 import type { VillageResume, AgencyLetter, VillageStageDoc, StageStatus, LandRecord, ProjectConfig } from '../types';
+import { DEFAULT_RESUME_STAGES } from '../types';
 
 /**
  * Remove undefined values recursively before saving to Firestore
@@ -948,8 +949,7 @@ export async function saveAgencyLetter(
       const sheetRes = await saveAgencyLetterToSheet(
         options.accessToken,
         options.spreadsheetId,
-        updatedLetter,
-        options.projectName || ''
+        updatedLetter
       );
       if (sheetRes.success) {
         sheetSynced = true;

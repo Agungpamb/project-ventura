@@ -1230,6 +1230,32 @@ export async function fetchResumesFromGoogleSheet(
 }
 
 /**
+ * Fetches village resumes from a publicly published Google Sheets CSV URL.
+ */
+export async function fetchResumesFromPublicCsv(
+  publicCsvUrl: string,
+  projectId: string
+): Promise<VillageResume[]> {
+  try {
+    const csvText = await fetchPublicCsvContent(publicCsvUrl);
+    const parsed = parseCSV(csvText);
+    if (parsed.length <= 1) return [];
+
+    const dataRows = parsed.slice(1);
+    const result: VillageResume[] = [];
+    for (const r of dataRows) {
+      if (!r || r.length === 0 || !r[3]) continue;
+      if (projectId && r[1] && r[1] !== projectId) continue;
+      result.push(sheetRowToVillageResume(r));
+    }
+    return result;
+  } catch (err) {
+    console.warn("fetchResumesFromPublicCsv error:", err);
+    return [];
+  }
+}
+
+/**
  * Saves a single village resume row to the Google Sheets workbook tab RESUME_SEMUA_JALUR.
  */
 export async function saveVillageResumeToSheet(

@@ -3,7 +3,7 @@ import { type LandRecord } from '../types';
 import { db } from './firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import { loadGeoJSONLayerDoc } from './geojsonStorage';
-import { DANANTARA_BASE64, IDSURVEY_BASE64, SURVEYOR_BASE64 } from './embeddedLogos';
+import { getOfficialLogos } from './logoLoader';
 
 const findPropInObj = (obj: any, keys: string[]): string => {
   if (!obj) return '';
@@ -239,10 +239,8 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
   const rightMargin = 195;
   const contentWidth = rightMargin - leftMargin; // 180mm
 
-  // Preload logo images with crisp resolution (using embedded base64 as guaranteed source)
-  const danantaraBase64 = DANANTARA_BASE64;
-  const idsurveyBase64 = IDSURVEY_BASE64;
-  const surveyorBase64 = SURVEYOR_BASE64;
+  // Preload crisp official PNG logos directly from /public
+  const logos = await getOfficialLogos();
 
   // Formatted date
   const today = new Date();
@@ -267,12 +265,11 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
     doc.setLineWidth(0.2);
     doc.line(15, 24, 195, 24);
 
-    // 1. Danantara Indonesia Logo (Left side)
+    // 1. Danantara Indonesia Logo (Left side) - crisp PNG
     let danantaraRendered = false;
-    if (danantaraBase64) {
+    if (logos.danantara) {
       try {
-        // Danantara image size: 840x220 (ratio: 3.818). height: 10mm, width: 38.18mm.
-        doc.addImage(danantaraBase64, 'JPEG', 15, 9, 38.2, 10, 'danantara_logo', 'FAST');
+        doc.addImage(logos.danantara, 'PNG', 15, 8.5, 36.1, 9.5, 'danantara_logo', 'FAST');
         danantaraRendered = true;
       } catch (e) {
         console.warn('Failed to add danantara image to PDF:', e);
@@ -303,13 +300,11 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
       doc.text('REPUBLIK INDONESIA', 24, 18);
     }
 
-    // 2. ID Survey Logo (Middle)
+    // 2. ID Survey Logo (Middle) - crisp PNG
     let idsurveyRendered = false;
-    if (idsurveyBase64) {
+    if (logos.idsurvey) {
       try {
-        // ID Survey image size: 760x220 (ratio: 3.45). height: 10mm, width: 34.5mm.
-        // Center: 105 - (34.5 / 2) = 87.75mm.
-        doc.addImage(idsurveyBase64, 'JPEG', 87.75, 9, 34.5, 10, 'idsurvey_logo', 'FAST');
+        doc.addImage(logos.idsurvey, 'PNG', 89, 8.5, 30.0, 9.2, 'idsurvey_logo', 'FAST');
         idsurveyRendered = true;
       } catch (e) {
         console.warn('Failed to add idsurvey image to PDF:', e);
@@ -342,13 +337,11 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
       doc.text('Testing · Inspection · Certification', 105, 19, { align: 'center' });
     }
 
-    // 3. Surveyor Indonesia Logo (Right side)
+    // 3. Surveyor Indonesia Logo (Right side) - crisp PNG
     let surveyorRendered = false;
-    if (surveyorBase64) {
+    if (logos.surveyor) {
       try {
-        // Surveyor image size: 680x220 (ratio: 3.09). height: 10mm, width: 30.9mm.
-        // Right margin: 195 - 30.9 = 164.1mm.
-        doc.addImage(surveyorBase64, 'JPEG', 164.1, 9, 30.9, 10, 'surveyor_logo', 'FAST');
+        doc.addImage(logos.surveyor, 'PNG', 195 - 15.5, 8.0, 15.5, 11.0, 'surveyor_logo', 'FAST');
         surveyorRendered = true;
       } catch (e) {
         console.warn('Failed to add surveyor image to PDF:', e);
