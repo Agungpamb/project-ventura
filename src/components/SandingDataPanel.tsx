@@ -3,9 +3,11 @@ import {
   GitCompare, CheckCircle2, AlertTriangle, XCircle, Search, 
   Filter, Download, ArrowRightLeft, Layers, FileSpreadsheet, 
   User, MapPin, ExternalLink, RefreshCw, SlidersHorizontal, 
-  Edit3, HelpCircle, FileCheck2, Info, ChevronRight, Check, X
+  Edit3, HelpCircle, FileCheck2, Info, ChevronRight, Check, X,
+  Calculator, Ruler
 } from 'lucide-react';
 import { type LandRecord } from '../types';
+import { calculateGeometryArea } from '../lib/geoUtils';
 
 interface SandingDataPanelProps {
   records: LandRecord[];
@@ -44,12 +46,18 @@ export interface ComparisonItem {
   isNamaMatch: boolean;
   isNamaGanti: boolean; // Case where owner changed (e.g. TKD -> Pemdes / new owner)
 
-  // 5. Luas
-  luasGeo: number;
-  luasInput: number;
-  luasDiff: number;
+  // 5. Luas (3-Way Comparison: Atribut vs Calculate Geometry vs Input Tim)
+  luasGeo: number; // Luas tercatat di atribut GeoJSON (Shape_Area / luas)
+  luasGeomCalc: number; // Luas hasil Calculate Geometry titik koordinat poligon riil (m²)
+  luasInput: number; // Luas yang diinput oleh tim lapangan di form/Google Sheet
+  luasDiff: number; // Selisih Input Tim vs Geometri Poligon (m²)
   luasDiffPercent: number;
   isLuasMatch: boolean;
+
+  // Crosscheck Integritas Spasial GIS (Deteksi Human Error Lupa Calculate Geometry di ArcGIS)
+  isGeomAttrMatch: boolean; // Apakah Luas Atribut Peta sinkron dengan Luas Hitung Geometri Poligon?
+  geomAttrDiff: number; // Selisih Luas Geometri vs Luas Atribut (m²)
+  geomAttrDiffPercent: number;
 
   // 6. Obyek
   obyekGeo: string;
@@ -114,7 +122,7 @@ export default function SandingDataPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDesaFilter, setSelectedDesaFilter] = useState('');
   const [selectedSpanFilter, setSelectedSpanFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'DISCREPANCY' | 'MATCH' | 'BEDA_NAMA' | 'BEDA_LUAS' | 'PETA_ONLY' | 'INPUT_ONLY' | 'GABUNGAN'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'DISCREPANCY' | 'MATCH' | 'BEDA_NAMA' | 'BEDA_LUAS' | 'BEDA_GEOM_ATTR' | 'PETA_ONLY' | 'INPUT_ONLY' | 'GABUNGAN'>('ALL');
   const [onlyDiscrepancies, setOnlyDiscrepancies] = useState(false);
   const [tableHeightMode, setTableHeightMode] = useState<'compact' | 'standard' | 'tall'>('standard');
 
@@ -181,9 +189,20 @@ export default function SandingDataPanel({
     // 1. Populate GeoJSON Map by composite key
     geoFeatures.forEach((feat: any) => {
       const p = feat.properties || {};
-      const desaRaw = p.desa || p.DESA || '';
-      const spanRaw = p.span || p.SPAN || '';
-      const nobidRaw = p.nobiddis || p.NOBIDDC || p.nobid || p.NOBID || p.Field || '';
+      let desaRaw = p.desa || p.DESA || '';
+      let spanRaw = p.span || p.SPAN || '';
+      let nobidRaw = p.nobiddis || p.NOBIDDC || p.nobid || p.NOBID || p.Field || '';
+
+      // If DRIVEN or CODE exists (e.g. "KEBONDALEM_T.43-T.44_18"), parse it if individual fields are missing
+      const drivenOrCode = p.DRIVEN || p.driven || p.CODE || p.code || '';
+      if (drivenOrCode && (!desaRaw || !spanRaw || !nobidRaw)) {
+        const parts = String(drivenOrCode).split('_');
+        if (parts.length >= 3) {
+          if (!desaRaw) desaRaw = parts[0];
+          if (!spanRaw) spanRaw = parts[1];
+          if (!nobidRaw) nobidRaw = parts.slice(2).join('_');
+        }
+      }
 
       const normKey = `${normalizeDesa(desaRaw)}|${normalizeSpan(spanRaw)}|${normalizeNobid(nobidRaw)}`;
       if (!geoMap.has(normKey)) {
@@ -233,8 +252,8 @@ export default function SandingDataPanel({
       const isNobidMatch = !nobidGeo || !nobidInput || normalizeNobid(nobidGeo) === normalizeNobid(nobidInput);
 
       // Field 4: Nama Pemilik
-      const namaGeo = String(geoProps.namafinal || geoProps.nama || geoProps.PEMILIK || '').trim();
-      const namaAwalGeo = String(geoProps.namaawal || '').trim();
+      const namaGeo = String(geoProps.namafinal || geoProps['nama final'] || geoProps.nama || geoProps.PEMILIK || '').trim();
+      const namaAwalGeo = String(geoProps.namaawal || geoProps['nama awal'] || '').trim();
       const namaInput = String(inputRec ? inputRec.NAMA : '').trim();
 
       const normNamaGeo = (namaGeo || namaAwalGeo).toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -256,8 +275,26 @@ export default function SandingDataPanel({
         }
       }
 
-      // Field 5: Luas
-      const luasGeoVal = parseFloat(geoProps.luas || geoProps.Shape_Area || '0') || 0;
+      // Field 5: Luas (3-Way Comparison: Atribut GeoJSON vs Calculate Geometry Poligon vs Input Tim)
+      // 1. Luas from GeoJSON attribute table (Shape_Area / luas)
+      let luasGeoVal = 0;
+      if (geoList.length > 0) {
+        luasGeoVal = geoList.reduce((acc, feat) => {
+          const p = feat.properties || {};
+          const val = parseFloat(p.luas || p.LUAS || p.Luas || p.Shape_Area || p.shape_area || p.SHAPE_AREA || p.Area || p.AREA || '0') || 0;
+          return acc + val;
+        }, 0);
+      }
+
+      // 2. Real Polygon Coordinate Geometry Area (Calculate Geometry in UTM Zone)
+      let luasGeomCalcVal = 0;
+      if (geoList.length > 0) {
+        luasGeomCalcVal = geoList.reduce((acc, feat) => {
+          return acc + calculateGeometryArea(feat.geometry || feat);
+        }, 0);
+      }
+
+      // 3. Luas from Input Tim Field Records (record.LUAS)
       let luasInputVal = 0;
       if (inputList.length > 0) {
         luasInputVal = inputList.reduce((acc, r) => {
@@ -266,8 +303,23 @@ export default function SandingDataPanel({
         }, 0);
       }
 
-      const luasDiff = Math.abs(luasGeoVal - luasInputVal);
-      const luasMax = Math.max(luasGeoVal, luasInputVal) || 1;
+      // Crosscheck Integritas Spasial: Luas Atribut vs Hasil Hitung Geometri Poligon
+      // Deteksi human error drafter saat mengedit bentuk bidang tapi lupa klik "Calculate Geometry" di ArcGIS
+      const geomAttrDiff = (luasGeoVal > 0 && luasGeomCalcVal > 0) 
+        ? Math.abs(luasGeomCalcVal - luasGeoVal) 
+        : 0;
+      const geomAttrMax = Math.max(luasGeoVal, luasGeomCalcVal) || 1;
+      const geomAttrDiffPercent = (geomAttrDiff / geomAttrMax) * 100;
+
+      // Considered matching if diff <= 1.5 m² or diff percent <= 1%
+      const isGeomAttrMatch = (geoList.length === 0 || luasGeoVal === 0 || luasGeomCalcVal === 0) 
+        ? true 
+        : (geomAttrDiff <= 1.5 || geomAttrDiffPercent <= 1.0);
+
+      // Selisih Luas Tim Lapangan vs Geometri Riil Peta (atau Atribut jika Geometri tidak ada)
+      const refMapLuas = luasGeomCalcVal > 0 ? luasGeomCalcVal : luasGeoVal;
+      const luasDiff = Math.abs(refMapLuas - luasInputVal);
+      const luasMax = Math.max(refMapLuas, luasInputVal) || 1;
       const luasDiffPercent = (luasDiff / luasMax) * 100;
 
       // Match if diff <= 1.5 m² or percentage <= 2%
@@ -276,7 +328,7 @@ export default function SandingDataPanel({
         : (luasDiff <= 1.5 || luasDiffPercent <= 2);
 
       // Field 6: Obyek Kompensasi
-      const obyekGeo = String(geoProps.jenisbang || geoProps.penggunaan || geoProps.obyek || '-').trim();
+      const obyekGeo = String(geoProps.jenisbang || geoProps.penggunaan || geoProps.obyek || geoProps.objek || '-').trim();
       
       let obyekInput = '-';
       if (inputRec) {
@@ -334,10 +386,14 @@ export default function SandingDataPanel({
         isNamaMatch,
         isNamaGanti,
         luasGeo: Math.round(luasGeoVal * 10) / 10,
+        luasGeomCalc: Math.round(luasGeomCalcVal * 10) / 10,
         luasInput: Math.round(luasInputVal * 10) / 10,
         luasDiff: Math.round(luasDiff * 10) / 10,
         luasDiffPercent: Math.round(luasDiffPercent * 10) / 10,
         isLuasMatch,
+        isGeomAttrMatch,
+        geomAttrDiff: Math.round(geomAttrDiff * 10) / 10,
+        geomAttrDiffPercent: Math.round(geomAttrDiffPercent * 10) / 10,
         obyekGeo,
         obyekInput,
         isObyekMatch,
@@ -379,14 +435,16 @@ export default function SandingDataPanel({
       // Filter Status
       if (statusFilter !== 'ALL') {
         if (statusFilter === 'DISCREPANCY') {
-          if (item.status === 'MATCH') return false;
+          if (item.status === 'MATCH' && item.isGeomAttrMatch) return false;
+        } else if (statusFilter === 'BEDA_GEOM_ATTR') {
+          if (item.isGeomAttrMatch || item.luasGeo === 0 || item.luasGeomCalc === 0) return false;
         } else if (item.status !== statusFilter) {
           return false;
         }
       }
 
       // Quick toggle Discrepancies only
-      if (onlyDiscrepancies && item.status === 'MATCH') {
+      if (onlyDiscrepancies && item.status === 'MATCH' && item.isGeomAttrMatch) {
         return false;
       }
 
@@ -415,9 +473,10 @@ export default function SandingDataPanel({
   const stats = useMemo(() => {
     const totalGeo = comparisonItems.filter(i => i.geoFeature).length;
     const totalInput = records.length;
-    const totalMatched = comparisonItems.filter(i => i.status === 'MATCH').length;
+    const totalMatched = comparisonItems.filter(i => i.status === 'MATCH' && i.isGeomAttrMatch).length;
     const totalBedaNama = comparisonItems.filter(i => i.status === 'BEDA_NAMA' || i.status === 'MISMATCH_BOTH').length;
     const totalBedaLuas = comparisonItems.filter(i => i.status === 'BEDA_LUAS' || i.status === 'MISMATCH_BOTH').length;
+    const totalBedaGeomAttr = comparisonItems.filter(i => !i.isGeomAttrMatch && i.luasGeo > 0 && i.luasGeomCalc > 0).length;
     const totalPetaOnly = comparisonItems.filter(i => i.status === 'PETA_ONLY').length;
     const totalGabungan = comparisonItems.filter(i => i.status === 'GABUNGAN').length;
 
@@ -427,9 +486,10 @@ export default function SandingDataPanel({
       totalMatched,
       totalBedaNama,
       totalBedaLuas,
+      totalBedaGeomAttr,
       totalPetaOnly,
       totalGabungan,
-      discrepancyCount: comparisonItems.length - totalMatched
+      discrepancyCount: comparisonItems.filter(i => i.status !== 'MATCH' || !i.isGeomAttrMatch).length
     };
   }, [comparisonItems, records]);
 
@@ -449,9 +509,12 @@ export default function SandingDataPanel({
       'NAMA PEMILIK AWAL (PETA)',
       'NAMA PEMILIK (INPUT TIM)',
       'STATUS NAMA',
-      'LUAS PETA (m2)',
+      'LUAS ATRIBUT PETA (m2)',
+      'LUAS HITUNG GEOMETRI POLIGON (m2)',
       'LUAS INPUT TIM (m2)',
-      'SELISIH LUAS (m2)',
+      'STATUS SINKRON ATRIBUT & GEOMETRI',
+      'SELISIH ATRIBUT vs GEOMETRI (m2)',
+      'SELISIH TIM vs GEOMETRI (m2)',
       'OBYEK (PETA)',
       'OBYEK (INPUT TIM)'
     ];
@@ -472,7 +535,10 @@ export default function SandingDataPanel({
         `"${item.namaInput}"`,
         `"${item.isNamaMatch ? 'Sama' : 'Perbedaan Nama/Ganti'}"`,
         item.luasGeo,
+        item.luasGeomCalc,
         item.luasInput,
+        `"${item.isGeomAttrMatch ? 'SINKRON' : 'BEDA (PERLU CALCULATE GEOMETRY DI ARCGIS)'}"`,
+        item.geomAttrDiff,
         item.luasDiff,
         `"${item.obyekGeo}"`,
         `"${item.obyekInput}"`
@@ -546,7 +612,7 @@ export default function SandingDataPanel({
         </div>
 
         {/* KPI Cards Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 pt-2">
           {/* Total Peta */}
           <div className="p-3 bg-slate-900/80 rounded-2xl border border-white/5 space-y-1">
             <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider block">1. Total Peta GeoJSON</span>
@@ -589,16 +655,41 @@ export default function SandingDataPanel({
           <div className={`p-3 rounded-2xl border space-y-1 transition-all ${
             stats.totalBedaLuas > 0 ? 'bg-rose-500/10 border-rose-500/30' : 'bg-slate-900/80 border-white/5'
           }`}>
-            <span className="text-[9px] font-extrabold text-rose-400 uppercase tracking-wider block">5. Selisih Luas</span>
+            <span className="text-[9px] font-extrabold text-rose-400 uppercase tracking-wider block">5. Selisih Luas Tim</span>
             <div className="flex items-baseline gap-1.5">
               <span className="text-lg font-black text-rose-400 font-mono">{stats.totalBedaLuas}</span>
               <span className="text-[10px] text-rose-300/70">bidang</span>
             </div>
           </div>
 
+          {/* QC Calculate Geometry (Deteksi Human Error ArcGIS) */}
+          <div 
+            onClick={() => setStatusFilter(statusFilter === 'BEDA_GEOM_ATTR' ? 'ALL' : 'BEDA_GEOM_ATTR')}
+            className={`p-3 rounded-2xl border space-y-1 transition-all cursor-pointer hover:border-amber-400/50 ${
+              statusFilter === 'BEDA_GEOM_ATTR'
+                ? 'bg-amber-500/25 border-amber-400 ring-2 ring-amber-500/30 shadow-lg'
+                : stats.totalBedaGeomAttr > 0 
+                  ? 'bg-amber-500/15 border-amber-500/40' 
+                  : 'bg-slate-900/80 border-white/5'
+            }`}
+            title="Klik untuk memfilter bidang dengan selisih antara Atribut vs Geometri (Lupa Calculate Geometry di ArcGIS)"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-extrabold text-amber-300 uppercase tracking-wider block">
+                6. Lupa Calc Geom
+              </span>
+              <Calculator className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            </div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-lg font-black text-amber-300 font-mono">{stats.totalBedaGeomAttr}</span>
+              <span className="text-[10px] text-amber-200/70">bidang</span>
+            </div>
+            <span className="text-[8px] text-amber-400/80 block truncate">Atribut ≠ Geometri</span>
+          </div>
+
           {/* Belum Input */}
           <div className="p-3 bg-sky-500/10 rounded-2xl border border-sky-500/20 space-y-1">
-            <span className="text-[9px] font-extrabold text-sky-400 uppercase tracking-wider block">6. Belum Inisialisasi</span>
+            <span className="text-[9px] font-extrabold text-sky-400 uppercase tracking-wider block">7. Belum Diinput</span>
             <div className="flex items-baseline gap-1.5">
               <span className="text-lg font-black text-sky-400 font-mono">{stats.totalPetaOnly}</span>
               <span className="text-[10px] text-sky-300/70">peta</span>
@@ -661,7 +752,8 @@ export default function SandingDataPanel({
               className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold"
             >
               <option value="ALL">Semua Status Hasil Sanding</option>
-              <option value="DISCREPANCY">⚠️ Hanya Ketidakcocokan (Mismatch)</option>
+              <option value="DISCREPANCY">⚠️ Semua Ketidakcocokan (Mismatch)</option>
+              <option value="BEDA_GEOM_ATTR">📐 Lupa Calculate Geometry di ArcGIS (Atribut ≠ Geometri)</option>
               <option value="MATCH">🟢 Sesuai Sempurna</option>
               <option value="BEDA_NAMA">⚠️ Beda Nama Pemilik / Ganti Nama</option>
               <option value="BEDA_LUAS">⚠️ Beda Luas Tanah</option>
@@ -773,8 +865,15 @@ export default function SandingDataPanel({
                 <th className="py-3 px-3">IDENTITAS (DESA & SPAN)</th>
                 <th className="py-3 px-3 w-20 text-center">NO. BID</th>
                 <th className="py-3 px-3 min-w-[200px]">1 & 4. NAMA PEMILIK</th>
-                <th className="py-3 px-3 min-w-[140px] text-right">5. LUAS (m²)</th>
-                <th className="py-3 px-3 min-w-[160px]">6. OBYEK KOMPENSASI</th>
+                <th className="py-3 px-3 min-w-[190px] text-right">
+                  <div className="flex flex-col items-end">
+                    <span>5. PERBANDINGAN LUAS (m²)</span>
+                    <span className="text-[8px] font-normal text-slate-400 font-sans tracking-normal">
+                      Atribut • Geometri • Input Tim
+                    </span>
+                  </div>
+                </th>
+                <th className="py-3 px-3 min-w-[150px]">6. OBYEK KOMPENSASI</th>
                 <th className="py-3 px-3 min-w-[160px]">STATUS SANDING</th>
                 <th className="py-3 px-3 w-24 text-center">AKSI</th>
               </tr>
@@ -857,23 +956,54 @@ export default function SandingDataPanel({
                       </div>
                     </td>
 
-                    {/* 5. Luas (m2) */}
+                    {/* 5. Luas (m2) - 3-Way Comparison */}
                     <td className="py-3 px-3 text-right font-mono">
                       <div className="space-y-1">
-                        <div className="text-xs">
-                          <span className="text-slate-400 text-[10px]">Peta: </span>
-                          <span className="font-bold text-sky-300">{item.luasGeo ? `${item.luasGeo} m²` : '-'}</span>
+                        {/* Atribut Peta */}
+                        <div className="flex items-center justify-between gap-1.5 text-xs">
+                          <span className="text-slate-400 text-[10px] font-sans">Atribut Shp:</span>
+                          <span className="font-semibold text-sky-300">
+                            {item.luasGeo ? `${item.luasGeo} m²` : '-'}
+                          </span>
                         </div>
-                        <div className="text-xs">
-                          <span className="text-slate-400 text-[10px]">Tim: </span>
+
+                        {/* Hitung Geometri Real Poligon (ArcGIS Calculate Geometry) */}
+                        <div className="flex items-center justify-between gap-1.5 text-xs">
+                          <span 
+                            className="text-cyan-400 text-[10px] font-sans flex items-center gap-0.5" 
+                            title="Hasil hitung riil koordinat poligon (seperti Calculate Geometry di ArcGIS)"
+                          >
+                            <Calculator className="w-2.5 h-2.5 shrink-0 inline" />
+                            Geometri:
+                          </span>
+                          <span className="font-bold text-cyan-300">
+                            {item.luasGeomCalc ? `${item.luasGeomCalc} m²` : '-'}
+                          </span>
+                        </div>
+
+                        {/* Input Tim */}
+                        <div className="flex items-center justify-between gap-1.5 text-xs">
+                          <span className="text-slate-400 text-[10px] font-sans">Input Tim:</span>
                           <span className={`font-bold ${item.isLuasMatch ? 'text-emerald-300' : 'text-rose-400'}`}>
                             {item.luasInput ? `${item.luasInput} m²` : '-'}
                           </span>
                         </div>
-                        {!item.isLuasMatch && item.luasGeo > 0 && item.luasInput > 0 && (
-                          <span className="text-[9px] text-rose-300 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20 block font-semibold">
-                            Δ {item.luasDiff} m² ({item.luasDiffPercent}%)
-                          </span>
+
+                        {/* Peringatan: Atribut != Geometri (Human error lupa calculate geometry di ArcGIS) */}
+                        {!item.isGeomAttrMatch && item.luasGeo > 0 && item.luasGeomCalc > 0 && (
+                          <div 
+                            className="text-[9px] text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30 text-left font-sans font-semibold leading-tight mt-0.5"
+                            title="Tabel atribut GeoJSON tidak sesuai dengan geometri koordinat poligon. Kemungkinan lupa Calculate Geometry di ArcGIS!"
+                          >
+                            ⚠️ Atribut ≠ Geometri (Δ {item.geomAttrDiff} m²)
+                          </div>
+                        )}
+
+                        {/* Peringatan: Input Tim != Peta */}
+                        {!item.isLuasMatch && item.luasInput > 0 && (item.luasGeomCalc > 0 || item.luasGeo > 0) && (
+                          <div className="text-[9px] text-rose-300 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20 text-right font-sans font-semibold leading-tight">
+                            Δ Tim vs Peta: {item.luasDiff} m² ({item.luasDiffPercent}%)
+                          </div>
                         )}
                       </div>
                     </td>
@@ -903,6 +1033,15 @@ export default function SandingDataPanel({
                         {item.isNamaGanti && (
                           <span className="text-[9px] text-amber-300 font-semibold block bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
                             ⚠️ Nama Berbeda / Ganti
+                          </span>
+                        )}
+
+                        {!item.isGeomAttrMatch && item.luasGeo > 0 && item.luasGeomCalc > 0 && (
+                          <span 
+                            className="text-[9px] text-amber-300 font-semibold block bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30"
+                            title="Perlu Calculate Geometry di ArcGIS"
+                          >
+                            📐 Cek ArcGIS: Atribut ≠ Geometri
                           </span>
                         )}
                       </div>
@@ -1013,8 +1152,44 @@ export default function SandingDataPanel({
                     </div>
 
                     <div>
-                      <span className="text-[10px] text-slate-400 block font-mono">5. LUAS (m²)</span>
-                      <strong className="text-sky-300 font-mono text-sm">{inspectItem.luasGeo ? `${inspectItem.luasGeo} m²` : '-'}</strong>
+                      <span className="text-[10px] text-slate-400 block font-mono">5. PERBANDINGAN LUAS PETA (m²)</span>
+                      <div className="mt-1 space-y-2 p-2.5 rounded-xl bg-slate-950/70 border border-white/5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-slate-400">Atribut Tabel Shp:</span>
+                          <strong className="text-sky-300 font-mono text-xs">{inspectItem.luasGeo ? `${inspectItem.luasGeo} m²` : '-'}</strong>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-cyan-400 font-semibold flex items-center gap-1">
+                            <Calculator className="w-3 h-3 inline" />
+                            Hitung Geometri Riil:
+                          </span>
+                          <strong className="text-cyan-300 font-mono text-sm">{inspectItem.luasGeomCalc ? `${inspectItem.luasGeomCalc} m²` : '-'}</strong>
+                        </div>
+                        {inspectItem.luasGeo > 0 && inspectItem.luasGeomCalc > 0 && (
+                          <div className={`text-[10px] p-2 rounded-lg border font-medium ${
+                            inspectItem.isGeomAttrMatch 
+                              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20' 
+                              : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                          }`}>
+                            {inspectItem.isGeomAttrMatch ? (
+                              <span className="flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                                Sinkron (Sudah Calculate Geometry di ArcGIS)
+                              </span>
+                            ) : (
+                              <div className="space-y-1">
+                                <span className="font-bold flex items-center gap-1 text-amber-300">
+                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                  Human Error: Belum Calculate Geometry di ArcGIS!
+                                </span>
+                                <p className="text-[9px] text-amber-400/90 font-sans leading-normal">
+                                  Tabel atribut ({inspectItem.luasGeo} m²) selisih {inspectItem.geomAttrDiff} m² ({inspectItem.geomAttrDiffPercent.toFixed(1)}%) terhadap geometri poligon ({inspectItem.luasGeomCalc} m²). Silakan buka Shapefile di ArcGIS dan jalankan Calculate Geometry pada field luas.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div>
@@ -1072,16 +1247,19 @@ export default function SandingDataPanel({
                     </div>
 
                     <div>
-                      <span className="text-[10px] text-slate-400 block font-mono">5. LUAS (m²)</span>
+                      <span className="text-[10px] text-slate-400 block font-mono">5. LUAS INPUT TIM (m²)</span>
                       <strong className={`font-mono text-sm block ${
                         inspectItem.isLuasMatch ? 'text-emerald-300' : 'text-rose-400 font-bold'
                       }`}>
                         {inspectItem.luasInput ? `${inspectItem.luasInput} m²` : '(Belum diinput)'}
                       </strong>
                       {!inspectItem.isLuasMatch && (
-                        <span className="text-[10px] text-rose-300 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 block mt-1 font-semibold">
-                          Selisih: {inspectItem.luasDiff} m² ({inspectItem.luasDiffPercent}%)
-                        </span>
+                        <div className="text-[10px] text-rose-300 bg-rose-500/10 px-2 py-1 rounded border border-rose-500/20 mt-1 font-semibold space-y-0.5">
+                          <div>Selisih: {inspectItem.luasDiff} m² ({inspectItem.luasDiffPercent.toFixed(1)}%)</div>
+                          <div className="text-[9px] text-rose-400/90 font-normal">
+                            (Dibandingkan terhadap Geometri Riil: {inspectItem.luasGeomCalc || inspectItem.luasGeo} m²)
+                          </div>
+                        </div>
                       )}
                     </div>
 
