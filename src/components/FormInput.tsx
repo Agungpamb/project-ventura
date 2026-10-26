@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Search, Plus, Trash2, Check, ArrowRight, ArrowLeft, Save, 
-  MapPin, Landmark, Home, Sprout, ShieldAlert, Edit3, X, FileText, Key, RefreshCw, ExternalLink
+  MapPin, Landmark, Home, Sprout, ShieldAlert, Edit3, X, FileText, Key, RefreshCw, ExternalLink,
+  PenTool, CheckCircle2, Briefcase, Lock
 } from 'lucide-react';
-import { type LandRecord, createEmptyRecord } from '../types';
+import { type LandRecord, createEmptyRecord, type ProjectConfig } from '../types';
 import DocUpload from './DocUpload';
 import DeleteParcelModal from './DeleteParcelModal';
+import SignatureModal, { type SignatureType, SIGNATURE_CONFIGS } from './SignatureModal';
+import { getOrCreateParcelFolderHierarchy, uploadBase64ImageToDrive } from '../lib/googleApi';
 
 const PREDEFINED_PENUTUP_LAHAN = [
   'SAWAH',
@@ -28,16 +31,18 @@ const PREDEFINED_JENIS_ALAS_HAK = [
   'SEPORADIK',
   'SURAT KETERANGAN'
 ];
-
 interface FormInputProps {
   records: LandRecord[];
   role?: 'ADMIN' | 'FIELD' | 'QC' | 'GUEST' | null;
-  onSave: (record: LandRecord, isEdit: boolean) => Promise<void>;
+  onSave: (record: LandRecord, isEdit: boolean, originalRecord?: LandRecord | null) => Promise<void>;
   accessToken?: string;
   onUpdateRecord?: (updatedRecord: LandRecord) => Promise<void>;
   onDeleteRecord?: (record: LandRecord, adjustNextParcels: boolean) => Promise<void>;
   uploadsFolderId?: string;
   activeProjectName?: string;
+  projects?: ProjectConfig[];
+  activeProjectId?: string;
+  onSwitchProject?: (projectId: string) => void;
   initialSelectedRecord?: LandRecord | null;
   onClearInitialRecord?: () => void;
   onRefreshGoogleToken?: () => Promise<string | null>;
@@ -52,6 +57,9 @@ export default function FormInput({
   onDeleteRecord,
   uploadsFolderId, 
   activeProjectName,
+  projects,
+  activeProjectId,
+  onSwitchProject,
   initialSelectedRecord,
   onClearInitialRecord,
   onRefreshGoogleToken
@@ -75,6 +83,14 @@ export default function FormInput({
   useEffect(() => {
     setSelectedNobid('');
   }, [selectedSpan]);
+
+  // Reset dropdown selectors when active project or records change
+  useEffect(() => {
+    setSelectedDesa('');
+    setSelectedSpan('');
+    setSelectedNobid('');
+    setSearchQuery('');
+  }, [records, activeProjectId, activeProjectName]);
 
   // Compute unique values for dropdowns
   const uniqueDesas = useMemo(() => {
@@ -120,6 +136,47 @@ export default function FormInput({
   const [isRefreshingAuth, setIsRefreshingAuth] = useState(false);
   const [submitMessage, setSubmitMessage] = useState<{ type: 'success' | 'error'; text: string; isAuthError?: boolean } | null>(null);
 
+  // Digital Signature Modal states
+  const [activeSignatureType, setActiveSignatureType] = useState<SignatureType | null>(null);
+  const [isUploadingSig, setIsUploadingSig] = useState(false);
+
+  // Signature handler: immediately updates form state and uploads transparent PNG to Drive subfolder if connected
+  const handleSaveSignature = async (type: SignatureType, dataUrl: string) => {
+    // 1. Immediately update local state
+    setFormData(prev => ({ ...prev, [type]: dataUrl }));
+
+    // 2. If Google Drive is connected, asynchronously upload into subfolder "1. Dokumentasi Lapangan dan Foto Warga"
+    if (accessToken && accessToken !== 'GUEST_BYPASS' && accessToken !== 'null') {
+      try {
+        setIsUploadingSig(true);
+        const hierarchy = await getOrCreateParcelFolderHierarchy(
+          accessToken,
+          uploadsFolderId || 'root',
+          formData,
+          '3. Dokumen'
+        );
+
+        const uploadRes = await uploadBase64ImageToDrive(
+          accessToken,
+          dataUrl,
+          type,
+          formData,
+          hierarchy.targetFolderId
+        );
+
+        setFormData(prev => ({
+          ...prev,
+          [type]: uploadRes.webViewLink,
+          DRIVE_FOLDER_ID: hierarchy.parcelFolderId
+        }));
+      } catch (err) {
+        console.warn("Gagal unggah TTD ke Google Drive, menggunakan Data URL lokal:", err);
+      } finally {
+        setIsUploadingSig(false);
+      }
+    }
+  };
+
   // Filter records based on search query for loading to edit
   const filteredRecords = useMemo(() => {
     if (!searchQuery) return [];
@@ -164,7 +221,7 @@ export default function FormInput({
     
     if (cleanDesa && cleanSpan && cleanNobid) {
       const generatedCode = `${cleanDesa}_${cleanSpan}_${cleanNobid}`;
-      if (!selectedEditRecord || !formData.CODE) {
+      if (!selectedEditRecord || !formData.CODE || (selectedEditRecord && (formData.DESA !== selectedEditRecord.DESA || formData.SPAN !== selectedEditRecord.SPAN || formData.NOBID !== selectedEditRecord.NOBID))) {
         setFormData(prev => ({ ...prev, CODE: generatedCode }));
       }
     }
@@ -323,7 +380,7 @@ export default function FormInput({
       }
 
       try {
-        await onSave(formData, isEdit);
+        await onSave(formData, isEdit, selectedEditRecord);
       } catch (saveErr: any) {
         const errStr = saveErr?.message || String(saveErr);
         const isAuthIssue = saveErr?.isAuthError || 
@@ -342,7 +399,7 @@ export default function FormInput({
             setIsRefreshingAuth(true);
             const freshToken = await onRefreshGoogleToken();
             if (freshToken) {
-              await onSave(formData, isEdit);
+              await onSave(formData, isEdit, selectedEditRecord);
             } else {
               throw saveErr;
             }
@@ -357,19 +414,24 @@ export default function FormInput({
       // Keep the saved record loaded so they can print/upload immediately
       const savedRecord = JSON.parse(JSON.stringify(formData));
       if (!savedRecord.ID_UNIK) {
+        const origId = selectedEditRecord?.ID_UNIK;
         const found = records.find(r => r.CODE === formData.CODE);
-        if (found) {
-          savedRecord.ID_UNIK = found.ID_UNIK;
-        } else {
-          savedRecord.ID_UNIK = `TEMP_${Date.now()}`;
-        }
+        savedRecord.ID_UNIK = origId || found?.ID_UNIK || `LOCAL_${Date.now()}`;
+      }
+      if (selectedEditRecord?.rowNumber && !savedRecord.rowNumber) {
+        savedRecord.rowNumber = selectedEditRecord.rowNumber;
       }
 
+      const isLiveConnected = accessToken && accessToken !== 'GUEST_BYPASS' && accessToken !== 'null';
       setSubmitMessage({
         type: 'success',
         text: isEdit 
-          ? `Data dengan CODE ${formData.CODE} berhasil diperbarui di Google Sheets! Anda dapat melihat hasil dan mengunggah dokumen di tab "Cetak & Unggah" di bawah.`
-          : `Data baru dengan CODE ${formData.CODE} berhasil ditambahkan! Anda sekarang dapat langsung mencetak Formulir Inventarisasi atau mengunggah berkas di tab "Cetak & Unggah" di bawah.`
+          ? (isLiveConnected 
+              ? `✅ Data dengan CODE ${formData.CODE} berhasil diperbarui di Google Sheets & Database Cloud!`
+              : `✅ Data dengan CODE ${formData.CODE} berhasil diperbarui dan tersimpan aman di Database Cloud Firestore & Cache Lokal!`)
+          : (isLiveConnected 
+              ? `✅ Data baru dengan CODE ${formData.CODE} berhasil ditambahkan ke Google Sheets & Database Cloud!`
+              : `✅ Data baru dengan CODE ${formData.CODE} berhasil disimpan di Database Cloud Firestore & Cache Lokal!`)
       });
 
       setSelectedEditRecord(savedRecord);
@@ -416,6 +478,38 @@ export default function FormInput({
 
   return (
     <div className="space-y-6" id="sip_form_input">
+      {/* Jalur Transmisi / Proyek Selector Bar */}
+      {projects && projects.length > 0 && onSwitchProject && (
+        <div className="p-4 bg-gradient-to-r from-amber-500/15 via-slate-900 to-amber-500/10 border border-amber-500/30 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30 shrink-0">
+              <Briefcase className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400 block font-mono">JALUR TRANSMISI AKTIF:</span>
+              <span className="text-sm font-black text-white font-sans">{activeProjectName || 'Pilih Jalur'}</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <label htmlFor="form_input_jalur_select" className="text-[10px] font-bold text-slate-400 uppercase shrink-0">Ganti Jalur:</label>
+            <select
+              id="form_input_jalur_select"
+              value={activeProjectId}
+              onChange={(e) => onSwitchProject(e.target.value)}
+              className="px-3 py-2 bg-slate-950 border border-amber-500/50 hover:border-amber-400 text-amber-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer max-w-[280px] sm:max-w-[360px] truncate shadow-inner"
+              title="Pilih Jalur Transmisi untuk input/edit data"
+            >
+              {projects.map(p => (
+                <option key={p.id} value={p.id} className="bg-slate-950 text-white font-semibold">
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
       {/* Search/Load Record to Edit section */}
       <div className="glass-card p-5 rounded-2xl shadow-xl space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
@@ -608,16 +702,16 @@ export default function FormInput({
       <div className="glass-card rounded-2xl shadow-xl overflow-hidden" id="sip_form_card">
         {/* Banner Indicator for Mode */}
         {selectedEditRecord ? (
-          <div className="bg-amber-500/10 text-white px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-500/20">
+          <div className="bg-amber-100 dark:bg-amber-500/10 text-slate-900 dark:text-white px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-300 dark:border-amber-500/20">
             <div className="flex items-center gap-2.5">
-              <span className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+              <span className="p-2 rounded-xl bg-amber-200 text-amber-900 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-400 dark:border-amber-500/30">
                 <Edit3 className="w-4 h-4" />
               </span>
               <div>
-                <p className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">Mode Edit Data Lahan</p>
-                <h3 className="text-sm font-bold mt-0.5 text-white">
-                  Mengedit: <span className="font-mono text-amber-300 font-extrabold">{selectedEditRecord.CODE}</span>
-                  {selectedEditRecord.NAMA && <span className="text-slate-300 font-normal"> · {selectedEditRecord.NAMA}</span>}
+                <p className="text-[10px] font-bold text-amber-800 dark:text-amber-400 uppercase tracking-wider">Mode Edit Data Lahan</p>
+                <h3 className="text-sm font-bold mt-0.5 text-slate-900 dark:text-white">
+                  Mengedit: <span className="font-mono text-amber-800 dark:text-amber-300 font-extrabold">{selectedEditRecord.CODE}</span>
+                  {selectedEditRecord.NAMA && <span className="text-slate-700 dark:text-slate-300 font-normal"> · {selectedEditRecord.NAMA}</span>}
                 </h3>
               </div>
             </div>
@@ -633,23 +727,23 @@ export default function FormInput({
                   <span>Hapus Bidang (Admin)</span>
                 </button>
               )}
-              <span className="text-xs font-mono bg-white/10 px-2.5 py-1 rounded-md border border-white/10 hidden sm:inline-block">
+              <span className="text-xs font-mono bg-amber-200/60 text-amber-950 border-amber-300 dark:bg-white/10 dark:text-slate-300 dark:border-white/10 px-2.5 py-1 rounded-md border hidden sm:inline-block">
                 Baris spreadsheet otomatis diperbarui
               </span>
             </div>
           </div>
         ) : (
-          <div className="bg-slate-900/60 text-white px-6 py-4 flex items-center justify-between border-b border-white/10">
+          <div className="bg-slate-100 text-slate-900 dark:bg-slate-900/60 dark:text-white px-6 py-4 flex items-center justify-between border-b border-slate-200 dark:border-white/10">
             <div className="flex items-center gap-2">
-              <span className="p-1 rounded-md bg-white/10 text-white">
+              <span className="p-1 rounded-md bg-slate-200 text-slate-800 dark:bg-white/10 dark:text-white">
                 <Plus className="w-4 h-4" />
               </span>
               <div>
-                <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">Mode Input Data Baru</p>
-                <h3 className="text-sm font-bold mt-0.5 font-sans">Formulir Lahan Baru</h3>
+                <p className="text-[10px] font-medium text-slate-600 dark:text-slate-400 uppercase tracking-wider">Mode Input Data Baru</p>
+                <h3 className="text-sm font-bold mt-0.5 font-sans text-slate-900 dark:text-white">Formulir Lahan Baru</h3>
               </div>
             </div>
-            <span className="text-xs font-mono bg-white/10 px-2.5 py-1 rounded-md border border-white/10">
+            <span className="text-xs font-mono bg-slate-200 text-slate-700 border-slate-300 dark:bg-white/10 dark:text-slate-300 dark:border-white/10 px-2.5 py-1 rounded-md border">
               Menambahkan baris baru ke Google Sheets
             </span>
           </div>
@@ -749,27 +843,27 @@ export default function FormInput({
         <div className="p-6 space-y-6">
           {/* Automatically Generated CODE View */}
           {activeTab !== 'cetak_unggah' && (
-            <div className="bg-white/5 p-4 rounded-xl border border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+            <div className="bg-slate-100 dark:bg-white/5 p-4 rounded-xl border border-slate-200 dark:border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
               <div>
-                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Kode Pengenal (CODE)</span>
-                <p className="text-xs text-slate-400 mt-0.5">Dihasilkan otomatis dari gabungan DESA, SPAN, dan NOBID.</p>
+                <span className="text-xs font-semibold text-slate-700 dark:text-slate-400 uppercase tracking-wider">Kode Pengenal (CODE)</span>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Dihasilkan otomatis dari gabungan DESA, SPAN, dan NOBID.</p>
               </div>
-              <span className="text-base font-bold font-mono text-white bg-slate-900 border border-white/10 px-4 py-2 rounded-xl">
+              <span className="text-base font-bold font-mono text-slate-900 bg-white dark:text-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 px-4 py-2 rounded-xl shadow-xs">
                 {formData.CODE || 'BELUM LENGKAP (DESA/SPAN/NOBID)'}
               </span>
             </div>
           )}
 
           {/* Form Navigation Tabs & Quick Action */}
-          <div className="flex flex-wrap items-center justify-between border-b border-white/10 gap-2 pb-1">
+          <div className="flex flex-wrap items-center justify-between border-b border-slate-200 dark:border-white/10 gap-2 pb-1">
             <div className="flex overflow-x-auto scrollbar-none gap-1">
               <button
                 type="button"
                 onClick={() => setActiveTab('lahan_pemilik')}
                 className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
                   activeTab === 'lahan_pemilik' 
-                    ? 'border-amber-400 text-amber-300 font-extrabold' 
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                    ? 'border-amber-500 text-amber-800 dark:border-amber-400 dark:text-amber-300 font-extrabold' 
+                    : 'border-transparent text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
                 }`}
               >
                 <MapPin className="w-4 h-4" />
@@ -780,8 +874,8 @@ export default function FormInput({
                 onClick={() => setActiveTab('alas_bangunan')}
                 className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
                   activeTab === 'alas_bangunan' 
-                    ? 'border-amber-400 text-amber-300 font-extrabold' 
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                    ? 'border-amber-500 text-amber-800 dark:border-amber-400 dark:text-amber-300 font-extrabold' 
+                    : 'border-transparent text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
                 }`}
               >
                 <Home className="w-4 h-4" />
@@ -792,8 +886,8 @@ export default function FormInput({
                 onClick={() => setActiveTab('tanaman')}
                 className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
                   activeTab === 'tanaman' 
-                    ? 'border-amber-400 text-amber-300 font-extrabold' 
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                    ? 'border-amber-500 text-amber-800 dark:border-amber-400 dark:text-amber-300 font-extrabold' 
+                    : 'border-transparent text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
                 }`}
               >
                 <Sprout className="w-4 h-4" />
@@ -804,8 +898,8 @@ export default function FormInput({
                 onClick={() => setActiveTab('administrasi')}
                 className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
                   activeTab === 'administrasi' 
-                    ? 'border-amber-400 text-amber-300 font-extrabold' 
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                    ? 'border-amber-500 text-amber-800 dark:border-amber-400 dark:text-amber-300 font-extrabold' 
+                    : 'border-transparent text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
                 }`}
               >
                 <Landmark className="w-4 h-4" />
@@ -816,8 +910,8 @@ export default function FormInput({
                 onClick={() => setActiveTab('cetak_unggah')}
                 className={`pb-3 px-4 text-xs font-bold border-b-2 tracking-wide uppercase transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
                   activeTab === 'cetak_unggah' 
-                    ? 'border-amber-400 text-amber-300 font-extrabold' 
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                    ? 'border-amber-500 text-amber-800 dark:border-amber-400 dark:text-amber-300 font-extrabold' 
+                    : 'border-transparent text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
                 }`}
               >
                 <FileText className="w-4 h-4" />
@@ -1715,6 +1809,110 @@ export default function FormInput({
                 </div>
               </div>
 
+              {/* 7 Pengesahan Tanda Tangan & Cap Desa Resmi */}
+              <div className="bg-slate-50/50 p-5 rounded-xl border border-slate-100 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-700 tracking-tight flex items-center gap-2">
+                      <PenTool className="w-4 h-4 text-amber-500" />
+                      Tanda Tangan & Cap Desa Resmi (7 Pengesahan Form Inventarisasi)
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Goreskan tanda tangan langsung lewat layar (HP/Tablet/Laptop) atau unggah foto/scan. Hasil otomatis berformat PNG transparan.
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2.5 py-1 rounded-full border border-amber-200 self-start sm:self-auto">
+                    Ukuran Pas Cetak A4
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {[
+                    { type: 'TTD_PEMILIK' as SignatureType, label: 'Tanda Tangan Pemilik Lahan', person: formData.NAMA || 'Nama Pemilik Belum Diisi', isCap: false },
+                    { type: 'TTD_SAKSI_1' as SignatureType, label: 'Tanda Tangan Saksi 1', person: formData.NAMA_SAKSI_1 || 'Nama Saksi 1 Belum Diisi', isCap: false },
+                    { type: 'TTD_SAKSI_2' as SignatureType, label: 'Tanda Tangan Saksi 2', person: formData.NAMA_SAKSI_2 || 'Nama Saksi 2 Belum Diisi', isCap: false },
+                    { type: 'TTD_TIM_1' as SignatureType, label: 'Tanda Tangan Tim Pelaksana 1', person: formData.nama_tim_1 || 'Nama Tim 1 Belum Diisi', isCap: false },
+                    { type: 'TTD_TIM_2' as SignatureType, label: 'Tanda Tangan Tim Pelaksana 2', person: formData.nama_tim_2 || 'Nama Tim 2 Belum Diisi', isCap: false },
+                    { type: 'TTD_KADES' as SignatureType, label: 'Tanda Tangan Kepala Desa', person: formData.NAMA_KADES || 'Nama Kades Belum Diisi', isCap: false },
+                    { type: 'CAP_DESA' as SignatureType, label: 'Cap / Stempel Resmi Desa', person: `Pemerintah Desa ${formData.DESA || ''}`, isCap: true },
+                  ].map((sig) => {
+                    const val = formData[sig.type];
+                    const hasSig = !!val && String(val).trim() !== '';
+                    return (
+                      <div 
+                        key={sig.type}
+                        className={`p-4 rounded-xl border transition-all flex flex-col justify-between gap-3 ${
+                          hasSig 
+                            ? 'bg-emerald-500/5 border-emerald-500/30 shadow-xs' 
+                            : sig.isCap 
+                              ? 'bg-purple-500/5 border-purple-500/20' 
+                              : 'bg-white border-slate-200 shadow-xs'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">
+                              {sig.label}
+                            </span>
+                            {hasSig ? (
+                              <span className="text-[9px] font-extrabold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-200">
+                                <CheckCircle2 className="w-2.5 h-2.5" />
+                                Tersedia
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                                Belum Ada
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-500 font-medium truncate">
+                            {sig.person}
+                          </p>
+                        </div>
+
+                        {/* Signature Preview or Empty Box */}
+                        <div className="h-24 bg-slate-50 rounded-lg border border-dashed border-slate-300 flex items-center justify-center p-2 overflow-hidden relative group">
+                          {hasSig ? (
+                            <img 
+                              src={val} 
+                              alt={sig.label} 
+                              className="max-h-full max-w-full object-contain filter drop-shadow-sm"
+                            />
+                          ) : (
+                            <div className="flex flex-col items-center justify-center text-slate-400 text-center">
+                              <PenTool className="w-5 h-5 mb-1 opacity-40 text-slate-500" />
+                              <span className="text-[10px]">Klik untuk TTD / Cap</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Action buttons */}
+                        <div className="flex items-center gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setActiveSignatureType(sig.type)}
+                            className="flex-1 py-1.5 px-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer active:scale-95"
+                          >
+                            <PenTool className="w-3.5 h-3.5" />
+                            <span>{hasSig ? 'Ganti TTD' : 'Tanda Tangan'}</span>
+                          </button>
+                          {hasSig && (
+                            <button
+                              type="button"
+                              onClick={() => handleChange(sig.type, '')}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                              title="Hapus tanda tangan ini"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* Progress & Locations */}
               <div className="bg-slate-50/50 p-5 rounded-xl border border-slate-100 space-y-4">
                 <h3 className="text-sm font-bold text-slate-700 tracking-tight border-b border-slate-200 pb-2">
@@ -1900,6 +2098,27 @@ export default function FormInput({
               await onDeleteRecord(target, true);
             }
           }}
+        />
+      )}
+
+      {/* MODAL TANDA TANGAN & CAP DIGITAL */}
+      {activeSignatureType && (
+        <SignatureModal
+          isOpen={!!activeSignatureType}
+          onClose={() => setActiveSignatureType(null)}
+          type={activeSignatureType}
+          title={SIGNATURE_CONFIGS[activeSignatureType]?.label || 'Tanda Tangan'}
+          personName={
+            activeSignatureType === 'TTD_PEMILIK' ? (formData.NAMA || undefined) :
+            activeSignatureType === 'TTD_SAKSI_1' ? (formData.NAMA_SAKSI_1 || undefined) :
+            activeSignatureType === 'TTD_SAKSI_2' ? (formData.NAMA_SAKSI_2 || undefined) :
+            activeSignatureType === 'TTD_TIM_1' ? (formData.nama_tim_1 || undefined) :
+            activeSignatureType === 'TTD_TIM_2' ? (formData.nama_tim_2 || undefined) :
+            activeSignatureType === 'TTD_KADES' ? (formData.NAMA_KADES || undefined) :
+            `Pemerintah Desa ${formData.DESA || ''}`
+          }
+          initialImage={formData[activeSignatureType]}
+          onSave={handleSaveSignature}
         />
       )}
     </div>

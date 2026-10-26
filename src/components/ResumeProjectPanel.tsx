@@ -52,8 +52,8 @@ import {
   fileToBase64,
   exportVillageResumesJson,
   importVillageResumesJson,
-  generateMasterWorkbookExcel,
-  importMasterWorkbookExcel
+  downloadJalurWorkbook,
+  generateJalurWorkbookExcel
 } from '../lib/projectResumeStorage';
 import { 
   uploadFileToDrive, 
@@ -150,10 +150,6 @@ export default function ResumeProjectPanel({
   const [importResult, setImportResult] = useState<{ success: boolean; message: string } | null>(null);
   const [copiedJson, setCopiedJson] = useState(false);
 
-  // 1 Workbook Excel Modal & Sync state
-  const [isWorkbookModalOpen, setIsWorkbookModalOpen] = useState(false);
-  const [isSyncingAllToSheet, setIsSyncingAllToSheet] = useState(false);
-
   // Dedicated Resume Spreadsheet Generator & CSV Web Publish state
   const [isGeneratingSheet, setIsGeneratingSheet] = useState(false);
   const [generatedSheetInfo, setGeneratedSheetInfo] = useState<{ id: string; url: string } | null>(null);
@@ -222,7 +218,6 @@ export default function ResumeProjectPanel({
         type: 'success',
         text: `✨ Berhasil membuat Google Spreadsheet Resume "${activeProjectName}" di Google Drive Anda!`
       });
-      setIsWorkbookModalOpen(true);
     } catch (err: any) {
       console.error("Gagal membuat Spreadsheet Resume:", err);
       alert("Gagal membuat Google Spreadsheet: " + (err?.message || err));
@@ -361,9 +356,8 @@ export default function ResumeProjectPanel({
           setCloudErrorDetail(null);
           setResumes(prev => {
             const map = new Map<string, VillageResume>();
-            // Keep local placeholders
+            // Keep local placeholders and merge live Firestore updates
             prev.forEach(p => map.set(p.desaName.toUpperCase(), p));
-            // Apply live Firestore updates
             updated.forEach(u => map.set(u.desaName.toUpperCase(), u));
             return Array.from(map.values());
           });
@@ -381,36 +375,29 @@ export default function ResumeProjectPanel({
 
     init();
     return () => unsubscribe();
-  }, [activeProjectId, uniqueDesasFromRecords, accessToken, spreadsheetId]);
+  }, [activeProjectId]);
 
-  // Manual pull from Google Sheets & Cloud Firestore
+  // Keep village list updated if new unique villages appear in land records
+  useEffect(() => {
+    if (uniqueDesasFromRecords.size === 0) return;
+    setResumes(prev => {
+      const map = new Map<string, VillageResume>();
+      prev.forEach(p => map.set(p.desaName.toUpperCase(), p));
+      let changed = false;
+      uniqueDesasFromRecords.forEach((_, desaName) => {
+        if (!map.has(desaName)) {
+          map.set(desaName, createDefaultVillageResume(activeProjectId, desaName));
+          changed = true;
+        }
+      });
+      return changed ? Array.from(map.values()) : prev;
+    });
+  }, [uniqueDesasFromRecords, activeProjectId]);
+
+  // Manual pull from Cloud Firestore
   const handleManualRefreshCloud = async () => {
     setIsRefreshingCloud(true);
     try {
-      // 1. If Google Sheets 1 Workbook connection is available, fetch from RESUME_SEMUA_JALUR tab
-      if (accessToken && spreadsheetId) {
-        try {
-          const sheetResumes = await fetchResumesFromGoogleSheet(accessToken, spreadsheetId, activeProjectId);
-          if (sheetResumes.length > 0) {
-            setResumes(prev => {
-              const map = new Map<string, VillageResume>();
-              prev.forEach(p => map.set(p.desaName.toUpperCase(), p));
-              sheetResumes.forEach(u => map.set(u.desaName.toUpperCase(), u));
-              return Array.from(map.values());
-            });
-            setSaveFeedback({ 
-              type: 'success', 
-              text: `Data Resume berhasil disinkronkan langsung dari 1 Workbook Google Sheets (${sheetResumes.length} desa)!` 
-            });
-            setTimeout(() => setSaveFeedback(null), 4000);
-            return;
-          }
-        } catch (sheetErr) {
-          console.warn("Pull from Google Sheet warning:", sheetErr);
-        }
-      }
-
-      // 2. Cloud Firestore check
       const connTest = await testCloudConnection();
       if (!connTest.connected) {
         setIsCloudConnected(false);
@@ -419,7 +406,7 @@ export default function ResumeProjectPanel({
         }
         setSaveFeedback({ 
           type: 'warning', 
-          text: 'Koneksi Cloud Firestore belum aktif / izin rules ditolak. Data tetap aman di penyimpanan lokal.' 
+          text: 'Koneksi Cloud Firestore belum aktif. Data tetap aman di penyimpanan lokal.' 
         });
         setTimeout(() => setSaveFeedback(null), 5000);
         return;
@@ -434,7 +421,7 @@ export default function ResumeProjectPanel({
       });
       setIsCloudConnected(true);
       setCloudErrorDetail(null);
-      setSaveFeedback({ type: 'success', text: 'Data Resume Proyek berhasil disinkronkan langsung dari Cloud Firestore!' });
+      setSaveFeedback({ type: 'success', text: `Data Resume Proyek berhasil disinkronkan langsung (${fresh.length} desa)!` });
       setTimeout(() => setSaveFeedback(null), 4000);
     } catch (err: any) {
       setIsCloudConnected(false);
@@ -535,23 +522,18 @@ export default function ResumeProjectPanel({
       setResumes(prev => prev.map(r => r.id === updated.id ? updated : r));
       setEditingDesa(null);
 
-      if (result.sheetSynced) {
+      if (result.cloudSynced) {
         setSaveFeedback({
           type: 'success',
-          text: `Progres Desa ${updated.desaName} berhasil disimpan ke 1 Workbook Google Sheets (Tab RESUME_SEMUA_JALUR) & otomatis muncul di komputer rekan!`
-        });
-      } else if (result.cloudSynced) {
-        setSaveFeedback({
-          type: 'success',
-          text: `Progres Desa ${updated.desaName} berhasil disimpan ke Cloud Firestore & otomatis tersinkron ke semua perangkat tim!`
+          text: `Progres Desa ${updated.desaName} berhasil disimpan ke Cloud Firestore & tersinkron ke semua perangkat tim!`
         });
       } else {
         setSaveFeedback({
-          type: 'warning',
-          text: `Data tersimpan di perangkat ini. ${result.error || 'Belum tersinkron ke cloud'}.`
+          type: 'success',
+          text: `Progres Desa ${updated.desaName} berhasil disimpan di penyimpanan lokal perangkat ini!`
         });
       }
-      setTimeout(() => setSaveFeedback(null), 6000);
+      setTimeout(() => setSaveFeedback(null), 5000);
     } catch (e: any) {
       console.error('Error saving village resume:', e);
       setSaveFeedback({
@@ -869,14 +851,23 @@ export default function ResumeProjectPanel({
               </button>
             )}
 
-            {/* 1 File Excel Workbook (Semua Jalur + Status + Link Drive) */}
+            {/* Unduh Excel Buku Laporan Jalur (.xlsx) */}
             <button
-              onClick={() => setIsWorkbookModalOpen(true)}
+              onClick={async () => {
+                const currentProj = allProjects?.find(p => p.id === activeProjectId) || {
+                  id: activeProjectId,
+                  name: activeProjectName || 'Proyek Jalur',
+                  spreadsheetId: null,
+                  folderId: null,
+                  uploadsFolderId: null
+                };
+                await downloadJalurWorkbook(currentProj, records, resumes);
+              }}
               className="px-3.5 py-2 bg-emerald-950/70 hover:bg-emerald-900/90 text-emerald-300 hover:text-white rounded-xl border border-emerald-500/40 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-sm hover:scale-[1.02]"
-              title="1 File Excel Workbook (Semua Jalur + Status Tahapan + Link Google Drive)"
+              title="Unduh Buku Excel Lengkap Jalur Ini (Resume Desa, Surat Instansi, & Daftar Nominatif)"
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
-              <span>1 Workbook Excel (Semua Jalur)</span>
+              <span>Unduh Excel Jalur (.xlsx)</span>
             </button>
 
             {/* Bagikan / Impor Data Antar Rekan */}
@@ -2430,296 +2421,6 @@ service cloud.firestore {
         </div>
       )}
 
-      {/* 10. MODAL: 1 FILE EXCEL WORKBOOK (SEMUA JALUR + STATUS + LINK DRIVE) */}
-      {isWorkbookModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fadeIn">
-          <div className="glass-card rounded-3xl w-full max-w-2xl border border-emerald-500/40 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="p-5 border-b border-white/10 flex items-center justify-between bg-slate-900/95">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
-                  <FileSpreadsheet className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-white tracking-tight flex items-center gap-2">
-                    <span>1 File Excel Workbook (Semua Jalur)</span>
-                    <span className="text-[10px] bg-emerald-500/10 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30 font-bold uppercase tracking-wider">
-                      Database Terpadu
-                    </span>
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    1 File Excel / Google Sheets mengakomodasi seluruh jalur, tahapan, dan tautan berkas Google Drive.
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsWorkbookModalOpen(false)}
-                className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 overflow-y-auto space-y-5 flex-1 bg-slate-950/60 text-xs text-slate-300">
-              
-              {/* Highlight Manfaat */}
-              <div className="p-4 bg-gradient-to-r from-emerald-950/40 to-slate-900/80 rounded-2xl border border-emerald-500/30 space-y-2">
-                <div className="flex items-center gap-2 text-emerald-300 font-bold text-xs">
-                  <Sparkles className="w-4 h-4 text-emerald-400" />
-                  <span>Praktis & Tidak Membebani Firebase</span>
-                </div>
-                <p className="text-[11px] text-slate-300 leading-relaxed">
-                  Semua jalur kompensasi (misal: <em>Payakumbuh</em>, <em>Pasuruan</em>, dll.) memiliki database dan barisnya masing-masing, namun seluruhnya <strong>terpadu dalam 1 Workbook Excel / Google Sheets</strong>. Setiap berkas PDF dan foto dokumentasi otomatis tersimpan ke Google Drive dan linknya tertulis rapi di kolom Excel.
-                </p>
-              </div>
-
-              {/* Bagian 1: Status Google Sheets 1 Workbook Live */}
-              <div className="p-4 bg-slate-900/80 rounded-2xl border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-extrabold text-white flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-emerald-400" />
-                    Koneksi Google Sheets Live (Tab RESUME_SEMUA_JALUR)
-                  </span>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${
-                    spreadsheetId 
-                      ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' 
-                      : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-                  }`}>
-                    {spreadsheetId ? 'Spreadsheet Terhubung' : 'Belum Ada Spreadsheet ID'}
-                  </span>
-                </div>
-
-                {spreadsheetId ? (
-                  <div className="space-y-3">
-                    <p className="text-[11px] text-slate-400">
-                      ID Spreadsheet Aktif: <span className="font-mono text-amber-300 select-all">{spreadsheetId}</span>
-                    </p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <a
-                        href={`https://docs.google.com/spreadsheets/d/${spreadsheetId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-md"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                        <span>Buka Spreadsheet di Google Drive</span>
-                      </a>
-
-                      <button
-                        type="button"
-                        disabled={isSyncingAllToSheet}
-                        onClick={async () => {
-                          if (!accessToken) {
-                            alert("Silakan masuk akun Google terlebih dahulu.");
-                            return;
-                          }
-                          setIsSyncingAllToSheet(true);
-                          try {
-                            await ensureResumeSheetTab(accessToken, spreadsheetId);
-                            let count = 0;
-                            for (const res of resumes) {
-                              const stats = uniqueDesasFromRecords.get(res.desaName.toUpperCase());
-                              const prog = calculateVillageProgress(res);
-                              await saveVillageResumeToSheet(
-                                accessToken,
-                                spreadsheetId,
-                                res,
-                                activeProjectName,
-                                stats?.totalBidang || 0,
-                                stats?.totalLuas || 0,
-                                prog
-                              );
-                              count++;
-                            }
-                            setSaveFeedback({
-                              type: 'success',
-                              text: `Sukses menyinkronkan seluruh ${count} desa ke tab RESUME_SEMUA_JALUR di Google Sheets!`
-                            });
-                          } catch (err: any) {
-                            alert("Gagal sinkronisasi ke Google Sheets: " + (err?.message || err));
-                          } finally {
-                            setIsSyncingAllToSheet(false);
-                          }
-                        }}
-                        className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold border border-white/10 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
-                      >
-                        <RefreshCw className={`w-3.5 h-3.5 text-sky-400 ${isSyncingAllToSheet ? 'animate-spin' : ''}`} />
-                        <span>{isSyncingAllToSheet ? 'Menyinkronkan...' : `Kirim Seluruh Data Desa (${resumes.length}) ke Google Sheets`}</span>
-                      </button>
-
-                      {!isGuest && (
-                        <button
-                          type="button"
-                          disabled={isGeneratingSheet}
-                          onClick={handleAutoGenerateResumeSheet}
-                          className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-xl text-xs font-bold border border-amber-500/20 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
-                          title="Buat Google Spreadsheet baru terpisah khusus Resume Proyek ini"
-                        >
-                          <Sparkles className={`w-3.5 h-3.5 ${isGeneratingSheet ? 'animate-spin' : 'text-amber-400'}`} />
-                          <span>Buat Sheet Baru Terpisah</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Jalur ini belum memiliki Google Spreadsheet. Anda bisa membuatnya secara otomatis langsung di Google Drive Anda dengan seluruh 36 header resmi!
-                    </p>
-                    {!isGuest && (
-                      <button
-                        type="button"
-                        disabled={isGeneratingSheet}
-                        onClick={handleAutoGenerateResumeSheet}
-                        className="px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-slate-950 font-black rounded-xl text-xs flex items-center gap-2 transition-all shadow-lg cursor-pointer disabled:opacity-50"
-                      >
-                        <Sparkles className={`w-4 h-4 ${isGeneratingSheet ? 'animate-spin' : 'text-slate-950'}`} />
-                        <span>{isGeneratingSheet ? 'Sedang Membuat Spreadsheet di Google Drive...' : '⚡ Buat Otomatis Google Spreadsheet Resume di Drive'}</span>
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Bagian Baru: Tautan Web Publish CSV Resume (Mode Tamu) */}
-              <div className="p-4 bg-sky-950/40 rounded-2xl border border-sky-500/30 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-extrabold text-white flex items-center gap-2">
-                    <Globe className="w-4 h-4 text-sky-400" />
-                    Tautan Web Publish CSV Google Sheet (Untuk Mode Tamu)
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setIsCsvGuideModalOpen(true)}
-                    className="text-[10px] font-bold text-sky-400 hover:text-sky-300 flex items-center gap-1 cursor-pointer"
-                  >
-                    <HelpCircle className="w-3.5 h-3.5" />
-                    Panduan Publikasi CSV
-                  </button>
-                </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Publikasikan file Google Spreadsheet Anda ke web format CSV agar Tamu/Stakeholder dapat memantau progres resume tanpa akun Google.
-                </p>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    type="text"
-                    value={editCsvUrl}
-                    onChange={(e) => setEditCsvUrl(e.target.value)}
-                    placeholder="Contoh: https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
-                    className="flex-1 px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-sky-500"
-                  />
-                  <div className="flex items-center gap-2 shrink-0">
-                    {editCsvUrl && (
-                      <button
-                        type="button"
-                        disabled={isTestingCsv}
-                        onClick={handleTestCsvUrl}
-                        className="px-3 py-2 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                      >
-                        <Globe className="w-3.5 h-3.5 text-sky-400" />
-                        <span>{isTestingCsv ? 'Menguji...' : '🧪 Uji CSV'}</span>
-                      </button>
-                    )}
-                    {!isGuest && onUpdateProjectPublicCsvUrl && (
-                      <button
-                        type="button"
-                        disabled={isSavingCsvUrl}
-                        onClick={handleSaveCsvUrl}
-                        className="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-black rounded-xl text-xs transition-all cursor-pointer shadow-md disabled:opacity-50"
-                      >
-                        <span>{isSavingCsvUrl ? 'Menyimpan...' : 'Simpan Tautan'}</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {csvTestFeedback && (
-                  <div className={`p-2.5 rounded-xl border text-xs flex items-center gap-2 ${
-                    csvTestFeedback.success 
-                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' 
-                      : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-                  }`}>
-                    {csvTestFeedback.success ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertTriangle className="w-4 h-4 shrink-0" />}
-                    <span>{csvTestFeedback.message}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Bagian 2: Unduh Master File Excel (.xlsx) */}
-              <div className="p-4 bg-slate-900/80 rounded-2xl border border-white/10 space-y-3">
-                <span className="text-xs font-extrabold text-white flex items-center gap-2">
-                  <Download className="w-4 h-4 text-emerald-400" />
-                  Unduh 1 File Workbook Excel (.xlsx) Offline
-                </span>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Menghasilkan 1 berkas Microsoft Excel (.xlsx) komprehensif berisi 2 Sheet:
-                  <br />• <strong>Sheet 1 (RESUME_SEMUA_JALUR):</strong> Seluruh tahapan desa, status, persentase tuntas, dan link Google Drive langsung ke file PDF.
-                  <br />• <strong>Sheet 2 (DAFTAR_BIDANG_MASTER):</strong> Seluruh data nominatif bidang tanah, pemilik, luas m², dan nomor identitas.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    generateMasterWorkbookExcel(
-                      allProjects && allProjects.length > 0 ? allProjects : [{ id: activeProjectId, name: activeProjectName, spreadsheetId: null, folderId: null, uploadsFolderId: null }],
-                      resumes,
-                      records
-                    );
-                  }}
-                  className="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-xl text-xs shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Unduh Master Excel 1 Workbook (.xlsx) Sekarang</span>
-                </button>
-              </div>
-
-              {/* Bagian 3: Impor dari File Excel (.xlsx) */}
-              <div className="p-4 bg-slate-900/80 rounded-2xl border border-white/10 space-y-3">
-                <span className="text-xs font-extrabold text-white flex items-center gap-2">
-                  <FileUp className="w-4 h-4 text-sky-400" />
-                  Impor Data dari Berkas Excel (.xlsx)
-                </span>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Punya file Excel master yang sudah diisi secara offline atau oleh rekan kerja? Unggah di sini dan sistem akan otomatis membaca seluruh jalur dan status tahapan desa.
-                </p>
-                <input
-                  type="file"
-                  accept=".xlsx, .xls"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    setIsImporting(true);
-                    const res = await importMasterWorkbookExcel(file, activeProjectId);
-                    setIsImporting(false);
-                    if (res.success) {
-                      const fresh = await loadVillageResumes(activeProjectId, { accessToken, spreadsheetId });
-                      setResumes(prev => {
-                        const map = new Map<string, VillageResume>();
-                        prev.forEach(p => map.set(p.desaName.toUpperCase(), p));
-                        fresh.forEach(u => map.set(u.desaName.toUpperCase(), u));
-                        return Array.from(map.values());
-                      });
-                      alert(`Berhasil mengimpor ${res.count} data desa dari file Excel Workbook!`);
-                    } else {
-                      alert(`Gagal membaca Excel: ${res.error || 'Format tidak cocok'}`);
-                    }
-                  }}
-                  className="block w-full text-xs text-slate-400 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-emerald-500/20 file:text-emerald-300 hover:file:bg-emerald-500/30 cursor-pointer"
-                />
-              </div>
-
-            </div>
-
-            <div className="p-4 border-t border-white/10 bg-slate-900 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setIsWorkbookModalOpen(false)}
-                className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
-              >
-                Tutup
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Panduan Publikasi Google Sheets ke Web (CSV) Modal */}
       <CsvPublishGuideModal 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { 
   googleSignIn, logout, auth, setAccessToken, db
@@ -60,7 +60,7 @@ import {
   RefreshCw, FileSpreadsheet, KeyRound, CheckSquare,
   Plus, User, UserCheck, Settings, Folder, Key, Eye, EyeOff, Lock, Unlock, Info, ShieldCheck, HelpCircle, Briefcase, Filter,
   Pin, Menu, Clock, LayoutGrid, Sun, Moon, Copy, Users, ExternalLink, Layers, Trash2, X, Globe, GitCompare,
-  CheckCircle2, AlertCircle, FileText, Landmark, Mail, Sparkles, BookOpen, Save, Download, Table
+  CheckCircle2, AlertCircle, FileText, Landmark, Mail, Sparkles, BookOpen, Save, Download, Table, Edit3
 } from 'lucide-react';
 
 const DEFAULT_PROJECTS: ProjectConfig[] = [
@@ -516,6 +516,15 @@ export default function App() {
   const [operatorError, setOperatorError] = useState<string | null>(null);
   const [operatorSuccess, setOperatorSuccess] = useState<string | null>(null);
 
+  // Form states for editing an existing operator
+  const [editingOperator, setEditingOperator] = useState<OperatorConfig | null>(null);
+  const [editOpName, setEditOpName] = useState('');
+  const [editOpPassword, setEditOpPassword] = useState('');
+  const [editOpRole, setEditOpRole] = useState<'ADMIN' | 'FIELD' | 'QC'>('FIELD');
+  const [editOpProjectId, setEditOpProjectId] = useState('');
+  const [isSavingEditOp, setIsSavingEditOp] = useState(false);
+  const [editOpError, setEditOpError] = useState<string | null>(null);
+
   // Save projects to Firestore cloud database (so other accounts can sync automatically)
   const saveProjectsToCloud = async (updatedProjects: ProjectConfig[], overrideHideZeroLuas?: boolean) => {
     try {
@@ -743,6 +752,86 @@ export default function App() {
       console.log("Operator berhasil dihapus dari cloud:", username);
     } catch (err: any) {
       console.warn("Gagal menghapus operator dari Firestore cloud:", err);
+    }
+  };
+
+  // Action: Open Edit Operator Modal
+  const handleStartEditOperator = (op: OperatorConfig) => {
+    setEditingOperator(op);
+    setEditOpName(op.name || '');
+    setEditOpPassword(op.password || '');
+    setEditOpRole(op.role || 'FIELD');
+    setEditOpProjectId(op.projectId || 'all');
+    setEditOpError(null);
+  };
+
+  // Action: Save Updated Operator
+  const handleSaveEditOperator = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingOperator) return;
+    setEditOpError(null);
+
+    const nameTrimmed = editOpName.trim();
+    const passwordTrimmed = editOpPassword.trim();
+    const projectIdSelected = editOpProjectId || 'all';
+
+    if (!nameTrimmed || !passwordTrimmed) {
+      setEditOpError("Nama Lengkap dan Sandi Akses wajib diisi!");
+      return;
+    }
+
+    setIsSavingEditOp(true);
+    const updatedOp: OperatorConfig = {
+      ...editingOperator,
+      name: nameTrimmed,
+      password: passwordTrimmed,
+      role: editOpRole,
+      projectId: projectIdSelected,
+    };
+
+    // 1. Immediately update React state & LocalStorage
+    const updatedOperators = operators.map(op => 
+      op.username === editingOperator.username ? updatedOp : op
+    );
+    setOperators(updatedOperators);
+    try {
+      localStorage.setItem('project_ventura_registered_operators', JSON.stringify(updatedOperators));
+    } catch (e) {}
+
+    // 2. If the currently active logged-in user is this operator, sync session immediately!
+    const activeOpUser = localStorage.getItem('project_ventura_operator_username');
+    if (activeOpUser && activeOpUser.toLowerCase() === editingOperator.username.toLowerCase()) {
+      setOperatorName(nameTrimmed);
+      localStorage.setItem('project_ventura_operator_name', nameTrimmed);
+      setRole(editOpRole);
+      localStorage.setItem('project_ventura_role', editOpRole);
+      if (projectIdSelected !== 'all') {
+        setIsOperatorLocked(true);
+        setOperatorLockedProjectId(projectIdSelected);
+        localStorage.setItem('project_ventura_operator_locked', 'true');
+        localStorage.setItem('project_ventura_operator_locked_project_id', projectIdSelected);
+        setActiveProjectId(projectIdSelected);
+        localStorage.setItem('project_ventura_active_project_id', projectIdSelected);
+      } else {
+        setIsOperatorLocked(false);
+        setOperatorLockedProjectId('');
+        localStorage.removeItem('project_ventura_operator_locked');
+        localStorage.removeItem('project_ventura_operator_locked_project_id');
+      }
+    }
+
+    setOperatorSuccess(`Data operator "${editingOperator.username}" berhasil diperbarui!`);
+    setTimeout(() => setOperatorSuccess(null), 5000);
+
+    // 3. Sync to Firestore cloud
+    try {
+      await setDoc(doc(db, 'registered_operators', editingOperator.username), updatedOp, { merge: true });
+      console.log("Perubahan operator disinkronkan ke Firestore:", editingOperator.username);
+    } catch (err) {
+      console.warn("Gagal menyinkronkan edit operator ke Firestore:", err);
+    } finally {
+      setIsSavingEditOp(false);
+      setEditingOperator(null);
     }
   };
 
@@ -1139,21 +1228,49 @@ export default function App() {
       BATAS_UTARA: "Sri Suyani",
       BATAS_SELATAN: "Sri Suyani",
       BATAS_TIMUR: "Sri Suyani",
-      BATAS_BARAT: "Tumirah"
+      BATAS_BARAT: "Tumirah",
+      TTD_SAKSI_1: "",
+      TTD_SAKSI_2: "",
+      TTD_TIM_1: "",
+      TTD_TIM_2: "",
+      TTD_KADES: "",
+      CAP_DESA: "",
+      TTD_PEMILIK: ""
     };
   };
 
-  // Save records cache to Firestore so guests can access real data automatically
+  // Save records cache to Firestore so guests and operators can access and sync real data
   const saveRecordsToFirestoreCache = async (projectId: string, list: LandRecord[]) => {
     try {
+      let recordsToSave = list.map(r => ({
+        ...r,
+        ID_UNIK: r.ID_UNIK || `ID-${(r.CODE || 'REC').replace(/[\s-]/g, '_')}`
+      }));
+
+      // Guard against Firestore 1MB document size limit (1,048,576 bytes)
+      // If large inline base64 signature strings are present, strip base64 to avoid total write rejection
+      const jsonLen = JSON.stringify(recordsToSave).length;
+      if (jsonLen > 800000) {
+        recordsToSave = recordsToSave.map(r => {
+          const stripped = { ...r };
+          const sigFields = ['TTD_SAKSI_1', 'TTD_SAKSI_2', 'TTD_TIM_1', 'TTD_TIM_2', 'TTD_KADES', 'CAP_DESA', 'TTD_PEMILIK'] as const;
+          sigFields.forEach(f => {
+            if (stripped[f] && stripped[f].startsWith('data:image') && stripped[f].length > 20000) {
+              stripped[f] = ''; // Drop giant base64 in cache array so parcel data persists
+            }
+          });
+          return stripped;
+        });
+      }
+
       await setDoc(doc(db, 'records_cache', projectId), {
-        records: list,
+        records: recordsToSave,
         lastUpdated: Date.now(),
-        updatedBy: user?.email || 'admin/user'
+        updatedBy: operatorName || user?.email || 'operator'
       });
       console.log("Records cache updated in Firestore successfully for project:", projectId);
     } catch (err) {
-      console.warn("Gagal menyimpan cache ke Firestore:", err);
+      console.error("Gagal menyimpan cache ke Firestore:", err);
     }
   };
 
@@ -1218,9 +1335,9 @@ export default function App() {
 
       if (!accessToken || accessToken === 'GUEST_BYPASS' || accessToken === 'null' || accessToken === 'undefined' || accessToken.trim() === '') {
         setIsLiveGoogleConnected(false);
-        setSpreadsheetId('guest_bypass');
-        setProjectUploadsFolderId('guest_bypass');
-        setSheetNameInfo(`${activeProj.name} (Mode Tamu / Cadangan)`);
+        setSpreadsheetId(activeProj.spreadsheetId || 'guest_bypass');
+        setProjectUploadsFolderId(activeProj.uploadsFolderId || 'guest_bypass');
+        setSheetNameInfo(activeProj.spreadsheetId ? `${activeProj.name} (Sinkron Cloud / ID Spreadsheet Terhubung)` : `${activeProj.name} (Mode Tim Lapangan / Cloud Firestore)`);
 
         // Try to fetch from public CSV URL first if configured
         if (activeProj.publicCsvUrl) {
@@ -1423,11 +1540,30 @@ export default function App() {
         console.warn("localStorage quota exceeded, unable to cache records locally:", storageError);
       }
 
-      // If an inconsistency was detected, do not immediately overwrite Firestore cache
-      // so that Admin can inspect differences and choose whether to apply spreadsheet or keep cache!
-      const hasInconsistency = existingCacheList && existingCacheList.length > 0 && Math.abs(sortedItems.length - existingCacheList.length) > 0;
+      // If an inconsistency or pending field team edits are detected, do not immediately overwrite Firestore cache
+      // so that Admin can inspect differences and choose whether to apply spreadsheet or push field edits!
+      const hasCountDiff = existingCacheList && existingCacheList.length > 0 && Math.abs(sortedItems.length - existingCacheList.length) > 0;
+      
+      const hasFieldEdits = (existingCacheList || []).some(cachedRec => {
+        if (cachedRec._needsSheetSync) return true;
+        const sheetRec = sortedItems.find(s => 
+          (cachedRec.ID_UNIK && s.ID_UNIK === cachedRec.ID_UNIK) ||
+          (cachedRec.CODE && s.CODE && s.CODE.trim().toUpperCase() === cachedRec.CODE.trim().toUpperCase())
+        );
+        if (!sheetRec) return true;
+        return cachedRec.NAMA !== sheetRec.NAMA ||
+               cachedRec.NIK !== sheetRec.NIK ||
+               cachedRec.LUAS !== sheetRec.LUAS ||
+               cachedRec.PROGRES_PEMBERKASAN !== sheetRec.PROGRES_PEMBERKASAN ||
+               cachedRec.PROGRES_UPLOAD_TRABAS !== sheetRec.PROGRES_UPLOAD_TRABAS ||
+               cachedRec.QC_STATUS !== sheetRec.QC_STATUS;
+      });
+
+      const hasInconsistency = hasCountDiff || hasFieldEdits;
       if (!hasInconsistency || options?.isManualSync) {
         saveRecordsToFirestoreCache(projectId, sortedItems);
+      } else {
+        console.warn(`[Integritas Data] Terdeteksi perbedaan data/editan lapangan antara Firestore Cache dan Spreadsheet. Cache tidak ditimpa agar editan tim lapangan aman.`);
       }
       setSheetNameInfo(activeProj.name);
       
@@ -1738,6 +1874,61 @@ export default function App() {
     }
   };
 
+  // State & Handler to push field edits directly into Google Sheets master
+  const [isPushingFieldEdits, setIsPushingFieldEdits] = useState(false);
+  const pendingFieldEditsCount = useMemo(() => {
+    return records.filter(r => r._needsSheetSync).length;
+  }, [records]);
+
+  const handlePushFieldEditsToSpreadsheet = async () => {
+    const targetSpreadsheetId = spreadsheetId && spreadsheetId !== 'guest_bypass'
+      ? spreadsheetId
+      : projects.find(p => p.id === activeProjectId)?.spreadsheetId;
+
+    if (!targetSpreadsheetId || targetSpreadsheetId === 'guest_bypass') {
+      alert("ID Spreadsheet proyek belum disetel. Periksa pengaturan proyek.");
+      return;
+    }
+
+    const pending = records.filter(r => r._needsSheetSync);
+    if (pending.length === 0) {
+      setSyncFeedback({
+        type: 'info',
+        message: 'Semua data bidang sudah tersinkronisasi dengan master Google Spreadsheet.',
+        timestamp: Date.now()
+      });
+      return;
+    }
+
+    setIsPushingFieldEdits(true);
+    try {
+      await executeWithAuthRetry(async (activeAuthToken) => {
+        let currentRecords = await fetchSpreadsheetRecords(activeAuthToken, targetSpreadsheetId);
+        for (const item of pending) {
+          await saveRecordToSpreadsheet(activeAuthToken, targetSpreadsheetId, item, true, currentRecords);
+        }
+        const refreshed = await fetchSpreadsheetRecords(activeAuthToken, targetSpreadsheetId);
+        const cleaned = refreshed.map(r => ({ ...r, _needsSheetSync: false }));
+        const sorted = [...cleaned].sort(compareLandRecords);
+        setRecords(sorted);
+        try {
+          localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(sorted));
+        } catch (e) {}
+        await saveRecordsToFirestoreCache(activeProjectId, sorted);
+      });
+
+      setSyncFeedback({
+        type: 'success',
+        message: `✅ Berhasil menyinkronkan ${pending.length} data editan lapangan ke Google Spreadsheet master!`,
+        timestamp: Date.now()
+      });
+    } catch (err: any) {
+      alert("Gagal menyinkronkan editan ke spreadsheet: " + (err?.message || err));
+    } finally {
+      setIsPushingFieldEdits(false);
+    }
+  };
+
   // Helper to log activities in LocalStorage and Firestore
   const logActivity = async (
     recordCode: string,
@@ -1845,55 +2036,119 @@ export default function App() {
   };
 
   // Callback to add/update a record in the sheet
-  const handleSaveRecord = async (record: LandRecord, isEdit: boolean) => {
+  const handleSaveRecord = async (record: LandRecord, isEdit: boolean, originalRecord?: LandRecord | null) => {
     if (isOperatorLocked && operatorLockedProjectId && activeProjectId !== operatorLockedProjectId) {
       throw new Error('Izin Ditolak: Akun operator Anda dikunci hanya untuk jalur proyek yang teregister.');
     }
 
-    const isOfflineOrGuest = !token || token === 'GUEST_BYPASS' || !spreadsheetId || spreadsheetId === 'guest_bypass';
+    // Check if we have an active or restorable token
+    let activeToken = token;
+    if (!activeToken || activeToken === 'GUEST_BYPASS') {
+      const stored = typeof window !== 'undefined' ? sessionStorage.getItem('project_ventura_oauth_token') : null;
+      if (stored && stored !== 'GUEST_BYPASS') {
+        activeToken = stored;
+        setToken(stored);
+      }
+    }
 
-    if (isOfflineOrGuest) {
-      let updatedList: LandRecord[];
-      if (isEdit) {
-        updatedList = records.map(r => r.CODE === record.CODE ? { ...r, ...record } : r);
-      } else {
-        const newRecordWithRow = {
+    const targetSpreadsheetId = (spreadsheetId && spreadsheetId !== 'guest_bypass') 
+      ? spreadsheetId 
+      : projects.find(p => p.id === activeProjectId)?.spreadsheetId;
+
+    const isOfflineOrGuest = !activeToken || activeToken === 'GUEST_BYPASS' || !targetSpreadsheetId || targetSpreadsheetId === 'guest_bypass';
+
+    // 1. Optimistic update immediately so data ALWAYS persists ("nyantol" langsung)
+    const targetCode = (record.CODE || '').trim().toUpperCase();
+    const origCode = (originalRecord?.CODE || '').trim().toUpperCase();
+    const origId = (originalRecord?.ID_UNIK || record.ID_UNIK || '').trim();
+    const origRow = originalRecord?.rowNumber || record.rowNumber;
+
+    let updatedList: LandRecord[];
+    if (isEdit) {
+      let matched = false;
+      updatedList = records.map(r => {
+        const rCode = (r.CODE || '').trim().toUpperCase();
+        const rId = (r.ID_UNIK || '').trim();
+        const isMatch = (origId && rId && rId === origId) ||
+                        (origCode && rCode && rCode === origCode) ||
+                        (origRow && r.rowNumber && r.rowNumber === origRow) ||
+                        (targetCode && rCode && rCode === targetCode);
+        if (isMatch) {
+          matched = true;
+          return {
+            ...r,
+            ...record,
+            rowNumber: r.rowNumber || record.rowNumber || origRow,
+            ID_UNIK: r.ID_UNIK || origId || record.ID_UNIK,
+            _lastModified: Date.now(),
+            _needsSheetSync: isOfflineOrGuest
+          };
+        }
+        return r;
+      });
+
+      if (!matched) {
+        updatedList = [...records, {
           ...record,
-          rowNumber: records.length + 2,
-          ID_UNIK: record.ID_UNIK || `LOCAL_${Date.now()}`
-        };
-        updatedList = [...records, newRecordWithRow];
+          rowNumber: record.rowNumber || origRow,
+          ID_UNIK: record.ID_UNIK || origId || `ID-${(record.CODE || 'REC').replace(/[\s-]/g, '_')}`,
+          _lastModified: Date.now(),
+          _needsSheetSync: isOfflineOrGuest
+        }];
       }
-      const sortedRecords = [...updatedList].sort(compareLandRecords);
-      setRecords(sortedRecords);
-      try {
-        localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(sortedRecords));
-      } catch (e) {
-        console.warn("Gagal menyimpan ke cache lokal:", e);
-      }
-      saveRecordsToFirestoreCache(activeProjectId, sortedRecords);
+    } else {
+      const newRecordWithRow = {
+        ...record,
+        rowNumber: records.length + 2,
+        ID_UNIK: record.ID_UNIK || `LOCAL_${Date.now()}`,
+        _lastModified: Date.now(),
+        _needsSheetSync: isOfflineOrGuest
+      };
+      updatedList = [...records, newRecordWithRow];
+    }
 
+    const sortedRecords = [...updatedList].sort(compareLandRecords);
+    setRecords(sortedRecords);
+    try {
+      localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(sortedRecords));
+    } catch (e) {
+      console.warn("Gagal menyimpan ke cache lokal:", e);
+    }
+    saveRecordsToFirestoreCache(activeProjectId, sortedRecords);
+
+    // 2. Synchronize to Google Spreadsheet if connected
+    if (!isOfflineOrGuest && targetSpreadsheetId) {
+      try {
+        await executeWithAuthRetry(async (activeAuthToken) => {
+          const saved = await saveRecordToSpreadsheet(activeAuthToken, targetSpreadsheetId, record, isEdit, records, originalRecord);
+          const expectedMinCount = isEdit ? records.length : records.length + 1;
+          const updatedRecords = await fetchSpreadsheetRecords(activeAuthToken, targetSpreadsheetId, { expectedMinCount });
+          const verifiedRecords = verifyAndMergeRecords(updatedRecords, saved);
+          const sortedVerified = [...verifiedRecords].sort(compareLandRecords);
+          setRecords(sortedVerified);
+          try {
+            localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(sortedVerified));
+          } catch (e) {}
+          saveRecordsToFirestoreCache(activeProjectId, sortedVerified);
+        });
+        setSyncFeedback({
+          type: 'success',
+          message: `✅ Berhasil disimpan ke Google Spreadsheet (${record.CODE}). Data telah tersinkronisasi penuh.`,
+          timestamp: Date.now()
+        });
+      } catch (sheetErr: any) {
+        console.warn("Sinkronisasi Google Spreadsheet tertunda:", sheetErr);
+        setSyncFeedback({
+          type: 'warning',
+          message: `✅ Data (${record.CODE}) aman tersimpan di cache lokal & Cloud Firestore. Sinkronisasi ke Google Spreadsheet tertunda (${sheetErr?.message || 'Koneksi'}).`,
+          timestamp: Date.now()
+        });
+      }
+    } else {
       setSyncFeedback({
         type: 'success',
-        message: `✅ Berhasil disimpan (${record.CODE}). Data tersimpan di penyimpanan lokal & cloud.`,
+        message: `✅ Berhasil disimpan (${record.CODE}). Data tersimpan aman di Database Cloud Firestore & Cache Lokal.`,
         timestamp: Date.now()
-      });
-    } else {
-      await executeWithAuthRetry(async (activeAuthToken) => {
-        // 1. Save/append to spreadsheet and get assigned row
-        const saved = await saveRecordToSpreadsheet(activeAuthToken, spreadsheetId, record, isEdit, records);
-        
-        // 2. Refresh local list with atomic min-count verification
-        const expectedMinCount = isEdit ? records.length : records.length + 1;
-        const updatedRecords = await fetchSpreadsheetRecords(activeAuthToken, spreadsheetId, { expectedMinCount });
-        
-        // 3. Verify and deduplicate before state update
-        const verifiedRecords = verifyAndMergeRecords(updatedRecords, saved);
-        const sortedRecords = [...verifiedRecords].sort(compareLandRecords);
-        setRecords(sortedRecords);
-
-        // 4. Update Firestore cache
-        saveRecordsToFirestoreCache(activeProjectId, sortedRecords);
       });
     }
     
@@ -2029,36 +2284,72 @@ export default function App() {
       }
     }
 
-    const isOfflineOrGuest = !token || token === 'GUEST_BYPASS' || !spreadsheetId || spreadsheetId === 'guest_bypass';
+    let activeToken = token;
+    if (!activeToken || activeToken === 'GUEST_BYPASS') {
+      const stored = typeof window !== 'undefined' ? sessionStorage.getItem('project_ventura_oauth_token') : null;
+      if (stored && stored !== 'GUEST_BYPASS') {
+        activeToken = stored;
+        setToken(stored);
+      }
+    }
 
-    if (isOfflineOrGuest) {
-      const updatedList = records.map(r => r.CODE === updatedRecord.CODE ? { ...r, ...updatedRecord } : r);
-      const sortedRefreshed = [...updatedList].sort(compareLandRecords);
-      setRecords(sortedRefreshed);
+    const targetSpreadsheetId = (spreadsheetId && spreadsheetId !== 'guest_bypass') 
+      ? spreadsheetId 
+      : projects.find(p => p.id === activeProjectId)?.spreadsheetId;
+
+    const isOfflineOrGuest = !activeToken || activeToken === 'GUEST_BYPASS' || !targetSpreadsheetId || targetSpreadsheetId === 'guest_bypass';
+
+    // 1. Optimistically update local state & cache immediately
+    const origId = (updatedRecord.ID_UNIK || '').trim();
+    const targetCode = (updatedRecord.CODE || '').trim().toUpperCase();
+
+    const updatedList = records.map(r => {
+      const rCode = (r.CODE || '').trim().toUpperCase();
+      const rId = (r.ID_UNIK || '').trim();
+      const isMatch = (origId && rId && rId === origId) ||
+                      (targetCode && rCode === targetCode) ||
+                      (updatedRecord.rowNumber && r.rowNumber === updatedRecord.rowNumber);
+      return isMatch ? { ...r, ...updatedRecord, _lastModified: Date.now(), _needsSheetSync: isOfflineOrGuest } : r;
+    });
+    const sortedRefreshed = [...updatedList].sort(compareLandRecords);
+    setRecords(sortedRefreshed);
+    try {
+      localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(sortedRefreshed));
+    } catch (e) {}
+    saveRecordsToFirestoreCache(activeProjectId, sortedRefreshed);
+
+    // 2. Synchronize to Google Spreadsheet if connected
+    if (!isOfflineOrGuest && targetSpreadsheetId) {
       try {
-        localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(sortedRefreshed));
-      } catch (e) {}
-      saveRecordsToFirestoreCache(activeProjectId, sortedRefreshed);
+        await executeWithAuthRetry(async (activeAuthToken) => {
+          const saved = await saveRecordToSpreadsheet(activeAuthToken, targetSpreadsheetId, updatedRecord, true, records, originalRecord);
+          const refreshed = await fetchSpreadsheetRecords(activeAuthToken, targetSpreadsheetId, { expectedMinCount: records.length });
+          const verified = verifyAndMergeRecords(refreshed, saved);
+          const finalSorted = [...verified].sort(compareLandRecords);
+          setRecords(finalSorted);
+          try {
+            localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(finalSorted));
+          } catch (e) {}
+          saveRecordsToFirestoreCache(activeProjectId, finalSorted);
+        });
+        setSyncFeedback({
+          type: 'success',
+          message: `✅ Perubahan berhasil disimpan ke spreadsheet (${updatedRecord.CODE}).`,
+          timestamp: Date.now()
+        });
+      } catch (sheetErr: any) {
+        console.warn("Sinkronisasi update spreadsheet tertunda:", sheetErr);
+        setSyncFeedback({
+          type: 'warning',
+          message: `✅ Perubahan (${updatedRecord.CODE}) aman tersimpan di cache lokal & Cloud Firestore. Sinkronisasi spreadsheet tertunda.`,
+          timestamp: Date.now()
+        });
+      }
+    } else {
       setSyncFeedback({
         type: 'success',
         message: `✅ Perubahan berhasil disimpan (${updatedRecord.CODE}).`,
         timestamp: Date.now()
-      });
-    } else {
-      await executeWithAuthRetry(async (activeAuthToken) => {
-        // 1. Save full record back to spreadsheet
-        const saved = await saveRecordToSpreadsheet(activeAuthToken, spreadsheetId, updatedRecord, true, records);
-        
-        // 2. Refresh local list with min-count verification
-        const refreshed = await fetchSpreadsheetRecords(activeAuthToken, spreadsheetId, { expectedMinCount: records.length });
-        
-        // 3. Verify and deduplicate before state update
-        const verified = verifyAndMergeRecords(refreshed, saved);
-        const sortedRefreshed = [...verified].sort(compareLandRecords);
-        setRecords(sortedRefreshed);
-
-        // 4. Update Firestore cache
-        saveRecordsToFirestoreCache(activeProjectId, sortedRefreshed);
       });
     }
 
@@ -4255,6 +4546,42 @@ export default function App() {
                         title="Tutup Pesan"
                       >
                         <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Banner Editan Tim Lapangan Menunggu Sinkronisasi ke Spreadsheet */}
+                {pendingFieldEditsCount > 0 && (
+                  <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg animate-fadeIn">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 bg-amber-500/20 rounded-xl text-amber-400 shrink-0">
+                        <UploadCloud className="w-5 h-5 animate-bounce" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-extrabold text-amber-300 uppercase tracking-wide">
+                            Editan Lapangan Menunggu Sinkronisasi ke Spreadsheet
+                          </span>
+                          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-200 border border-amber-500/30">
+                            {pendingFieldEditsCount} Bidang Baru/Diedit
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-300 mt-1 leading-normal">
+                          Terdapat {pendingFieldEditsCount} data bidang yang telah diedit/disimpan oleh Tim Lapangan di Cloud Firestore. Klik tombol di samping untuk langsung menuliskan pembaruan ini ke Master Google Spreadsheet.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                      <button
+                        type="button"
+                        onClick={handlePushFieldEditsToSpreadsheet}
+                        disabled={isPushingFieldEdits}
+                        className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${isPushingFieldEdits ? 'animate-spin' : ''}`} />
+                        <span>{isPushingFieldEdits ? 'Menyinkronkan...' : 'Sinkronkan ke Spreadsheet Sekarang'}</span>
                       </button>
                     </div>
                   </div>
@@ -6817,14 +7144,25 @@ export default function App() {
                                             </p>
                                           </div>
                                         </div>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleDeleteOperator(op.username)}
-                                          className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/15 hover:border-rose-500/25 rounded-lg cursor-pointer transition-all shrink-0"
-                                          title="Hapus Akun Operator"
-                                        >
-                                          <Trash2 className="w-3.5 h-3.5" />
-                                        </button>
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleStartEditOperator(op)}
+                                            className="p-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 border border-amber-500/20 hover:border-amber-500/30 rounded-lg cursor-pointer transition-all flex items-center gap-1 font-semibold text-[10px]"
+                                            title="Edit Data Akun Operator"
+                                          >
+                                            <Edit3 className="w-3.5 h-3.5" />
+                                            <span className="hidden sm:inline">Edit</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteOperator(op.username)}
+                                            className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/15 hover:border-rose-500/25 rounded-lg cursor-pointer transition-all"
+                                            title="Hapus Akun Operator"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
                                       </div>
                                     );
                                   })}
@@ -6833,6 +7171,136 @@ export default function App() {
                             </div>
                           </div>
                         </div>
+
+                        {/* Modal Edit Akun Operator */}
+                        {editingOperator && (
+                          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 animate-fadeIn">
+                            <div className="bg-slate-900 border border-amber-500/30 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-scaleUp">
+                              {/* Modal Header */}
+                              <div className="p-5 border-b border-white/10 flex items-center justify-between bg-slate-950/60">
+                                <div className="flex items-center gap-2.5">
+                                  <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30">
+                                    <Edit3 className="w-4 h-4 text-amber-400" />
+                                  </div>
+                                  <div>
+                                    <h3 className="font-bold text-white text-sm">Edit Data Akun Operator</h3>
+                                    <p className="text-[11px] text-slate-400 font-mono">@{editingOperator.username}</p>
+                                  </div>
+                                </div>
+                                <button 
+                                  onClick={() => setEditingOperator(null)}
+                                  className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-all cursor-pointer"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+
+                              {/* Modal Form */}
+                              <form onSubmit={handleSaveEditOperator} className="p-5 space-y-4">
+                                {/* Username (Read-Only ID) */}
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex justify-between">
+                                    <span>Nama Pengguna (Username)</span>
+                                    <span className="text-slate-500 text-[9px] font-normal">Terkunci / ID Sistem</span>
+                                  </label>
+                                  <input
+                                    type="text"
+                                    disabled
+                                    value={editingOperator.username}
+                                    className="w-full px-3 py-2 bg-slate-950/60 border border-white/5 rounded-xl text-xs text-slate-400 font-mono cursor-not-allowed select-all"
+                                  />
+                                </div>
+
+                                {/* Nama Lengkap */}
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-slate-300 uppercase tracking-wide">Nama Lengkap / Tim *</label>
+                                  <input
+                                    type="text"
+                                    required
+                                    value={editOpName}
+                                    onChange={(e) => setEditOpName(e.target.value)}
+                                    placeholder="contoh: Budi Hartono (Tim 1)"
+                                    className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400 font-semibold"
+                                  />
+                                </div>
+
+                                {/* Sandi / PIN */}
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-slate-300 uppercase tracking-wide">Sandi Akses / PIN *</label>
+                                  <input
+                                    type="text"
+                                    required
+                                    value={editOpPassword}
+                                    onChange={(e) => setEditOpPassword(e.target.value)}
+                                    placeholder="contoh: sandi123"
+                                    className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-amber-300 focus:outline-none focus:border-amber-400 font-mono font-bold"
+                                  />
+                                </div>
+
+                                {/* Peran (Role) */}
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-slate-300 uppercase tracking-wide">Peran Pekerjaan (Role)</label>
+                                  <select
+                                    value={editOpRole}
+                                    onChange={(e) => setEditOpRole(e.target.value as any)}
+                                    className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400 font-semibold cursor-pointer"
+                                  >
+                                    <option value="FIELD">PETUGAS LAPANGAN (Input Data Lahan)</option>
+                                    <option value="QC">VERIFIKATOR QC (Validasi & QC Verifikasi)</option>
+                                    <option value="ADMIN">ADMINISTRATOR (Akses Penuh Seluruh Menu)</option>
+                                  </select>
+                                </div>
+
+                                {/* Kunci Akses Jalur Proyek */}
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-slate-300 uppercase tracking-wide">Kunci Akses Jalur Proyek</label>
+                                  <select
+                                    value={editOpProjectId}
+                                    onChange={(e) => setEditOpProjectId(e.target.value)}
+                                    className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400 font-semibold cursor-pointer"
+                                  >
+                                    <option value="all">Semua Jalur (Akses Global)</option>
+                                    {projects.map(p => (
+                                      <option key={p.id} value={p.id}>{p.name}</option>
+                                    ))}
+                                  </select>
+                                  <span className="text-[9px] text-slate-500 leading-tight block pt-0.5">
+                                    Operator hanya akan dapat mengakses jalur yang dipilih. Pilih "Semua Jalur" jika ingin akses menyeluruh.
+                                  </span>
+                                </div>
+
+                                {editOpError && (
+                                  <p className="text-[10px] text-rose-400 bg-rose-500/10 px-2.5 py-1.5 rounded-lg border border-rose-500/25 font-semibold">
+                                    {editOpError}
+                                  </p>
+                                )}
+
+                                {/* Action Buttons */}
+                                <div className="pt-2 border-t border-white/10 flex items-center justify-end gap-2.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingOperator(null)}
+                                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                                  >
+                                    Batal
+                                  </button>
+                                  <button
+                                    type="submit"
+                                    disabled={isSavingEditOp}
+                                    className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs shadow-md transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
+                                  >
+                                    {isSavingEditOp ? (
+                                      <div className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                                    ) : (
+                                      <Save className="w-3.5 h-3.5" />
+                                    )}
+                                    <span>Simpan Perubahan</span>
+                                  </button>
+                                </div>
+                              </form>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

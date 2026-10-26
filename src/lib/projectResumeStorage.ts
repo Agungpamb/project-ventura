@@ -141,8 +141,50 @@ export async function loadVillageResumes(
   projectId: string,
   googleContext?: { accessToken?: string; spreadsheetId?: string }
 ): Promise<VillageResume[]> {
-  // 1. Primary Engine: If Google Sheets connection is available, pull directly from RESUME_SEMUA_JALUR
-  if (googleContext?.accessToken && googleContext?.spreadsheetId) {
+  // 1. Immediately read from LocalStorage cache (fastest response, no network latency)
+  let localResumes: VillageResume[] = [];
+  const cached = localStorage.getItem(`${VILLAGE_CACHE_PREFIX}${projectId}`);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        localResumes = parsed;
+      }
+    } catch (e) {
+      console.error('Error parsing cached village resumes:', e);
+    }
+  }
+
+  // 2. Fetch from Cloud Firestore collection 'village_resumes'
+  try {
+    const resumesRef = collection(db, 'village_resumes');
+    const q = query(resumesRef, where('projectId', '==', projectId));
+    const snap = await withTimeout(getDocs(q), 6000);
+    
+    if (!snap.empty) {
+      const list: VillageResume[] = [];
+      snap.forEach(docSnap => {
+        list.push(docSnap.data() as VillageResume);
+      });
+      // Merge Firestore data with local cache
+      const mergedMap = new Map<string, VillageResume>();
+      localResumes.forEach(r => mergedMap.set(r.id || r.desaName.toUpperCase(), r));
+      list.forEach(r => mergedMap.set(r.id || r.desaName.toUpperCase(), r));
+      const combined = Array.from(mergedMap.values());
+      localStorage.setItem(`${VILLAGE_CACHE_PREFIX}${projectId}`, JSON.stringify(combined));
+      return combined;
+    }
+  } catch (err) {
+    console.warn('Gagal memuat village resumes dari Firestore, tetap menggunakan cache lokal:', err);
+  }
+
+  // 3. Fallback to local storage if Firestore had no records yet
+  if (localResumes.length > 0) {
+    return localResumes;
+  }
+
+  // 4. Optional: If user configured a dedicated Google Sheet for this project's resumes
+  if (googleContext?.accessToken && googleContext?.spreadsheetId && googleContext.accessToken !== 'GUEST_BYPASS') {
     try {
       const sheetResumes = await fetchResumesFromGoogleSheet(
         googleContext.accessToken,
@@ -154,38 +196,10 @@ export async function loadVillageResumes(
         return sheetResumes;
       }
     } catch (sheetErr) {
-      console.warn("Gagal memuat resumes dari Google Sheets tab RESUME_SEMUA_JALUR:", sheetErr);
+      console.warn("Gagal memuat resumes dari Google Sheets:", sheetErr);
     }
   }
 
-  // 2. Firestore Cloud query
-  try {
-    const resumesRef = collection(db, 'village_resumes');
-    const q = query(resumesRef, where('projectId', '==', projectId));
-    const snap = await withTimeout(getDocs(q), 10000);
-    
-    if (!snap.empty) {
-      const list: VillageResume[] = [];
-      snap.forEach(docSnap => {
-        list.push(docSnap.data() as VillageResume);
-      });
-      // Save to localStorage as backup
-      localStorage.setItem(`${VILLAGE_CACHE_PREFIX}${projectId}`, JSON.stringify(list));
-      return list;
-    }
-  } catch (err) {
-    console.warn('Gagal memuat village resumes dari Firestore, beralih ke cache lokal:', err);
-  }
-
-  // 3. Fallback to local storage
-  const cached = localStorage.getItem(`${VILLAGE_CACHE_PREFIX}${projectId}`);
-  if (cached) {
-    try {
-      return JSON.parse(cached);
-    } catch (e) {
-      console.error('Error parsing cached village resumes:', e);
-    }
-  }
   return [];
 }
 
@@ -205,14 +219,14 @@ export async function saveVillageResume(
     lastUpdated: Date.now()
   };
 
-  // 1. Save to LocalStorage immediately for instant offline/local UX
+  // 1. Save to LocalStorage immediately (instant & guaranteed offline safe)
   try {
     const cached = localStorage.getItem(`${VILLAGE_CACHE_PREFIX}${resume.projectId}`);
     let current: VillageResume[] = [];
     if (cached) {
       try { current = JSON.parse(cached); } catch {}
     }
-    const index = current.findIndex(r => r.id === resume.id);
+    const index = current.findIndex(r => r.id === resume.id || r.desaName.toUpperCase() === resume.desaName.toUpperCase());
     let updatedList: VillageResume[];
     if (index >= 0) {
       updatedList = [...current];
@@ -225,35 +239,13 @@ export async function saveVillageResume(
     console.warn('Gagal menyimpan ke cache lokal:', err);
   }
 
-  // 2. Persist directly to Google Sheets RESUME_SEMUA_JALUR (1 Workbook)
-  let sheetSynced = false;
-  if (googleContext?.accessToken && googleContext?.spreadsheetId) {
-    try {
-      const sheetRes = await saveVillageResumeToSheet(
-        googleContext.accessToken,
-        googleContext.spreadsheetId,
-        updatedResume,
-        googleContext.projectName || 'Proyek Ventura',
-        googleContext.totalBidang || 0,
-        googleContext.totalLuas || 0,
-        googleContext.progressPct || 0
-      );
-      sheetSynced = sheetRes.success;
-      if (sheetSynced) {
-        console.log(`[1 Workbook Sheet] Desa ${resume.desaName} berhasil disimpan ke tab RESUME_SEMUA_JALUR di Google Sheets!`);
-      }
-    } catch (sheetErr) {
-      console.warn("Gagal simpan ke Google Sheets tab RESUME_SEMUA_JALUR:", sheetErr);
-    }
-  }
-
-  // 3. Persist to Firestore with safety timeout (Dual Engine)
+  // 2. Persist to Firestore with safety timeout (Realtime Cloud Sync)
   let cloudSynced = false;
   let firestoreError: string | undefined;
   try {
     const resumeRef = doc(db, 'village_resumes', resume.id);
     const sanitized = sanitizeForFirestore(updatedResume);
-    await withTimeout(setDoc(resumeRef, sanitized, { merge: true }), 12000);
+    await withTimeout(setDoc(resumeRef, sanitized, { merge: true }), 8000);
     console.log(`[Resume Project] Desa ${resume.desaName} berhasil disinkronkan ke Firestore Cloud!`);
     cloudSynced = true;
   } catch (err: any) {
@@ -264,11 +256,31 @@ export async function saveVillageResume(
       : 'Firestore dibatasi izin.';
   }
 
+  // 3. Optional: Persist to dedicated Google Sheet if configured for this project (non-blocking)
+  let sheetSynced = false;
+  if (googleContext?.accessToken && googleContext?.spreadsheetId && googleContext.accessToken !== 'GUEST_BYPASS') {
+    saveVillageResumeToSheet(
+      googleContext.accessToken,
+      googleContext.spreadsheetId,
+      updatedResume,
+      googleContext.projectName || 'Proyek Ventura',
+      googleContext.totalBidang || 0,
+      googleContext.totalLuas || 0,
+      googleContext.progressPct || 0
+    ).then((res) => {
+      if (res.success) {
+        console.log(`[Resume Sheet] Desa ${resume.desaName} berhasil disimpan ke Google Sheet!`);
+      }
+    }).catch((err) => {
+      console.warn("Gagal simpan ke Google Sheet:", err);
+    });
+  }
+
   return {
     success: true,
     cloudSynced,
     sheetSynced,
-    error: (!cloudSynced && !sheetSynced) ? firestoreError : undefined
+    error: (!cloudSynced) ? firestoreError : undefined
   };
 }
 

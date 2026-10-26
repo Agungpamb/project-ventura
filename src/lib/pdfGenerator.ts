@@ -226,6 +226,58 @@ async function loadImageAsBase64(url: string, maxWidth: number = 700, isLogo: bo
 }
 
 /**
+ * Helper to load signature/stamp as transparent PNG Base64 for PDF embedding.
+ */
+async function loadSignatureAsBase64(url: string, maxWidth: number = 400): Promise<string> {
+  if (!url) return '';
+  if (url.startsWith('data:image/')) return url;
+  const candidateUrls = getDirectImageUrls(url);
+  if (candidateUrls.length === 0) return '';
+
+  for (const srcUrl of candidateUrls) {
+    if (srcUrl.startsWith('data:image/')) return srcUrl;
+    const result = await new Promise<string>((resolve) => {
+      const timer = setTimeout(() => resolve(''), 2500);
+      const img = new Image();
+      if (srcUrl.startsWith('http://') || srcUrl.startsWith('https://')) {
+        img.crossOrigin = 'anonymous';
+      }
+      img.onload = () => {
+        clearTimeout(timer);
+        try {
+          const canvas = document.createElement('canvas');
+          let w = img.width || 400;
+          let h = img.height || 200;
+          if (w > maxWidth) {
+            h = Math.round((h * maxWidth) / w);
+            w = maxWidth;
+          }
+          canvas.width = Math.max(w, 1);
+          canvas.height = Math.max(h, 1);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve('');
+            return;
+          }
+          ctx.clearRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/png'));
+        } catch {
+          resolve('');
+        }
+      };
+      img.onerror = () => {
+        clearTimeout(timer);
+        resolve('');
+      };
+      img.src = srcUrl;
+    });
+    if (result && result.startsWith('data:image/')) return result;
+  }
+  return '';
+}
+
+/**
  * Generates a beautiful, high-fidelity 4-page Formulir Inventarisasi PDF
  * based on the provided LandRecord and Project Name.
  */
@@ -241,6 +293,25 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
 
   // Preload crisp official PNG logos directly from /public
   const logos = await getOfficialLogos();
+
+  // Preload 7 official signatures and village stamp
+  const [
+    sigTim1,
+    sigTim2,
+    sigPemilik,
+    sigSaksi1,
+    sigSaksi2,
+    sigKades,
+    capDesa
+  ] = await Promise.all([
+    record.TTD_TIM_1 ? loadSignatureAsBase64(record.TTD_TIM_1) : Promise.resolve(''),
+    record.TTD_TIM_2 ? loadSignatureAsBase64(record.TTD_TIM_2) : Promise.resolve(''),
+    record.TTD_PEMILIK ? loadSignatureAsBase64(record.TTD_PEMILIK) : Promise.resolve(''),
+    record.TTD_SAKSI_1 ? loadSignatureAsBase64(record.TTD_SAKSI_1) : Promise.resolve(''),
+    record.TTD_SAKSI_2 ? loadSignatureAsBase64(record.TTD_SAKSI_2) : Promise.resolve(''),
+    record.TTD_KADES ? loadSignatureAsBase64(record.TTD_KADES) : Promise.resolve(''),
+    record.CAP_DESA ? loadSignatureAsBase64(record.CAP_DESA) : Promise.resolve('')
+  ]);
 
   // Formatted date
   const today = new Date();
@@ -791,194 +862,136 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
   const closingText = 'Yang bertanda tangan di bawah ini menyatakan bahwa secara bersama-sama telah melakukan inventarisasi dengan hasil yang sesuai dengan di lapangan, dan tidak akan mengubah hasil inventarisasi ini sampai proses pembayaran kompensasi selesai.';
   const lines = doc.splitTextToSize(closingText, contentWidth - 4);
 
-  // Check if declaration and signatures fit on this page
-  const signaturesHeight = 20 + 28 + 14 + 14; 
-  if (y2 + lines.length * 4.2 + 10 + signaturesHeight > 270) {
+  // Check if declaration and signatures fit on this page (Matrix 3x2 takes ~75mm)
+  const signaturesHeight = 75; 
+  if (y2 + lines.length * 4.2 + 8 + signaturesHeight > 275) {
     doc.addPage();
     currentPNum++;
     drawPageHeader(currentPNum);
     y2 = 30;
   }
   
-  // Grey background box removed per User Request 4!
   doc.setFont('helvetica', 'italic');
   doc.setTextColor(55, 65, 81);
   lines.forEach((line: string, i: number) => {
     doc.text(line, leftMargin + 2, y2 + 4.2 + (i * 4.2));
   });
 
-  y2 += lines.length * 4.2 + 10;
+  y2 += lines.length * 4.2 + 6;
 
-  // --- SIGNATURES GRID ---
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+  // --- MATRIKS TANDA TANGAN (3 KOLOM × 2 BARIS SESUAI SPESIFIKASI ANDROID ROW PLN) ---
+  const colWidth = contentWidth / 3; // 60 mm per column
+  const rowHeight = 33; // 33 mm height per signature box
+  const row1Y = y2;
+  const row2Y = row1Y + rowHeight + 2;
 
-  const colWidth = contentWidth / 3;
   const sigCol1 = leftMargin;
   const sigCol2 = sigCol1 + colWidth;
   const sigCol3 = sigCol2 + colWidth;
 
-  // Headings
-  doc.text('TIM INVENTARISASI', sigCol1 + colWidth / 2, y2, { align: 'center' });
-  doc.text('PIHAK YANG BERHAK', sigCol2 + colWidth / 2, y2, { align: 'center' });
-  doc.text('PARA SAKSI', sigCol3 + colWidth / 2, y2, { align: 'center' });
+  const nameTim1 = (record.nama_tim_1 || 'TIM PELAKSANA 1').trim().toUpperCase();
+  const nameTim2 = (record.nama_tim_2 || 'TIM PELAKSANA 2').trim().toUpperCase();
+  const nameOwner = (record.NAMA || 'PEMILIK LAHAN').trim().toUpperCase();
+  const nameSaksi1 = (record.NAMA_SAKSI_1 || 'SAKSI 1').trim().toUpperCase();
+  const nameSaksi2 = (record.NAMA_SAKSI_2 || 'SAKSI 2').trim().toUpperCase();
+  const nameKades = (record.NAMA_KADES || 'KEPALA DESA').trim().toUpperCase();
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7);
-  doc.setTextColor(100, 116, 139);
-  doc.text('Nama dan Jabatan / Tanda Tangan', sigCol1 + colWidth / 2, y2 + 3.5, { align: 'center' });
-  doc.text('Pemilik Lahan / Ahli Waris', sigCol2 + colWidth / 2, y2 + 3.5, { align: 'center' });
-  doc.text('Saksi Batas / Keluarga', sigCol3 + colWidth / 2, y2 + 3.5, { align: 'center' });
+  // Helper to render one signature cell in the 3x2 grid
+  const renderSignatureCell = (
+    colX: number,
+    rowY: number,
+    title: string,
+    name: string,
+    sigImage?: string,
+    isKadesWithCap?: boolean
+  ) => {
+    // 1. Cell background & border box
+    doc.setDrawColor(borderGray[0], borderGray[1], borderGray[2]);
+    doc.setLineWidth(0.2);
+    doc.setFillColor(252, 252, 253);
+    doc.roundedRect(colX + 0.5, rowY, colWidth - 1, rowHeight, 1.5, 1.5, 'FD');
 
-  // Get name strings and wrap them to prevent any overlapping (max 20 chars per line, or wrap on space)
-  const wrapName20 = (text: string, maxLen = 20): string[] => {
-    if (!text || !text.trim()) return ['-'];
-    const words = text.trim().split(/\s+/);
-    const resultLines: string[] = [];
-    let current = '';
+    // 2. Header Title (e.g. TIM PELAKSANA 1, SAKSI 1, KEPALA DESA / LURAH)
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+    doc.text(title, colX + colWidth / 2, rowY + 4.5, { align: 'center' });
 
-    for (const w of words) {
-      if (!current) {
-        current = w;
-      } else if ((current + ' ' + w).length <= maxLen) {
-        current += ' ' + w;
+    // Subtle divider below title
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.15);
+    doc.line(colX + 3, rowY + 6.2, colX + colWidth - 3, rowY + 6.2);
+
+    // 3. Signature & Stamp rendering area
+    if (isKadesWithCap) {
+      // Android Spec: CAP_DESA.png di-overlay dengan transparansi (opacity 85%) menimpa bagian kiri TTD_KADES.png
+      if (capDesa && capDesa.startsWith('data:image/')) {
+        try {
+          const hasGState = typeof (doc as any).GState === 'function';
+          if (hasGState) {
+            (doc as any).setGState(new (doc as any).GState({ opacity: 0.85 }));
+          }
+          doc.addImage(capDesa, 'PNG', colX + 6, rowY + 7, 16.5, 16.5, undefined, 'FAST');
+          if (hasGState) {
+            (doc as any).setGState(new (doc as any).GState({ opacity: 1.0 }));
+          }
+        } catch (e) {
+          console.warn("Failed to embed capDesa in cell:", e);
+        }
+      }
+
+      // Kades Signature overlapping the right side of the stamp
+      if (sigImage && sigImage.startsWith('data:image/')) {
+        try {
+          doc.addImage(sigImage, 'PNG', colX + 17, rowY + 8, 25, 13.5, undefined, 'FAST');
+        } catch (e) {
+          console.warn("Failed to embed sigKades in cell:", e);
+        }
       } else {
-        resultLines.push(current);
-        current = w;
+        // Dot guide for manual ink
+        doc.setDrawColor(203, 213, 225);
+        doc.setLineWidth(0.2);
+        doc.line(colX + 16, rowY + 22, colX + colWidth - 6, rowY + 22);
+      }
+    } else {
+      // Standard signature
+      if (sigImage && sigImage.startsWith('data:image/')) {
+        try {
+          doc.addImage(sigImage, 'PNG', colX + (colWidth - 26) / 2, rowY + 7.5, 26, 13.5, undefined, 'FAST');
+        } catch (e) {
+          console.warn("Failed to embed signature in cell:", e);
+        }
+      } else {
+        // Line guide for manual ink signature
+        doc.setDrawColor(203, 213, 225);
+        doc.setLineWidth(0.2);
+        doc.line(colX + 10, rowY + 22, colX + colWidth - 10, rowY + 22);
       }
     }
-    if (current) resultLines.push(current);
-    return resultLines;
+
+    // 4. Person Name enclosed in parentheses
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+    const cleanDisplayName = name ? `( ${name} )` : '( ........................................ )';
+    const wrappedName = doc.splitTextToSize(cleanDisplayName, colWidth - 4);
+    wrappedName.forEach((line: string, idx: number) => {
+      doc.text(line, colX + colWidth / 2, rowY + 27.5 + (idx * 3.2), { align: 'center' });
+    });
   };
 
-  const nameTim1 = record.nama_tim_1 || 'DARMAWAN DWI SANJAYA';
-  const wrappedTim1 = wrapName20(`1. ${nameTim1}`, 20);
+  // --- BARIS 1: TIM PELAKSANA 1 | TIM PELAKSANA 2 | PEMILIK LAHAN ---
+  renderSignatureCell(sigCol1, row1Y, 'TIM PELAKSANA 1', nameTim1, sigTim1);
+  renderSignatureCell(sigCol2, row1Y, 'TIM PELAKSANA 2', nameTim2, sigTim2);
+  renderSignatureCell(sigCol3, row1Y, 'PEMILIK LAHAN', nameOwner, sigPemilik);
 
-  const nameOwner = record.NAMA || 'MURSIDAH';
-  const wrappedOwner = wrapName20(nameOwner, 20);
+  // --- BARIS 2: SAKSI 1 | SAKSI 2 | KEPALA DESA / LURAH ---
+  renderSignatureCell(sigCol1, row2Y, 'SAKSI 1', nameSaksi1, sigSaksi1);
+  renderSignatureCell(sigCol2, row2Y, 'SAKSI 2', nameSaksi2, sigSaksi2);
+  const kadesTitle = record.DESA ? `KEPALA DESA ${record.DESA.toUpperCase()}` : 'KEPALA DESA / LURAH';
+  renderSignatureCell(sigCol3, row2Y, kadesTitle, nameKades, sigKades, true);
 
-  const nameSaksi1 = record.NAMA_SAKSI_1 || 'RIZKI KURNIAWAN';
-  const wrappedSaksi1 = wrapName20(`1. ${nameSaksi1}`, 20);
-
-  const nameTim2 = record.nama_tim_2 || 'SATRIA ARYA WIBISONO';
-  const wrappedTim2 = wrapName20(`2. ${nameTim2}`, 20);
-
-  const nameSaksi2 = record.NAMA_SAKSI_2 || 'AHMAD CHORIIN';
-  const wrappedSaksi2 = wrapName20(`2. ${nameSaksi2}`, 20);
-
-  const nameKades = record.NAMA_KADES || 'TARYONO';
-  const wrappedKades = doc.splitTextToSize(nameKades, 50);
-
-  // Dynamic positioning of signature elements based on wrapped name heights
-  const sigStartY = y2 + 18;
-
-  // Signature row 1: Petugas 1 / Pemilik / Saksi 1
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7);
-  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-
-  // Tim 1 Name
-  wrappedTim1.forEach((line: string, idx: number) => {
-    doc.text(line, sigCol1 + 2, sigStartY + (idx * 3.5));
-  });
-  doc.text('(', sigCol1 + 41, sigStartY);
-  doc.line(sigCol1 + 43, sigStartY + 0.8, sigCol1 + 54, sigStartY + 0.8);
-  doc.text(')', sigCol1 + 55, sigStartY);
-
-  doc.setDrawColor(71, 85, 105);
-  doc.setLineWidth(0.2);
-  const lastLineTim1Y = sigStartY + (wrappedTim1.length - 1) * 3.5;
-  const textWidthTim1 = doc.getTextWidth(wrappedTim1[wrappedTim1.length - 1]);
-  doc.line(sigCol1 + 2, lastLineTim1Y + 0.8, sigCol1 + 2 + Math.min(textWidthTim1, 38), lastLineTim1Y + 0.8);
-
-  // Owner Signature Block (Pihak Yang Berhak / Warga Penerima) - formatted like Tim & Saksi
-  wrappedOwner.forEach((line: string, idx: number) => {
-    doc.text(line, sigCol2 + 2, sigStartY + (idx * 3.5));
-  });
-  doc.text('(', sigCol2 + 41, sigStartY);
-  doc.line(sigCol2 + 43, sigStartY + 0.8, sigCol2 + 54, sigStartY + 0.8);
-  doc.text(')', sigCol2 + 55, sigStartY);
-
-  const lastLineOwnerY = sigStartY + (wrappedOwner.length - 1) * 3.5;
-  const textWidthOwner = doc.getTextWidth(wrappedOwner[wrappedOwner.length - 1]);
-  doc.line(sigCol2 + 2, lastLineOwnerY + 0.8, sigCol2 + 2 + Math.min(textWidthOwner, 38), lastLineOwnerY + 0.8);
-
-  // Saksi 1 Name
-  wrappedSaksi1.forEach((line: string, idx: number) => {
-    doc.text(line, sigCol3 + 2, sigStartY + (idx * 3.5));
-  });
-  doc.text('(', sigCol3 + 41, sigStartY);
-  doc.line(sigCol3 + 43, sigStartY + 0.8, sigCol3 + 54, sigStartY + 0.8);
-  doc.text(')', sigCol3 + 55, sigStartY);
-
-  const lastLineSaksi1Y = sigStartY + (wrappedSaksi1.length - 1) * 3.5;
-  const textWidthSaksi1 = doc.getTextWidth(wrappedSaksi1[wrappedSaksi1.length - 1]);
-  doc.line(sigCol3 + 2, lastLineSaksi1Y + 0.8, sigCol3 + 2 + Math.min(textWidthSaksi1, 38), lastLineSaksi1Y + 0.8);
-
-  // Calculate dynamic starting Y for Row 2 to ensure NO overlap
-  const row1Height = Math.max(wrappedTim1.length, wrappedOwner.length, wrappedSaksi1.length) * 3.5;
-  const sigStartY2 = sigStartY + row1Height + 11; // minimum 11mm of gap
-
-  // Tim 2 Name
-  wrappedTim2.forEach((line: string, idx: number) => {
-    doc.text(line, sigCol1 + 2, sigStartY2 + (idx * 3.5));
-  });
-  doc.text('(', sigCol1 + 41, sigStartY2);
-  doc.line(sigCol1 + 43, sigStartY2 + 0.8, sigCol1 + 54, sigStartY2 + 0.8);
-  doc.text(')', sigCol1 + 55, sigStartY2);
-
-  const lastLineTim2Y = sigStartY2 + (wrappedTim2.length - 1) * 3.5;
-  const textWidthTim2 = doc.getTextWidth(wrappedTim2[wrappedTim2.length - 1]);
-  doc.line(sigCol1 + 2, lastLineTim2Y + 0.8, sigCol1 + 2 + Math.min(textWidthTim2, 38), lastLineTim2Y + 0.8);
-
-  // Saksi 2 Name
-  wrappedSaksi2.forEach((line: string, idx: number) => {
-    doc.text(line, sigCol3 + 2, sigStartY2 + (idx * 3.5));
-  });
-  doc.text('(', sigCol3 + 41, sigStartY2);
-  doc.line(sigCol3 + 43, sigStartY2 + 0.8, sigCol3 + 54, sigStartY2 + 0.8);
-  doc.text(')', sigCol3 + 55, sigStartY2);
-
-  const lastLineSaksi2Y = sigStartY2 + (wrappedSaksi2.length - 1) * 3.5;
-  const textWidthSaksi2 = doc.getTextWidth(wrappedSaksi2[wrappedSaksi2.length - 1]);
-  doc.line(sigCol3 + 2, lastLineSaksi2Y + 0.8, sigCol3 + 2 + Math.min(textWidthSaksi2, 38), lastLineSaksi2Y + 0.8);
-
-  // Calculate dynamic starting Y for Kades block to prevent ANY overlapping
-  const row2Height = Math.max(wrappedTim2.length, wrappedSaksi2.length) * 3.5;
-  const centerColX = leftMargin + contentWidth / 2;
-  const kadesStartY = sigStartY2 + row2Height + 14; // generous 14mm of gap
-
-  const rawKab = record.KABUPATEN || 'MOJOKERTO';
-  const cleanKab = rawKab.replace(/^(KAB\.?\s+|KABUPATEN\s+)/i, '');
-  const formattedKab = cleanKab.split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(71, 85, 105);
-  doc.text(`${formattedKab}, ${formattedDate}`, centerColX, kadesStartY, { align: 'center' });
-  doc.text('Mengetahui,', centerColX, kadesStartY + 3.5, { align: 'center' });
-  
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-  doc.text(`KEPALA DESA ${record.DESA?.toUpperCase() || 'DESA'}`, centerColX, kadesStartY + 7, { align: 'center' });
-
-  // Spacing for Kades actual signature area (32mm vertical height for extra space)
-  const kadesNameY = kadesStartY + 32;
-
-  // Kades Name
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-  wrappedKades.forEach((line: string, idx: number) => {
-    doc.text(line, centerColX, kadesNameY + (idx * 3.5), { align: 'center' });
-  });
-  
-  // Underline Kades Name with expanded line length
-  const lastLineKadesY = kadesNameY + (wrappedKades.length - 1) * 3.5;
-  const textWidthKades = doc.getTextWidth(wrappedKades[wrappedKades.length - 1]);
-  doc.setLineWidth(0.25);
-  doc.line(centerColX - (textWidthKades / 2 + 18), lastLineKadesY + 1, centerColX + (textWidthKades / 2 + 18), lastLineKadesY + 1);
+  y2 = row2Y + rowHeight + 6;
 
 
   // ==========================================

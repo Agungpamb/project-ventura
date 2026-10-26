@@ -423,7 +423,8 @@ export async function saveRecordToSpreadsheet(
   spreadsheetId: string,
   record: LandRecord,
   isEdit: boolean,
-  existingRecords: LandRecord[]
+  existingRecords: LandRecord[],
+  originalRecord?: LandRecord | null
 ): Promise<LandRecord> {
   try {
     // 1. Ensure CODE is fully computed
@@ -436,33 +437,51 @@ export async function saveRecordToSpreadsheet(
       }
     }
 
-    // 2. Ensure Idempotency Key (ID_UNIK) is deterministically set
+    // 2. Ensure Idempotency Key (ID_UNIK) is deterministically set (inherit from original if editing)
     if (!record.ID_UNIK || record.ID_UNIK.trim() === '') {
-      const codeIdentifier = (record.CODE || 'REC').replace(/[\s-]/g, '_');
-      record.ID_UNIK = `ID-${codeIdentifier}`;
+      if (originalRecord?.ID_UNIK && originalRecord.ID_UNIK.trim() !== '') {
+        record.ID_UNIK = originalRecord.ID_UNIK;
+      } else {
+        const codeIdentifier = (record.CODE || 'REC').replace(/[\s-]/g, '_');
+        record.ID_UNIK = `ID-${codeIdentifier}`;
+      }
     }
 
-    // 3. Check locally known records first for rapid matching
-    let targetRowIndex: number | undefined = record.rowNumber;
+    // 3. Locate Target Row in Google Sheets
+    // Priority:
+    // A. originalRecord.rowNumber or record.rowNumber (if valid > 1)
+    // B. Match in existingRecords (by original ID_UNIK, original CODE, current ID_UNIK, current CODE, or Desa/Span/Nobid)
+    let targetRowIndex: number | undefined = isEdit ? (originalRecord?.rowNumber || record.rowNumber) : undefined;
     
-    if (!targetRowIndex || !isEdit) {
+    if (isEdit && (!targetRowIndex || targetRowIndex <= 1)) {
+      const origId = originalRecord?.ID_UNIK?.trim();
+      const origCode = originalRecord?.CODE?.trim().toUpperCase();
+      const currId = record.ID_UNIK?.trim();
+      const currCode = record.CODE?.trim().toUpperCase();
+
       const match = existingRecords.find(r => 
-        (record.ID_UNIK && r.ID_UNIK && r.ID_UNIK === record.ID_UNIK) ||
-        (record.CODE && r.CODE && r.CODE.toUpperCase() === record.CODE.toUpperCase()) ||
+        (origId && r.ID_UNIK && r.ID_UNIK === origId) ||
+        (origCode && r.CODE && r.CODE.trim().toUpperCase() === origCode) ||
+        (currId && r.ID_UNIK && r.ID_UNIK === currId) ||
+        (currCode && r.CODE && r.CODE.trim().toUpperCase() === currCode) ||
+        (originalRecord?.DESA && originalRecord?.SPAN && originalRecord?.NOBID && 
+         r.DESA?.toUpperCase() === originalRecord.DESA.toUpperCase() && 
+         r.SPAN?.toUpperCase() === originalRecord.SPAN.toUpperCase() && 
+         r.NOBID?.toUpperCase() === originalRecord.NOBID.toUpperCase()) ||
         (record.DESA && record.SPAN && record.NOBID && 
          r.DESA?.toUpperCase() === record.DESA.toUpperCase() && 
          r.SPAN?.toUpperCase() === record.SPAN.toUpperCase() && 
          r.NOBID?.toUpperCase() === record.NOBID.toUpperCase())
       );
       
-      if (match && match.rowNumber) {
+      if (match && match.rowNumber && match.rowNumber > 1) {
         targetRowIndex = match.rowNumber;
       }
     }
 
     // 4. Live Idempotency Verification directly in Google Sheets Database
-    // Query columns A (CODE) and IO (ID_UNIK) before executing an append
-    if (!targetRowIndex) {
+    // Query columns A (CODE) and IO (ID_UNIK) before executing an append/update if row is still unknown
+    if (!targetRowIndex && isEdit) {
       try {
         const checkResponse = await fetchWithTimeout(
           `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?ranges=A:A&ranges=IO:IO`,
@@ -481,24 +500,34 @@ export async function saveRecordToSpreadsheet(
           const idUnikRows: string[][] = checkData.valueRanges?.[1]?.values || [];
           const maxRows = Math.max(codeRows.length, idUnikRows.length);
 
+          const searchCodes = [
+            originalRecord?.CODE?.trim().toUpperCase(),
+            record.CODE?.trim().toUpperCase()
+          ].filter(Boolean) as string[];
+
+          const searchIds = [
+            originalRecord?.ID_UNIK?.trim(),
+            record.ID_UNIK?.trim()
+          ].filter(Boolean) as string[];
+
           // Row 0 is the header (Row 1 in spreadsheet) -> check data rows starting at index 1
           for (let r = 1; r < maxRows; r++) {
             const sheetRow = r + 1; // 1-based spreadsheet row index
             const currentCode = (codeRows[r]?.[0] || '').trim().toUpperCase();
             const currentIdUnik = (idUnikRows[r]?.[0] || '').trim();
 
-            if (
-              (record.ID_UNIK && currentIdUnik && currentIdUnik === record.ID_UNIK) ||
-              (record.CODE && currentCode && currentCode === record.CODE.trim().toUpperCase())
-            ) {
+            const idMatch = currentIdUnik && searchIds.includes(currentIdUnik);
+            const codeMatch = currentCode && searchCodes.includes(currentCode);
+
+            if (idMatch || codeMatch) {
               targetRowIndex = sheetRow;
-              console.log(`[Idempotency Key] Ditemukan record existing pada baris ${sheetRow} dengan ID_UNIK: ${record.ID_UNIK}. Mengalihkan append ke overwrite update.`);
+              console.log(`[Idempotency Key] Ditemukan baris existing ke-${sheetRow} (CODE: ${currentCode}, ID: ${currentIdUnik}). Target overwrite update.`);
               break;
             }
           }
         }
       } catch (lookupErr) {
-        console.warn("[Idempotency Key] Pengecekan database langsung dilewati, menggunakan fallback state:", lookupErr);
+        console.warn("[Idempotency Key] Pengecekan database langsung dilewati:", lookupErr);
       }
     }
 
@@ -644,20 +673,115 @@ export async function findOrCreateFolder(
 }
 
 /**
- * Uploads a binary file to a specific Drive folder, with metadata and custom name.
+ * Sanitizes text components for Google Drive naming according to Android ROW PLN spec:
+ * 1. Dot (.) is completely removed from all text components (DESA, SPAN, NOBID, NAMA).
+ * 2. Forbidden characters (/ \ : * ? " < > | % # & + = ; @) are stripped.
+ * 3. Hyphen/strip (-) is converted to underscore (_).
+ * 4. Whitespaces converted to underscore, uppercase.
+ */
+export function sanitizeTextForDrive(text: string): string {
+  if (!text) return '';
+  return text
+    .toUpperCase()
+    .replace(/\./g, '') // 1. Dot (.) dihilangkan total
+    .replace(/[\/\\?%*:|"<>#&+;=@]/g, '') // 2. Karakter terlarang dibuang
+    .replace(/[-]/g, '_') // 3. Pemisah strip (-) dikonversi menjadi (_)
+    .replace(/\s+/g, '_') // Spasi jadi underscore
+    .replace(/_+/g, '_') // Hindari double underscore
+    .replace(/^_|_$/g, ''); // Trim leading/trailing underscore
+}
+
+/**
+ * Builds standard sanitized file name according to Android ROW PLN spec:
+ * <TAG>_<DESA>_<SPAN>_<NOBID>_<NAMA_PEMILIK>.<ext>
+ * e.g. KTP_BURU_T12_T14_12_SUTRISNO.jpg
+ */
+export function buildSanitizedFileName(
+  tag: string,
+  recordOrCode: string | Partial<LandRecord> | { DESA?: string; SPAN?: string; NOBID?: string; NAMA?: string; CODE?: string },
+  ext: string
+): string {
+  const cleanTag = sanitizeTextForDrive(tag) || 'DOKUMEN';
+  const cleanExt = ext.replace(/^\./, '').toLowerCase() || 'pdf';
+
+  if (typeof recordOrCode === 'object' && recordOrCode !== null) {
+    const cleanDesa = sanitizeTextForDrive(recordOrCode.DESA || 'DESA');
+    const cleanSpan = sanitizeTextForDrive(recordOrCode.SPAN || 'SPAN');
+    const cleanNobid = sanitizeTextForDrive(recordOrCode.NOBID || '001');
+    const cleanNama = sanitizeTextForDrive(recordOrCode.NAMA || 'PEMILIK');
+    return `${cleanTag}_${cleanDesa}_${cleanSpan}_${cleanNobid}_${cleanNama}.${cleanExt}`;
+  }
+
+  // Fallback if only string code is provided (e.g. "BURU_T.12-T.14_12")
+  const rawCode = String(recordOrCode || 'BIDANG_001');
+  const cleanCode = sanitizeTextForDrive(rawCode);
+  return `${cleanTag}_${cleanCode}.${cleanExt}`;
+}
+
+/**
+ * Builds standard parcel main folder name according to Android ROW PLN spec:
+ * <KODE_BIDANG>_<NAMA_PEMILIK>
+ * e.g. BURU_T12_T14_12_SUTRISNO
+ */
+export function buildSanitizedParcelFolderName(
+  record: Partial<LandRecord> | { DESA?: string; SPAN?: string; NOBID?: string; NAMA?: string; CODE?: string }
+): string {
+  const cleanDesa = sanitizeTextForDrive(record.DESA || '');
+  const cleanSpan = sanitizeTextForDrive(record.SPAN || '');
+  const cleanNobid = sanitizeTextForDrive(record.NOBID || '');
+  const cleanNama = sanitizeTextForDrive(record.NAMA || 'PEMILIK');
+
+  let codeBase = '';
+  if (cleanDesa && cleanSpan && cleanNobid) {
+    codeBase = `${cleanDesa}_${cleanSpan}_${cleanNobid}`;
+  } else if (record.CODE) {
+    codeBase = sanitizeTextForDrive(record.CODE);
+  } else {
+    codeBase = `BIDANG_${cleanNobid || '001'}`;
+  }
+
+  return cleanNama ? `${codeBase}_${cleanNama}` : codeBase;
+}
+
+/**
+ * Renames a folder or file in Google Drive
+ */
+export async function renameFolderInDrive(
+  accessToken: string,
+  folderId: string,
+  newName: string
+): Promise<boolean> {
+  try {
+    if (!folderId || !newName) return false;
+    const res = await fetchWithTimeout(`https://www.googleapis.com/drive/v3/files/${folderId}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ name: newName })
+    });
+    return res.ok;
+  } catch (e) {
+    console.warn("Failed to rename folder in Drive:", e);
+    return false;
+  }
+}
+
+/**
+ * Uploads a binary file to a specific Drive folder, with sanitized naming convention:
+ * <TAG>_<DESA>_<SPAN>_<NOBID>_<NAMA_PEMILIK>.<ext>
  */
 export async function uploadFileToDrive(
   accessToken: string,
   file: File,
-  docType: string, // KTP, KK, ALAS_HAK, PERALIHAN_HAK
-  recordCode: string,
+  docType: string, // KTP, KK, ALAS_HAK, PERALIHAN_HAK, etc.
+  recordOrCode: string | Partial<LandRecord>,
   folderId: string
 ): Promise<{ fileId: string; webViewLink: string }> {
   try {
-    // Generate custom file name
     const ext = file.name.split('.').pop() || 'pdf';
-    const cleanCode = recordCode.replace(/[\/\\?%*:|"<>\s]/g, '-');
-    const customFileName = `${docType}_${cleanCode}.${ext}`;
+    const customFileName = buildSanitizedFileName(docType, recordOrCode, ext);
     
     // Validate folderId: must look like a valid Google Drive ID
     const isValidFolderId = folderId && typeof folderId === 'string' && /^[a-zA-Z0-9_-]{15,60}$/.test(folderId.trim());
@@ -708,7 +832,6 @@ export async function uploadFileToDrive(
     }, 15000);
     
     if (!response.ok && validFolderId) {
-      // If upload failed (e.g. 404 Folder not found), retry uploading without parent folder!
       console.warn("Upload with parent folder failed, retrying without parent folder...");
       delete metadata.parents;
       const retryBody =
@@ -743,6 +866,186 @@ export async function uploadFileToDrive(
     };
   } catch (err) {
     console.error("Error uploadFileToDrive:", err);
+    throw err;
+  }
+}
+
+export type ParcelSubfolderCategory = 
+  | '1. Dokumentasi Lapangan dan Foto Warga'
+  | '2. Berkas'
+  | '3. Dokumen'
+  | '4. Form Invent';
+
+export const PARCEL_SUBFOLDERS: ParcelSubfolderCategory[] = [
+  '1. Dokumentasi Lapangan dan Foto Warga',
+  '2. Berkas',
+  '3. Dokumen',
+  '4. Form Invent'
+];
+
+/**
+ * Maps document tag/type to one of the 4 standard Google Drive subfolders
+ * strictly compliant with Android ROW PLN specification:
+ * 
+ * 1. Dokumentasi Lapangan dan Foto Warga:
+ *    - BIDANG_1, BIDANG_1_RAW, BIDANG_2, BIDANG_3, WAJAH_PATOK, WAJAH_PEMILIK
+ * 2. Berkas:
+ *    - KTP, KK, ALAS_HAK, PERALIHAN_HAK, JUAL_BELI, KETERANGAN_WARIS, KUASA_WARIS,
+ *      SURAT_KUASA, KET_BEDA_NAMA, WAKAF, KLAIM_TANAMAN, KLAIM_BANGUNAN, DOKUMEN_LAIN
+ * 3. Dokumen:
+ *    - TTD_TIM_1, TTD_TIM_2, TTD_PEMILIK, TTD_SAKSI_1, TTD_SAKSI_2, TTD_KADES, CAP_DESA
+ * 4. Form Invent:
+ *    - FORM_INVENT (PDF Formulir Resmi Inventarisasi)
+ */
+export function getCategoryForDocType(docType: string): ParcelSubfolderCategory {
+  const dt = docType.toUpperCase().trim();
+
+  // Subfolder 1: Dokumentasi Lapangan dan Foto Warga
+  if (
+    dt.includes('BIDANG_1') || 
+    dt.includes('BIDANG_2') || 
+    dt.includes('BIDANG_3') || 
+    dt.includes('WAJAH') || 
+    dt.includes('PATOK') || 
+    dt.includes('DOKUMENTASI')
+  ) {
+    return '1. Dokumentasi Lapangan dan Foto Warga';
+  }
+
+  // Subfolder 3: Dokumen (KHUSUS TTD Digital dan Cap Resmi Desa)
+  if (
+    dt.startsWith('TTD_') || 
+    dt.includes('CAP_DESA') ||
+    dt.includes('STEMPEL')
+  ) {
+    return '3. Dokumen';
+  }
+
+  // Subfolder 4: Form Invent (PDF Formulir Laporan)
+  if (dt.includes('INVENT') || dt.includes('FORMULIR')) {
+    return '4. Form Invent';
+  }
+
+  // Subfolder 2: Berkas (Seluruh berkas kepemilikan, peralihan, dan kependudukan)
+  return '2. Berkas';
+}
+
+/**
+ * Builds the neat hierarchical Google Drive structure for a parcel:
+ * [uploadsFolderId] -> [DESA <NAMA_DESA>] -> [SPAN <NOMOR_SPAN>] -> [<KODE_BIDANG>_<NAMA_PEMILIK>] -> 4 Subfolders:
+ * 1. Dokumentasi Lapangan dan Foto Warga
+ * 2. Berkas
+ * 3. Dokumen
+ * 4. Form Invent
+ */
+export async function getOrCreateParcelFolderHierarchy(
+  accessToken: string,
+  uploadsFolderId: string,
+  record: LandRecord,
+  targetCategory?: ParcelSubfolderCategory
+): Promise<{
+  desaFolderId: string;
+  spanFolderId: string;
+  parcelFolderId: string;
+  targetFolderId: string;
+}> {
+  try {
+    // 1. Desa Folder: e.g. "DESA KUTA"
+    const desaName = sanitizeTextForDrive(record.DESA || 'DESA_LAIN');
+    const desaFolderName = `DESA ${desaName}`;
+    const desaFolderId = await findOrCreateFolder(accessToken, desaFolderName, uploadsFolderId);
+
+    // 2. Span Folder: e.g. "SPAN T12_T14"
+    const spanName = sanitizeTextForDrive(record.SPAN || 'SPAN_LAIN');
+    const spanFolderName = `SPAN ${spanName}`;
+    const spanFolderId = await findOrCreateFolder(accessToken, spanFolderName, desaFolderId);
+
+    // 3. Parcel Main Folder: standard Android format "<KODE_BIDANG>_<NAMA_PEMILIK>"
+    // e.g. "BURU_T12_T14_12_SUTRISNO"
+    const parcelFolderName = buildSanitizedParcelFolderName(record);
+    const parcelFolderId = await findOrCreateFolder(accessToken, parcelFolderName, spanFolderId, record.ID_UNIK);
+
+    // 4. Ensure target subfolder or all 4 subfolders exist inside parcelFolderId
+    let targetFolderId = parcelFolderId;
+    if (targetCategory) {
+      targetFolderId = await findOrCreateFolder(accessToken, targetCategory, parcelFolderId);
+    }
+
+    return {
+      desaFolderId,
+      spanFolderId,
+      parcelFolderId,
+      targetFolderId
+    };
+  } catch (err) {
+    console.error("Error getOrCreateParcelFolderHierarchy:", err);
+    throw err;
+  }
+}
+
+/**
+ * Uploads a Base64 Image (e.g. transparent PNG signature, scan stamp, or canvas output) directly to Drive
+ * with sanitized naming convention: <TAG>_<DESA>_<SPAN>_<NOBID>_<NAMA_PEMILIK>.png
+ */
+export async function uploadBase64ImageToDrive(
+  accessToken: string,
+  dataUrl: string,
+  docType: string,
+  recordOrCode: string | Partial<LandRecord>,
+  folderId: string
+): Promise<{ fileId: string; webViewLink: string }> {
+  try {
+    const fileName = buildSanitizedFileName(docType, recordOrCode, 'png');
+    
+    // Extract raw base64 data from Data URL (data:image/png;base64,xxxx)
+    const base64Data = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+    
+    const isValidFolderId = folderId && typeof folderId === 'string' && /^[a-zA-Z0-9_-]{15,60}$/.test(folderId.trim());
+    const validFolderId = isValidFolderId ? folderId.trim() : undefined;
+
+    const metadata: any = {
+      name: fileName,
+      mimeType: 'image/png',
+    };
+    if (validFolderId) {
+      metadata.parents = [validFolderId];
+    }
+
+    const boundary = 'sip_upload_boundary_sig_delimiter';
+    const delimiter = `\r\n--${boundary}\r\n`;
+    const closeDelimiter = `\r\n--${boundary}--`;
+
+    const multipartRequestBody =
+      delimiter +
+      'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+      JSON.stringify(metadata) +
+      delimiter +
+      'Content-Type: image/png\r\n' +
+      'Content-Transfer-Encoding: base64\r\n\r\n' +
+      base64Data +
+      closeDelimiter;
+
+    const response = await fetchWithTimeout('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`
+      },
+      body: multipartRequestBody
+    }, 15000);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Upload TTD gagal: ${response.statusText} - ${errorText}`);
+    }
+
+    const fileInfo = await response.json();
+    return {
+      fileId: fileInfo.id,
+      webViewLink: fileInfo.webViewLink || `https://drive.google.com/file/d/${fileInfo.id}/view`
+    };
+  } catch (err) {
+    console.error("Error uploadBase64ImageToDrive:", err);
     throw err;
   }
 }
@@ -1695,5 +1998,70 @@ export async function fetchPublicCsvContent(url: string): Promise<string> {
   }
 
   throw new Error("Tautan CSV publik tidak dapat diakses atau spreadsheet belum dipublikasikan ke web. Pastikan Anda telah memilih menu File ➔ Bagikan ➔ Publikasikan ke Web (format .CSV).");
+}
+
+/**
+ * Sends inventory record and photos to Google Apps Script Webhook
+ * matching Android ROW PLN specification (Section 4):
+ * {
+ *   action: "appendInventory",
+ *   spreadsheetId,
+ *   targetFolderId,
+ *   code,
+ *   idUnik,
+ *   csvRow,
+ *   photos: [{ tag, fileName, base64 }]
+ * }
+ */
+export interface InventoryWebhookPayload {
+  action?: string;
+  spreadsheetId: string;
+  targetFolderId: string;
+  code: string;
+  idUnik?: string;
+  csvRow: string;
+  photos?: Array<{
+    tag: string;
+    fileName: string;
+    base64: string;
+  }>;
+}
+
+export async function sendInventoryWebhook(
+  webhookUrl: string,
+  payload: InventoryWebhookPayload
+): Promise<{ status: 'success' | 'error'; message: string; [key: string]: any }> {
+  try {
+    const finalPayload = {
+      action: payload.action || 'appendInventory',
+      ...payload
+    };
+
+    const response = await fetchWithTimeout(
+      webhookUrl,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8' // Apps Script handles text/plain with no CORS preflight blocks
+        },
+        body: JSON.stringify(finalPayload)
+      },
+      30000
+    );
+
+    if (!response.ok) {
+      throw new Error(`Webhook error: HTTP ${response.status} - ${response.statusText}`);
+    }
+
+    const text = await response.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { status: 'success', message: text };
+    }
+  } catch (err: any) {
+    console.error("sendInventoryWebhook Error:", err);
+    throw err;
+  }
 }
 

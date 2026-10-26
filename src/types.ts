@@ -105,6 +105,18 @@ export interface LandRecord {
   BATAS_SELATAN: string;
   BATAS_TIMUR: string;
   BATAS_BARAT: string;
+
+  TTD_SAKSI_1: string;
+  TTD_SAKSI_2: string;
+  TTD_TIM_1: string;
+  TTD_TIM_2: string;
+  TTD_KADES: string;
+  CAP_DESA: string;
+  TTD_PEMILIK: string;
+
+  // Sync metadata
+  _lastModified?: number;
+  _needsSheetSync?: boolean;
 }
 
 // Helper to generate the exact header row for Google Sheets
@@ -144,7 +156,8 @@ export const getSheetHeaders = (): string[] => {
     "QC_STATUS", "QC_NOTES", "QC_BY", "QC_DATE", "ID_UNIK", "JENIS_PERALIHAN_HAK",
     "LINK_JUAL_BELI", "LINK_KETERANGAN_WARIS", "LINK_KUASA_WARIS", "LINK_SURAT_KUASA", "LINK_KET_BEDA_NAMA", "LINK_WAKAF", "LINK_KLAIM_TANAMAN", "LINK_KLAIM_BANGUNAN", "LINK_DOKUMEN_LAIN",
     "LINK_DOKUMENTASI_BIDANG", "LINK_DOKUMENTASI_BIDANG_2", "LINK_DOKUMENTASI_BIDANG_3", "LINK_WAJAH_PEMILIK", "DRIVE_FOLDER_ID",
-    "BATAS_UTARA", "BATAS_SELATAN", "BATAS_TIMUR", "BATAS_BARAT"
+    "BATAS_UTARA", "BATAS_SELATAN", "BATAS_TIMUR", "BATAS_BARAT",
+    "TTD SAKSI 1", "TTD SAKSI 2", "TTD TIM 1", "TTD TIM 2", "TTD KADES", "CAP DESA", "TTD PEMILIK"
   ];
 
   return [...baseHeaders, ...buildingHeaders, ...plantHeaders, ...adminAndLinksHeaders];
@@ -249,7 +262,14 @@ export const recordToRow = (record: LandRecord): string[] => {
     record.BATAS_UTARA || "",
     record.BATAS_SELATAN || "",
     record.BATAS_TIMUR || "",
-    record.BATAS_BARAT || ""
+    record.BATAS_BARAT || "",
+    record.TTD_SAKSI_1 || "",
+    record.TTD_SAKSI_2 || "",
+    record.TTD_TIM_1 || "",
+    record.TTD_TIM_2 || "",
+    record.TTD_KADES || "",
+    record.CAP_DESA || "",
+    record.TTD_PEMILIK || ""
   );
 
   return row;
@@ -378,6 +398,14 @@ export const rowToRecord = (row: any[], index?: number): LandRecord => {
   record.BATAS_TIMUR = getVal(adminStartIdx + 41);
   record.BATAS_BARAT = getVal(adminStartIdx + 42);
 
+  record.TTD_SAKSI_1 = getVal(adminStartIdx + 43);
+  record.TTD_SAKSI_2 = getVal(adminStartIdx + 44);
+  record.TTD_TIM_1 = getVal(adminStartIdx + 45);
+  record.TTD_TIM_2 = getVal(adminStartIdx + 46);
+  record.TTD_KADES = getVal(adminStartIdx + 47);
+  record.CAP_DESA = getVal(adminStartIdx + 48);
+  record.TTD_PEMILIK = getVal(adminStartIdx + 49);
+
   return record as LandRecord;
 };
 
@@ -419,7 +447,14 @@ export const createEmptyRecord = (): LandRecord => {
     BATAS_UTARA: "",
     BATAS_SELATAN: "",
     BATAS_TIMUR: "",
-    BATAS_BARAT: ""
+    BATAS_BARAT: "",
+    TTD_SAKSI_1: "",
+    TTD_SAKSI_2: "",
+    TTD_TIM_1: "",
+    TTD_TIM_2: "",
+    TTD_KADES: "",
+    CAP_DESA: "",
+    TTD_PEMILIK: ""
   };
 };
 
@@ -624,6 +659,13 @@ export interface ProjectConfig {
   // 3. Surat Instansi (12 Kolom)
   agencyLetterSpreadsheetId?: string | null;
   agencyLetterPublicCsvUrl?: string | null;
+  status?: string;
+  webhookUrl?: string;
+  geojsonPolylineUrl?: string;
+  geojsonPolygonUrl?: string;
+  geojsonTowerUrl?: string;
+  rawSpreadsheetUrl?: string;
+  rawDriveFolderUrl?: string;
 }
 
 

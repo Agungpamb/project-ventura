@@ -2,9 +2,9 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { 
   CheckCircle, XCircle, AlertCircle, FileText, ExternalLink, 
   Search, ShieldCheck, UserCheck, Eye, Calendar, MapPin, 
-  Home, Sprout, Landmark, Save, X, Info, Loader2, Check, GitCompare
+  Home, Sprout, Landmark, Save, X, Info, Loader2, Check, GitCompare, Briefcase
 } from 'lucide-react';
-import { type LandRecord } from '../types';
+import { type LandRecord, type ProjectConfig } from '../types';
 
 interface QCPanelProps {
   records: LandRecord[];
@@ -12,9 +12,23 @@ interface QCPanelProps {
   onSaveQC: (record: LandRecord) => Promise<void>;
   onNavigateToSanding?: () => void;
   onNavigateToSandingEsdm?: () => void;
+  projects?: ProjectConfig[];
+  activeProjectId?: string;
+  activeProjectName?: string;
+  onSwitchProject?: (newId: string) => void;
 }
 
-export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSanding, onNavigateToSandingEsdm }: QCPanelProps) {
+export default function QCPanel({ 
+  records, 
+  adminEmail, 
+  onSaveQC, 
+  onNavigateToSanding, 
+  onNavigateToSandingEsdm,
+  projects,
+  activeProjectId,
+  activeProjectName,
+  onSwitchProject
+}: QCPanelProps) {
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRecord, setSelectedRecord] = useState<LandRecord | null>(null);
@@ -35,6 +49,14 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
   useEffect(() => {
     setSelectedNobid('');
   }, [selectedSpan]);
+
+  // Reset cascading selectors when active project or records change
+  useEffect(() => {
+    setSelectedDesa('');
+    setSelectedSpan('');
+    setSelectedNobid('');
+    setSearchQuery('');
+  }, [records, activeProjectId, activeProjectName]);
 
   // Compute unique values for dropdowns
   const uniqueDesas = useMemo(() => {
@@ -160,6 +182,27 @@ export default function QCPanel({ records, adminEmail, onSaveQC, onNavigateToSan
         </div>
 
         <div className="flex flex-wrap items-center gap-3 shrink-0">
+          {/* Jalur Selector in QC Panel */}
+          {projects && projects.length > 0 && onSwitchProject && (
+            <div className="flex items-center gap-2 bg-slate-900 border border-amber-500/40 px-3 py-1.5 rounded-xl shadow-inner">
+              <Briefcase className="w-4 h-4 text-amber-400 shrink-0" />
+              <span className="text-[10px] font-extrabold text-amber-400 uppercase tracking-wider shrink-0 font-mono">JALUR:</span>
+              <select
+                id="qc_panel_jalur_select"
+                value={activeProjectId}
+                onChange={(e) => onSwitchProject(e.target.value)}
+                className="bg-transparent text-xs font-black text-white focus:outline-none cursor-pointer max-w-[200px] sm:max-w-[280px] lg:max-w-[340px] truncate"
+                title="Pilih Jalur Transmisi untuk diverifikasi"
+              >
+                {projects.map(p => (
+                  <option key={p.id} value={p.id} className="bg-slate-950 text-white font-semibold">
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {onNavigateToSanding && (
             <button
               onClick={onNavigateToSanding}

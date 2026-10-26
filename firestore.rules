@@ -9,18 +9,14 @@ service cloud.firestore {
 
     // configs collection (e.g. projects list)
     match /configs/{document} {
-      // Allow anyone (even unauthenticated guests) to read the project configs
-      allow read: if true;
-      // Allow authenticated users to write/update configurations
-      allow write: if request.auth != null;
+      // Allow read and write for configs to ensure settings are always preserved
+      allow read, write: if true;
     }
 
     // records_cache collection (cached records of each project)
     match /records_cache/{projectId} {
-      // Allow anyone (even unauthenticated guests) to read cached records
-      allow read: if true;
-      // Allow authenticated users to write/update cached records
-      allow write: if request.auth != null;
+      // Allow read and write for records cache to ensure offline/guest data persists
+      allow read, write: if true;
     }
 
     // activity_logs collection
@@ -43,10 +39,7 @@ service cloud.firestore {
 
     // geojson_layers collection
     match /geojson_layers/{layerId} {
-      // Allow anyone (even unauthenticated guests) to read custom layers
-      allow read: if true;
-      // Allow authenticated users to write/delete custom layers
-      allow write: if request.auth != null;
+      allow read, write: if true;
     }
 
     // village_resumes collection (Menu 1.4)

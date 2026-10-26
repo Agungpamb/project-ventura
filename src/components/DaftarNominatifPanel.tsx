@@ -1,11 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   FileSpreadsheet, Printer, Download, Filter, Search, 
   FileText, Edit3, Layers, User, MapPin, CheckCircle2, 
   Clock, AlertCircle, Building2, Trees, RefreshCw, X, ChevronRight, Eye,
-  ArrowRight, Zap, GitMerge, Scissors, CheckSquare, Square, ShieldAlert, Trash2
+  ArrowRight, Zap, GitMerge, Scissors, CheckSquare, Square, ShieldAlert, Trash2, Briefcase
 } from 'lucide-react';
-import { type LandRecord } from '../types';
+import { type LandRecord, type ProjectConfig } from '../types';
 import MergeParcelModal from './MergeParcelModal';
 import SplitParcelModal from './SplitParcelModal';
 import QuickParcelPickerModal from './QuickParcelPickerModal';
@@ -15,6 +15,9 @@ interface DaftarNominatifPanelProps {
   records: LandRecord[];
   role?: 'ADMIN' | 'FIELD' | 'QC' | 'GUEST' | null;
   activeProjectName?: string;
+  projects?: ProjectConfig[];
+  activeProjectId?: string;
+  onSwitchProject?: (newId: string) => void;
   onNavigateToInput?: (record: LandRecord) => void;
   onBatchUpdateRecords?: (newRecords: LandRecord[], logDetails: string) => Promise<void>;
   onDeleteRecord?: (record: LandRecord, adjustNextParcels: boolean) => Promise<void>;
@@ -24,6 +27,9 @@ export default function DaftarNominatifPanel({
   records,
   role,
   activeProjectName = 'SUTT 150 KV JELOK - SANGGRAHAN',
+  projects,
+  activeProjectId,
+  onSwitchProject,
   onNavigateToInput,
   onBatchUpdateRecords,
   onDeleteRecord
@@ -37,6 +43,13 @@ export default function DaftarNominatifPanel({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [desaSearch, setDesaSearch] = useState<string>('');
   const [selectedRecordDetail, setSelectedRecordDetail] = useState<LandRecord | null>(null);
+
+  // Reset filters when active project or records change
+  useEffect(() => {
+    setSelectedDesa('');
+    setSelectedSpan('');
+    setSelectedRecordCodes(new Set());
+  }, [records, activeProjectId, activeProjectName]);
 
   // Selection state for Merge / Split
   const [selectedRecordCodes, setSelectedRecordCodes] = useState<Set<string>>(new Set());
@@ -463,6 +476,38 @@ export default function DaftarNominatifPanel({
 
       {/* Header Panel (Screen Only) */}
       <div className="glass-card p-6 rounded-3xl border border-white/10 shadow-xl space-y-4 no-print">
+        {/* Jalur Transmisi Selector */}
+        {projects && projects.length > 0 && onSwitchProject && (
+          <div className="p-3 bg-emerald-500/10 border border-emerald-500/25 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-inner">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30 shrink-0">
+                <Briefcase className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 block font-mono">JALUR TRANSMISI AKTIF:</span>
+                <span className="text-xs font-black text-white font-sans">{activeProjectName || 'Pilih Jalur'}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              <label htmlFor="nominatif_jalur_select" className="text-[10px] font-bold text-slate-400 uppercase shrink-0">Ganti Jalur:</label>
+              <select
+                id="nominatif_jalur_select"
+                value={activeProjectId}
+                onChange={(e) => onSwitchProject(e.target.value)}
+                className="px-3 py-1.5 bg-slate-900 border border-emerald-500/40 hover:border-emerald-400 text-emerald-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer max-w-[280px] sm:max-w-[360px] truncate shadow-inner"
+                title="Pilih Jalur Transmisi"
+              >
+                {projects.map(p => (
+                  <option key={p.id} value={p.id} className="bg-slate-950 text-white font-semibold">
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2.5">
