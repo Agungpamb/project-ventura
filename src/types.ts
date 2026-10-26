@@ -304,7 +304,7 @@ export const rowToRecord = (row: any[], index?: number): LandRecord => {
     NOMER_HAK: getVal(18),
     NAMA_ALAS_HAK: getVal(19),
     LUAS_YANG_ADA_PADA_ALAS_HAK: getVal(20),
-    KETERANGAN_ALAS_HAK: "SESUAI",
+    KETERANGAN_ALAS_HAK: "",
   };
 
   // Buildings parsing (Starts at index 21)
@@ -373,7 +373,7 @@ export const rowToRecord = (row: any[], index?: number): LandRecord => {
     idUnik = record.CODE ? `ID-${record.CODE.replace(/[\s-]/g, '_')}${suffix}` : `ID-${Math.random().toString(36).substring(2, 11).toUpperCase()}`;
   }
   record.ID_UNIK = idUnik;
-  record.JENIS_PERALIHAN_HAK = getVal(adminStartIdx + 24) || "JUAL-BELI";
+  record.JENIS_PERALIHAN_HAK = getVal(adminStartIdx + 24) || "";
   if (index !== undefined) {
     record.rowNumber = index + 2;
   }
@@ -417,10 +417,10 @@ export const createEmptyRecord = (): LandRecord => {
 
   return {
     CODE: "", DESA: "", SPAN: "", NOBID: "", LUAS: "",
-    PENUTUP_LAHAN: "SAWAH", STATUS_PENUTUP_LAHAN: "TANAH MASYARAKAT", STATUS_KEPEMILIKAN: "PEMILIK DIKETAHUI",
-    NAMA: "", NIK: "", TTL: "", JENIS_KELAMIN: "Laki-laki",
+    PENUTUP_LAHAN: "", STATUS_PENUTUP_LAHAN: "", STATUS_KEPEMILIKAN: "",
+    NAMA: "", NIK: "", TTL: "", JENIS_KELAMIN: "",
     ALAMAT_KTP_BARIS_1: "", ALAMAT_KTP_BARIS_2: "", ALAMAT_KTP_BARIS_3: "", ALAMAT_KTP_BARIS_4: "",
-    PEKERJAAN: "", JENIS_ALAS_HAK: "SERTIPIKAT HAK MILIK", NOMER_HAK: "", NAMA_ALAS_HAK: "", LUAS_YANG_ADA_PADA_ALAS_HAK: "", KETERANGAN_ALAS_HAK: "SESUAI",
+    PEKERJAAN: "", JENIS_ALAS_HAK: "", NOMER_HAK: "", NAMA_ALAS_HAK: "", LUAS_YANG_ADA_PADA_ALAS_HAK: "", KETERANGAN_ALAS_HAK: "",
     buildings,
     plants,
     STATUS_DESA: "", STATUS_KEPALA: "", NAMA_KADES: "", NAMA_SAKSI_1: "", NAMA_SAKSI_2: "",
@@ -429,7 +429,7 @@ export const createEmptyRecord = (): LandRecord => {
     LINK_KTP: "", LINK_KK: "", LINK_ALAS_HAK: "", LINK_PERALIHAN_HAK: "",
     QC_STATUS: "PENDING", QC_NOTES: "", QC_BY: "", QC_DATE: "",
     ID_UNIK: `ID-${Math.random().toString(36).substring(2, 11).toUpperCase()}`,
-    JENIS_PERALIHAN_HAK: "JUAL-BELI",
+    JENIS_PERALIHAN_HAK: "",
     LINK_JUAL_BELI: "",
     LINK_KETERANGAN_WARIS: "",
     LINK_KUASA_WARIS: "",

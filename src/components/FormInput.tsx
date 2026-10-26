@@ -2,12 +2,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Search, Plus, Trash2, Check, ArrowRight, ArrowLeft, Save, 
   MapPin, Landmark, Home, Sprout, ShieldAlert, Edit3, X, FileText, Key, RefreshCw, ExternalLink,
-  PenTool, CheckCircle2, Briefcase, Lock
+  PenTool, CheckCircle2, Briefcase, Lock, Upload
 } from 'lucide-react';
 import { type LandRecord, createEmptyRecord, type ProjectConfig } from '../types';
 import DocUpload from './DocUpload';
 import DeleteParcelModal from './DeleteParcelModal';
-import SignatureModal, { type SignatureType, SIGNATURE_CONFIGS } from './SignatureModal';
+import { type SignatureType } from './SignatureModal';
 import { getOrCreateParcelFolderHierarchy, uploadBase64ImageToDrive } from '../lib/googleApi';
 
 const PREDEFINED_PENUTUP_LAHAN = [
@@ -136,8 +136,7 @@ export default function FormInput({
   const [isRefreshingAuth, setIsRefreshingAuth] = useState(false);
   const [submitMessage, setSubmitMessage] = useState<{ type: 'success' | 'error'; text: string; isAuthError?: boolean } | null>(null);
 
-  // Digital Signature Modal states
-  const [activeSignatureType, setActiveSignatureType] = useState<SignatureType | null>(null);
+  // Signature uploading state
   const [isUploadingSig, setIsUploadingSig] = useState(false);
 
   // Signature handler: immediately updates form state and uploads transparent PNG to Drive subfolder if connected
@@ -145,7 +144,7 @@ export default function FormInput({
     // 1. Immediately update local state
     setFormData(prev => ({ ...prev, [type]: dataUrl }));
 
-    // 2. If Google Drive is connected, asynchronously upload into subfolder "1. Dokumentasi Lapangan dan Foto Warga"
+    // 2. If Google Drive is connected, asynchronously upload into subfolder "3. Dokumen"
     if (accessToken && accessToken !== 'GUEST_BYPASS' && accessToken !== 'null') {
       try {
         setIsUploadingSig(true);
@@ -175,6 +174,21 @@ export default function FormInput({
         setIsUploadingSig(false);
       }
     }
+  };
+
+  // Direct file / camera upload handler for signatures & stamp from mobile phone
+  const handleSignatureFilePick = (type: SignatureType, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
+        handleSaveSignature(type, dataUrl);
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   // Filter records based on search query for loading to edit
@@ -952,12 +966,16 @@ export default function FormInput({
             <div className="space-y-6 animate-fadeIn">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 uppercase mb-1">DESA *</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-600 uppercase">DESA *</label>
+                    {selectedEditRecord && (
+                      <span className="text-[10px] text-amber-600 font-semibold bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">Bisa Diedit</span>
+                    )}
+                  </div>
                   <input
                     type="text"
                     value={formData.DESA}
                     onChange={(e) => handleChange('DESA', e.target.value)}
-                    disabled={!!selectedEditRecord}
                     className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 ${
                       errors.DESA ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-amber-500'
                     }`}
@@ -967,12 +985,16 @@ export default function FormInput({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 uppercase mb-1">SPAN *</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-600 uppercase">SPAN *</label>
+                    {selectedEditRecord && (
+                      <span className="text-[10px] text-amber-600 font-semibold bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">Bisa Diedit</span>
+                    )}
+                  </div>
                   <input
                     type="text"
                     value={formData.SPAN}
                     onChange={(e) => handleChange('SPAN', e.target.value)}
-                    disabled={!!selectedEditRecord}
                     className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 ${
                       errors.SPAN ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-amber-500'
                     }`}
@@ -982,12 +1004,16 @@ export default function FormInput({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 uppercase mb-1">NOBID (Nomor Bidang) *</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-600 uppercase">NOBID (Nomor Bidang) *</label>
+                    {selectedEditRecord && (
+                      <span className="text-[10px] text-amber-600 font-semibold bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">Bisa Diedit</span>
+                    )}
+                  </div>
                   <input
                     type="text"
                     value={formData.NOBID}
                     onChange={(e) => handleChange('NOBID', e.target.value)}
-                    disabled={!!selectedEditRecord}
                     className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 ${
                       errors.NOBID ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-amber-500'
                     }`}
@@ -996,6 +1022,11 @@ export default function FormInput({
                   {errors.NOBID && <p className="text-xs text-rose-600 mt-1">{errors.NOBID}</p>}
                 </div>
               </div>
+              {selectedEditRecord && (
+                <p className="text-[11px] text-slate-500 -mt-2 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
+                  ℹ️ <strong>Tips Koreksi Data:</strong> DESA, SPAN, dan NOBID kini dapat diedit jika tim lapangan salah input. Sistem akan otomatis memperbarui kode identifikasi (<code className="font-mono text-amber-700">{formData.CODE || 'KODE'}</code>) dengan tetap menjaga riwayat dan ID unik bidang yang bersangkutan.
+                </p>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
                 <div>
@@ -1043,7 +1074,7 @@ export default function FormInput({
                     value={
                       PREDEFINED_PENUTUP_LAHAN.includes((formData.PENUTUP_LAHAN || '').toUpperCase())
                         ? (formData.PENUTUP_LAHAN || '').toUpperCase()
-                        : 'LAINNYA'
+                        : (formData.PENUTUP_LAHAN ? 'LAINNYA' : '')
                     }
                     onChange={(e) => {
                       const val = e.target.value;
@@ -1057,6 +1088,7 @@ export default function FormInput({
                     }}
                     className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                   >
+                    <option value="" className="text-slate-400 bg-white">-- Pilih Penutup Lahan --</option>
                     <option value="SAWAH" className="text-slate-800 bg-white">SAWAH</option>
                     <option value="LADANG ATAU TEGALAN" className="text-slate-800 bg-white">LADANG ATAU TEGALAN</option>
                     <option value="PERKEBUNAN" className="text-slate-800 bg-white">PERKEBUNAN</option>
@@ -1068,9 +1100,9 @@ export default function FormInput({
                     <option value="LAINNYA" className="text-slate-800 bg-white">LAINNYA (Ketik Sendiri)</option>
                   </select>
 
-                  {(!PREDEFINED_PENUTUP_LAHAN.includes((formData.PENUTUP_LAHAN || '').toUpperCase())) && (
+                  {(!PREDEFINED_PENUTUP_LAHAN.includes((formData.PENUTUP_LAHAN || '').toUpperCase())) && formData.PENUTUP_LAHAN !== '' && (
                     <div className="mt-2 animate-fadeIn">
-                      <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">
+                      <label className="block text-[10px] font-bold text-amber-600 uppercase mb-1">
                         Ketik Spesifikasi Penutup Lahan (misal: MAKAM, TAMAN, FASUM):
                       </label>
                       <input
@@ -1078,7 +1110,7 @@ export default function FormInput({
                         value={formData.PENUTUP_LAHAN || ''}
                         onChange={(e) => handleChange('PENUTUP_LAHAN', e.target.value.toUpperCase())}
                         placeholder="Contoh: MAKAM"
-                        className="w-full px-3 py-2 border border-amber-400/30 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500/30 bg-amber-500/10 text-amber-200 placeholder:text-slate-400 placeholder:font-normal"
+                        className="w-full px-3 py-2 border border-amber-400/40 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500/30 bg-amber-50 text-slate-800 placeholder:text-slate-400 placeholder:font-normal"
                       />
                     </div>
                   )}
@@ -1087,10 +1119,11 @@ export default function FormInput({
                 <div>
                   <label className="block text-xs font-bold text-slate-600 uppercase mb-1">STATUS PENUTUP LAHAN</label>
                   <select
-                    value={formData.STATUS_PENUTUP_LAHAN}
+                    value={formData.STATUS_PENUTUP_LAHAN || ''}
                     onChange={(e) => handleChange('STATUS_PENUTUP_LAHAN', e.target.value)}
                     className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                   >
+                    <option value="" className="text-slate-400 bg-white">-- Pilih Status Penutup Lahan --</option>
                     <option value="TANAH MASYARAKAT" className="text-slate-800 bg-white">TANAH MASYARAKAT</option>
                     <option value="KAWASAN HUTAN" className="text-slate-800 bg-white">KAWASAN HUTAN</option>
                     <option value="BMN" className="text-slate-800 bg-white">BMN</option>
@@ -1105,10 +1138,11 @@ export default function FormInput({
                 <div>
                   <label className="block text-xs font-bold text-slate-600 uppercase mb-1">STATUS KEPEMILIKAN</label>
                   <select
-                    value={formData.STATUS_KEPEMILIKAN}
+                    value={formData.STATUS_KEPEMILIKAN || ''}
                     onChange={(e) => handleChange('STATUS_KEPEMILIKAN', e.target.value)}
                     className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                   >
+                    <option value="" className="text-slate-400 bg-white">-- Pilih Status Kepemilikan --</option>
                     <option value="PEMILIK DIKETAHUI" className="text-slate-800 bg-white">PEMILIK DIKETAHUI</option>
                     <option value="PEMILIK TIDAK DIKETAHUI KEBERADAANNYA" className="text-slate-800 bg-white">PEMILIK TIDAK DIKETAHUI KEBERADAANNYA</option>
                     <option value="PEMILIK MENOLAK KOMPENSASI" className="text-slate-800 bg-white">PEMILIK MENOLAK KOMPENSASI</option>
@@ -1156,10 +1190,11 @@ export default function FormInput({
                   <div>
                     <label className="block text-xs font-bold text-slate-600 uppercase mb-1">JENIS KELAMIN</label>
                     <select
-                      value={formData.JENIS_KELAMIN}
+                      value={formData.JENIS_KELAMIN || ''}
                       onChange={(e) => handleChange('JENIS_KELAMIN', e.target.value)}
                       className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                     >
+                      <option value="" className="text-slate-400 bg-white">-- Pilih Jenis Kelamin --</option>
                       <option value="Laki-laki" className="text-slate-800 bg-white">Laki-laki</option>
                       <option value="Perempuan" className="text-slate-800 bg-white">Perempuan</option>
                     </select>
@@ -1342,7 +1377,7 @@ export default function FormInput({
                       value={
                         PREDEFINED_JENIS_ALAS_HAK.includes((formData.JENIS_ALAS_HAK || '').toUpperCase())
                           ? (formData.JENIS_ALAS_HAK || '').toUpperCase()
-                          : 'LAINNYA'
+                          : (formData.JENIS_ALAS_HAK ? 'LAINNYA' : '')
                       }
                       onChange={(e) => {
                         const val = e.target.value;
@@ -1356,6 +1391,7 @@ export default function FormInput({
                       }}
                       className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                     >
+                      <option value="" className="text-slate-400 bg-white">-- Pilih Jenis Alas Hak --</option>
                       <option value="SERTIPIKAT HAK MILIK" className="text-slate-800 bg-white">SERTIPIKAT HAK MILIK</option>
                       <option value="SERTIPIKAT HAK GUNA BANGUNAN" className="text-slate-800 bg-white">SERTIPIKAT HAK GUNA BANGUNAN</option>
                       <option value="SERTIPIKAT HAK GUNA USAHA" className="text-slate-800 bg-white">SERTIPIKAT HAK GUNA USAHA</option>
@@ -1367,9 +1403,9 @@ export default function FormInput({
                       <option value="LAINNYA" className="text-slate-800 bg-white">LAINNYA (Ketik Sendiri)</option>
                     </select>
 
-                    {(!PREDEFINED_JENIS_ALAS_HAK.includes((formData.JENIS_ALAS_HAK || '').toUpperCase())) && (
+                    {(!PREDEFINED_JENIS_ALAS_HAK.includes((formData.JENIS_ALAS_HAK || '').toUpperCase())) && formData.JENIS_ALAS_HAK !== '' && (
                       <div className="mt-2 animate-fadeIn">
-                        <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">
+                        <label className="block text-[10px] font-bold text-amber-600 uppercase mb-1">
                           Ketik Jenis Alas Hak Lainnya:
                         </label>
                         <input
@@ -1377,7 +1413,7 @@ export default function FormInput({
                           value={formData.JENIS_ALAS_HAK || ''}
                           onChange={(e) => handleChange('JENIS_ALAS_HAK', e.target.value.toUpperCase())}
                           placeholder="Contoh: KETERANGAN DESA / GIRIK"
-                          className="w-full px-3 py-2 border border-amber-400/30 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500/30 bg-amber-500/10 text-amber-200 placeholder:text-slate-400 placeholder:font-normal"
+                          className="w-full px-3 py-2 border border-amber-400/40 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500/30 bg-amber-50 text-slate-800 placeholder:text-slate-400 placeholder:font-normal"
                         />
                       </div>
                     )}
@@ -1422,10 +1458,11 @@ export default function FormInput({
                   <div>
                     <label className="block text-xs font-bold text-slate-600 uppercase mb-1">JENIS DOKUMEN PERALIHAN</label>
                     <select
-                      value={formData.JENIS_PERALIHAN_HAK || 'JUAL-BELI'}
+                      value={formData.JENIS_PERALIHAN_HAK || ''}
                       onChange={(e) => handleChange('JENIS_PERALIHAN_HAK', e.target.value)}
                       className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white font-medium text-slate-800"
                     >
+                      <option value="" className="text-slate-400 bg-white">-- Pilih Dokumen Peralihan (Jika Ada) --</option>
                       <option value="SESUAI" className="text-slate-800 bg-white">SESUAI</option>
                       <option value="JUAL-BELI" className="text-slate-800 bg-white">JUAL-BELI</option>
                       <option value="KETERANGAN WARIS" className="text-slate-800 bg-white">KETERANGAN WARIS</option>
@@ -1818,11 +1855,11 @@ export default function FormInput({
                       Tanda Tangan & Cap Desa Resmi (7 Pengesahan Form Inventarisasi)
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Goreskan tanda tangan langsung lewat layar (HP/Tablet/Laptop) atau unggah foto/scan. Hasil otomatis berformat PNG transparan.
+                      Ambil foto tanda tangan fisik secara langsung dari kamera HP atau unggah gambar dari penyimpanan perangkat.
                     </p>
                   </div>
                   <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2.5 py-1 rounded-full border border-amber-200 self-start sm:self-auto">
-                    Ukuran Pas Cetak A4
+                    Kamera / Galeri HP
                   </span>
                 </div>
 
@@ -1870,7 +1907,7 @@ export default function FormInput({
                           </p>
                         </div>
 
-                        {/* Signature Preview or Empty Box */}
+                        {/* Signature Preview or Empty Box with direct file trigger */}
                         <div className="h-24 bg-slate-50 rounded-lg border border-dashed border-slate-300 flex items-center justify-center p-2 overflow-hidden relative group">
                           {hasSig ? (
                             <img 
@@ -1879,23 +1916,31 @@ export default function FormInput({
                               className="max-h-full max-w-full object-contain filter drop-shadow-sm"
                             />
                           ) : (
-                            <div className="flex flex-col items-center justify-center text-slate-400 text-center">
-                              <PenTool className="w-5 h-5 mb-1 opacity-40 text-slate-500" />
-                              <span className="text-[10px]">Klik untuk TTD / Cap</span>
-                            </div>
+                            <label className="flex flex-col items-center justify-center text-slate-400 text-center cursor-pointer w-full h-full hover:text-amber-600 transition-colors">
+                              <Upload className="w-5 h-5 mb-1 opacity-60 text-slate-500" />
+                              <span className="text-[10px] font-semibold">Klik untuk Ambil dari HP</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => handleSignatureFilePick(sig.type, e)}
+                                className="hidden"
+                              />
+                            </label>
                           )}
                         </div>
 
                         {/* Action buttons */}
                         <div className="flex items-center gap-2 pt-1">
-                          <button
-                            type="button"
-                            onClick={() => setActiveSignatureType(sig.type)}
-                            className="flex-1 py-1.5 px-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer active:scale-95"
-                          >
-                            <PenTool className="w-3.5 h-3.5" />
-                            <span>{hasSig ? 'Ganti TTD' : 'Tanda Tangan'}</span>
-                          </button>
+                          <label className="flex-1 py-1.5 px-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer active:scale-95">
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>{hasSig ? 'Ganti Foto' : 'Ambil dari HP'}</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => handleSignatureFilePick(sig.type, e)}
+                              className="hidden"
+                            />
+                          </label>
                           {hasSig && (
                             <button
                               type="button"
@@ -1957,10 +2002,11 @@ export default function FormInput({
                   <div>
                     <label className="block text-xs font-bold text-slate-600 uppercase mb-1">KONFIRMASI BPN</label>
                     <select
-                      value={formData.KONFIRMASI_BPN || 'TIDAK'}
+                      value={formData.KONFIRMASI_BPN || ''}
                       onChange={(e) => handleChange('KONFIRMASI_BPN', e.target.value)}
                       className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                     >
+                      <option value="" className="text-slate-400 bg-white">-- Pilih Konfirmasi BPN --</option>
                       <option value="IYA" className="text-slate-800 bg-white">IYA</option>
                       <option value="TIDAK" className="text-slate-800 bg-white">TIDAK</option>
                     </select>
@@ -1969,10 +2015,11 @@ export default function FormInput({
                   <div>
                     <label className="block text-xs font-bold text-slate-600 uppercase mb-1">PROGRES PEMBERKASAN</label>
                     <select
-                      value={formData.PROGRES_PEMBERKASAN || 'BELUM SELESAI'}
+                      value={formData.PROGRES_PEMBERKASAN || ''}
                       onChange={(e) => handleChange('PROGRES_PEMBERKASAN', e.target.value)}
                       className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                     >
+                      <option value="" className="text-slate-400 bg-white">-- Pilih Progres Pemberkasan --</option>
                       <option value="BELUM SELESAI" className="text-slate-800 bg-white">BELUM SELESAI</option>
                       <option value="SELESAI" className="text-slate-800 bg-white">SELESAI</option>
                       <option value="KONSINYASI" className="text-slate-800 bg-white">KONSINYASI</option>
@@ -1982,10 +2029,11 @@ export default function FormInput({
                   <div>
                     <label className="block text-xs font-bold text-slate-600 uppercase mb-1">PROGRES UPLOAD TRABAS</label>
                     <select
-                      value={formData.PROGRES_UPLOAD_TRABAS || 'BELUM'}
+                      value={formData.PROGRES_UPLOAD_TRABAS || ''}
                       onChange={(e) => handleChange('PROGRES_UPLOAD_TRABAS', e.target.value)}
                       className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                     >
+                      <option value="" className="text-slate-400 bg-white">-- Pilih Progres Upload Trabas --</option>
                       <option value="SUDAH" className="text-slate-800 bg-white">SUDAH</option>
                       <option value="BELUM" className="text-slate-800 bg-white">BELUM</option>
                     </select>
@@ -2098,27 +2146,6 @@ export default function FormInput({
               await onDeleteRecord(target, true);
             }
           }}
-        />
-      )}
-
-      {/* MODAL TANDA TANGAN & CAP DIGITAL */}
-      {activeSignatureType && (
-        <SignatureModal
-          isOpen={!!activeSignatureType}
-          onClose={() => setActiveSignatureType(null)}
-          type={activeSignatureType}
-          title={SIGNATURE_CONFIGS[activeSignatureType]?.label || 'Tanda Tangan'}
-          personName={
-            activeSignatureType === 'TTD_PEMILIK' ? (formData.NAMA || undefined) :
-            activeSignatureType === 'TTD_SAKSI_1' ? (formData.NAMA_SAKSI_1 || undefined) :
-            activeSignatureType === 'TTD_SAKSI_2' ? (formData.NAMA_SAKSI_2 || undefined) :
-            activeSignatureType === 'TTD_TIM_1' ? (formData.nama_tim_1 || undefined) :
-            activeSignatureType === 'TTD_TIM_2' ? (formData.nama_tim_2 || undefined) :
-            activeSignatureType === 'TTD_KADES' ? (formData.NAMA_KADES || undefined) :
-            `Pemerintah Desa ${formData.DESA || ''}`
-          }
-          initialImage={formData[activeSignatureType]}
-          onSave={handleSaveSignature}
         />
       )}
     </div>

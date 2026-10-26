@@ -852,146 +852,249 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
     y2 += rowHeight2;
   });
 
-  y2 += 6;
+  y2 += 5;
 
-  // --- DECLARATION TEXT BLOCK ---
+  // --- DECLARATION TEXT BLOCK (SESUAI GAMBAR ACUAN) ---
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(textGray[0], textGray[1], textGray[2]);
+  doc.setFontSize(8);
+  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
   
-  const closingText = 'Yang bertanda tangan di bawah ini menyatakan bahwa secara bersama-sama telah melakukan inventarisasi dengan hasil yang sesuai dengan di lapangan, dan tidak akan mengubah hasil inventarisasi ini sampai proses pembayaran kompensasi selesai.';
+  const closingText = 'Yang bertanda tangan di bawah ini, menyatakan bahwa secara bersama-sama telah melakukan inventarisasi dengan hasil yang sesuai dengan di lapangan dan tidak akan mengubah hasil inventarisasi ini sampai proses kompensasi selesai.';
   const lines = doc.splitTextToSize(closingText, contentWidth - 4);
 
-  // Check if declaration and signatures fit on this page (Matrix 3x2 takes ~75mm)
-  const signaturesHeight = 75; 
+  // Check if declaration and signatures fit on this page (New layout takes ~92mm)
+  const signaturesHeight = 92; 
   if (y2 + lines.length * 4.2 + 8 + signaturesHeight > 275) {
+    drawPageFooter(currentPNum);
     doc.addPage();
     currentPNum++;
     drawPageHeader(currentPNum);
     y2 = 30;
   }
   
-  doc.setFont('helvetica', 'italic');
-  doc.setTextColor(55, 65, 81);
   lines.forEach((line: string, i: number) => {
-    doc.text(line, leftMargin + 2, y2 + 4.2 + (i * 4.2));
+    doc.text(line, leftMargin + 1, y2 + 4 + (i * 4.2));
   });
 
-  y2 += lines.length * 4.2 + 6;
+  y2 += lines.length * 4.2 + 5;
 
-  // --- MATRIKS TANDA TANGAN (3 KOLOM × 2 BARIS SESUAI SPESIFIKASI ANDROID ROW PLN) ---
-  const colWidth = contentWidth / 3; // 60 mm per column
-  const rowHeight = 33; // 33 mm height per signature box
-  const row1Y = y2;
-  const row2Y = row1Y + rowHeight + 2;
-
-  const sigCol1 = leftMargin;
-  const sigCol2 = sigCol1 + colWidth;
-  const sigCol3 = sigCol2 + colWidth;
-
-  const nameTim1 = (record.nama_tim_1 || 'TIM PELAKSANA 1').trim().toUpperCase();
-  const nameTim2 = (record.nama_tim_2 || 'TIM PELAKSANA 2').trim().toUpperCase();
-  const nameOwner = (record.NAMA || 'PEMILIK LAHAN').trim().toUpperCase();
-  const nameSaksi1 = (record.NAMA_SAKSI_1 || 'SAKSI 1').trim().toUpperCase();
-  const nameSaksi2 = (record.NAMA_SAKSI_2 || 'SAKSI 2').trim().toUpperCase();
-  const nameKades = (record.NAMA_KADES || 'KEPALA DESA').trim().toUpperCase();
-
-  // Helper to render one signature cell in the 3x2 grid
-  const renderSignatureCell = (
-    colX: number,
-    rowY: number,
-    title: string,
-    name: string,
-    sigImage?: string,
-    isKadesWithCap?: boolean
-  ) => {
-    // 1. Cell background & border box
-    doc.setDrawColor(borderGray[0], borderGray[1], borderGray[2]);
-    doc.setLineWidth(0.2);
-    doc.setFillColor(252, 252, 253);
-    doc.roundedRect(colX + 0.5, rowY, colWidth - 1, rowHeight, 1.5, 1.5, 'FD');
-
-    // 2. Header Title (e.g. TIM PELAKSANA 1, SAKSI 1, KEPALA DESA / LURAH)
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-    doc.text(title, colX + colWidth / 2, rowY + 4.5, { align: 'center' });
-
-    // Subtle divider below title
-    doc.setDrawColor(226, 232, 240);
-    doc.setLineWidth(0.15);
-    doc.line(colX + 3, rowY + 6.2, colX + colWidth - 3, rowY + 6.2);
-
-    // 3. Signature & Stamp rendering area
-    if (isKadesWithCap) {
-      // Android Spec: CAP_DESA.png di-overlay dengan transparansi (opacity 85%) menimpa bagian kiri TTD_KADES.png
-      if (capDesa && capDesa.startsWith('data:image/')) {
-        try {
-          const hasGState = typeof (doc as any).GState === 'function';
-          if (hasGState) {
-            (doc as any).setGState(new (doc as any).GState({ opacity: 0.85 }));
-          }
-          doc.addImage(capDesa, 'PNG', colX + 6, rowY + 7, 16.5, 16.5, undefined, 'FAST');
-          if (hasGState) {
-            (doc as any).setGState(new (doc as any).GState({ opacity: 1.0 }));
-          }
-        } catch (e) {
-          console.warn("Failed to embed capDesa in cell:", e);
-        }
-      }
-
-      // Kades Signature overlapping the right side of the stamp
-      if (sigImage && sigImage.startsWith('data:image/')) {
-        try {
-          doc.addImage(sigImage, 'PNG', colX + 17, rowY + 8, 25, 13.5, undefined, 'FAST');
-        } catch (e) {
-          console.warn("Failed to embed sigKades in cell:", e);
-        }
-      } else {
-        // Dot guide for manual ink
-        doc.setDrawColor(203, 213, 225);
-        doc.setLineWidth(0.2);
-        doc.line(colX + 16, rowY + 22, colX + colWidth - 6, rowY + 22);
-      }
-    } else {
-      // Standard signature
-      if (sigImage && sigImage.startsWith('data:image/')) {
-        try {
-          doc.addImage(sigImage, 'PNG', colX + (colWidth - 26) / 2, rowY + 7.5, 26, 13.5, undefined, 'FAST');
-        } catch (e) {
-          console.warn("Failed to embed signature in cell:", e);
-        }
-      } else {
-        // Line guide for manual ink signature
-        doc.setDrawColor(203, 213, 225);
-        doc.setLineWidth(0.2);
-        doc.line(colX + 10, rowY + 22, colX + colWidth - 10, rowY + 22);
-      }
+  // Helper for title casing names from user data
+  const formatNameDisplay = (str?: string) => {
+    if (!str || !str.trim()) return '';
+    const s = str.trim();
+    if (s === s.toUpperCase() && s.length > 2) {
+      return s.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
     }
-
-    // 4. Person Name enclosed in parentheses
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-    const cleanDisplayName = name ? `( ${name} )` : '( ........................................ )';
-    const wrappedName = doc.splitTextToSize(cleanDisplayName, colWidth - 4);
-    wrappedName.forEach((line: string, idx: number) => {
-      doc.text(line, colX + colWidth / 2, rowY + 27.5 + (idx * 3.2), { align: 'center' });
-    });
+    return s;
   };
 
-  // --- BARIS 1: TIM PELAKSANA 1 | TIM PELAKSANA 2 | PEMILIK LAHAN ---
-  renderSignatureCell(sigCol1, row1Y, 'TIM PELAKSANA 1', nameTim1, sigTim1);
-  renderSignatureCell(sigCol2, row1Y, 'TIM PELAKSANA 2', nameTim2, sigTim2);
-  renderSignatureCell(sigCol3, row1Y, 'PEMILIK LAHAN', nameOwner, sigPemilik);
+  // Village Head Title
+  const desaClean = (record.DESA || '').trim();
+  let desaTitle = 'Kepala Desa';
+  if (desaClean) {
+    const formattedDesa = formatNameDisplay(desaClean);
+    if (formattedDesa.toLowerCase().startsWith('desa ') || formattedDesa.toLowerCase().startsWith('kelurahan ')) {
+      desaTitle = `Kepala ${formattedDesa}`;
+    } else {
+      desaTitle = `Kepala Desa ${formattedDesa}`;
+    }
+  }
 
-  // --- BARIS 2: SAKSI 1 | SAKSI 2 | KEPALA DESA / LURAH ---
-  renderSignatureCell(sigCol1, row2Y, 'SAKSI 1', nameSaksi1, sigSaksi1);
-  renderSignatureCell(sigCol2, row2Y, 'SAKSI 2', nameSaksi2, sigSaksi2);
-  const kadesTitle = record.DESA ? `KEPALA DESA ${record.DESA.toUpperCase()}` : 'KEPALA DESA / LURAH';
-  renderSignatureCell(sigCol3, row2Y, kadesTitle, nameKades, sigKades, true);
+  // Execution Date
+  let displayDate = formattedDate;
+  if (record.TANGGAL_PELAKSANAAN && record.TANGGAL_PELAKSANAAN.trim()) {
+    const rawDate = record.TANGGAL_PELAKSANAAN.trim();
+    const parsed = new Date(rawDate);
+    if (!isNaN(parsed.getTime())) {
+      displayDate = parsed.toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: 'long',
+        year: 'numeric'
+      });
+    } else {
+      displayDate = rawDate;
+    }
+  }
 
-  y2 = row2Y + rowHeight + 6;
+  const nameTim1 = formatNameDisplay(record.nama_tim_1);
+  const nameTim2 = formatNameDisplay(record.nama_tim_2);
+  const nameOwner = formatNameDisplay(record.NAMA);
+  const nameSaksi1 = formatNameDisplay(record.NAMA_SAKSI_1);
+  const nameSaksi2 = formatNameDisplay(record.NAMA_SAKSI_2);
+  const nameKades = formatNameDisplay(record.NAMA_KADES) || '........................................';
+
+  // --- STRUKTUR TABEL TANDA TANGAN 3 KOLOM SESUAI LAMPIRAN USER ---
+  // Kolom: No (15..22, w:7), TIM INVENTARISASI (22..84, w:62), PIHAK YANG BERHAK (84..138, w:54), PARA SAKSI (138..195, w:57)
+  const yTable = y2;
+  
+  // Header Baris 1: Judul Kategori Kolom
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+
+  doc.text('TIM INVENTARISASI', 53, yTable, { align: 'center' });
+  doc.text('PIHAK YANG BERHAK', 111, yTable, { align: 'center' });
+  doc.text('PARA SAKSI', 166.5, yTable, { align: 'center' });
+
+  // Header Baris 2: Sub-header Kolom
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(textGray[0], textGray[1], textGray[2]);
+
+  // Tim: "Nama dan" \n "Jabatan" & "Tanda Tangan"
+  doc.text('Nama dan', 38, yTable + 4.2, { align: 'center' });
+  doc.text('Jabatan', 38, yTable + 7.4, { align: 'center' });
+  doc.text('Tanda Tangan', 70, yTable + 6, { align: 'center' });
+
+  // Pihak yang Berhak: "Nama" & "Tanda Tangan"
+  doc.text('Nama', 97, yTable + 6, { align: 'center' });
+  doc.text('Tanda Tangan', 124, yTable + 6, { align: 'center' });
+
+  // Para Saksi: "Nama" & "Tanda Tangan"
+  doc.text('Nama', 151, yTable + 6, { align: 'center' });
+  doc.text('Tanda Tangan', 179.5, yTable + 6, { align: 'center' });
+
+  // --- HELPER UNTUK POSISI TENGAH NAMA & TANDA TANGAN (VERTICALLY CENTERED) ---
+  const drawCenteredName = (name: string, x: number, yCenter: number, maxW: number = 24) => {
+    if (!name) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+      doc.text('....................', x, yCenter + 1, { align: 'center' });
+      return;
+    }
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+    const lines = doc.splitTextToSize(name, maxW);
+    if (lines.length <= 1) {
+      doc.text(lines[0] || '', x, yCenter + 1, { align: 'center' });
+    } else if (lines.length === 2) {
+      doc.text(lines[0], x, yCenter - 1, { align: 'center' });
+      doc.text(lines[1], x, yCenter + 3, { align: 'center' });
+    } else {
+      doc.text(lines[0], x, yCenter - 2.5, { align: 'center' });
+      doc.text(lines[1], x, yCenter + 1, { align: 'center' });
+      doc.text(lines[2], x, yCenter + 4.5, { align: 'center' });
+    }
+  };
+
+  const drawCenteredSignature = (sigImage: string | undefined, x: number, yCenter: number) => {
+    // Garis titik-titik ttd
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+    doc.text('....................', x, yCenter + 6.5, { align: 'center' });
+
+    if (sigImage && sigImage.startsWith('data:image/')) {
+      try {
+        // Gambar ttd dinaikkan agar seimbang berada di tengah-tengah baris sejajar nama
+        doc.addImage(sigImage, 'PNG', x - 11, yCenter - 7, 22, 13, undefined, 'FAST');
+      } catch (e) {
+        console.warn('Failed to embed signature:', e);
+      }
+    }
+  };
+
+  // --- BARIS 1: 1. | Tim 1 | Pemilik | Saksi 1 ---
+  const yCenter1 = yTable + 18.5;
+
+  // Nomor 1.
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+  doc.text('1.', 17, yCenter1 + 1);
+
+  // Kolom Tim 1 (Nama & TTD)
+  drawCenteredName(nameTim1, 38, yCenter1, 30);
+  drawCenteredSignature(sigTim1, 70, yCenter1);
+
+  // Kolom Pihak yang Berhak / Pemilik (Nama & TTD)
+  drawCenteredName(nameOwner, 97, yCenter1, 24);
+  drawCenteredSignature(sigPemilik, 124, yCenter1);
+
+  // Kolom Saksi 1 (Nama & TTD)
+  drawCenteredName(nameSaksi1, 151, yCenter1, 24);
+  drawCenteredSignature(sigSaksi1, 179.5, yCenter1);
+
+  // --- BARIS 2: 2. | Tim 2 | .................... | Saksi 2 ---
+  const yCenter2 = yCenter1 + 18.5;
+
+  // Nomor 2.
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+  doc.text('2.', 17, yCenter2 + 1);
+
+  // Kolom Tim 2 (Nama & TTD)
+  drawCenteredName(nameTim2, 38, yCenter2, 30);
+  drawCenteredSignature(sigTim2, 70, yCenter2);
+
+  // Kolom Pihak yang Berhak Baris 2 (Titik-titik nama & ttd sejajar)
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+  doc.text('....................', 97, yCenter2 + 1, { align: 'center' });
+  doc.text('....................', 124, yCenter2 + 6.5, { align: 'center' });
+
+  // Kolom Saksi 2 (Nama & TTD)
+  drawCenteredName(nameSaksi2, 151, yCenter2, 24);
+  drawCenteredSignature(sigSaksi2, 179.5, yCenter2);
+
+  // --- BAGIAN BAWAH: TANGGAL, MENGETAHUI, KEPALA DESA, STEMPEL & TTD OVERLAY, NAMA KADES ---
+  const yBottom = yCenter2 + 12;
+
+  // Tanggal
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+  doc.text(displayDate, 105, yBottom, { align: 'center' });
+
+  // "Mengetahui"
+  doc.text('Mengetahui', 105, yBottom + 4.5, { align: 'center' });
+
+  // "Kepala Desa [DESA]"
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.text(desaTitle, 105, yBottom + 9.5, { align: 'center' });
+
+  // Stempel Desa & Tanda Tangan Kades (Layered Overlay)
+  const yStamp = yBottom + 11;
+
+  if (capDesa && capDesa.startsWith('data:image/')) {
+    try {
+      const hasGState = typeof (doc as any).GState === 'function';
+      if (hasGState) {
+        (doc as any).setGState(new (doc as any).GState({ opacity: 0.85 }));
+      }
+      doc.addImage(capDesa, 'PNG', 82, yStamp, 24, 24, undefined, 'FAST');
+      if (hasGState) {
+        (doc as any).setGState(new (doc as any).GState({ opacity: 1.0 }));
+      }
+    } catch (e) {
+      console.warn('Failed to embed capDesa:', e);
+    }
+  }
+
+  if (sigKades && sigKades.startsWith('data:image/')) {
+    try {
+      doc.addImage(sigKades, 'PNG', 96, yStamp + 2, 27, 16, undefined, 'FAST');
+    } catch (e) {
+      console.warn('Failed to embed sigKades:', e);
+    }
+  } else {
+    doc.setFont('helvetica', 'normal');
+    doc.text('........................................', 105, yStamp + 17, { align: 'center' });
+  }
+
+  // Nama Kades di bawah stempel & tanda tangan
+  const yKadesName = yStamp + 23;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+  doc.text(nameKades, 105, yKadesName, { align: 'center' });
+
+  drawPageFooter(currentPNum);
 
 
   // ==========================================

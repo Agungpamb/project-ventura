@@ -16,7 +16,6 @@ import {
   PARCEL_SUBFOLDERS
 } from '../lib/googleApi';
 import { generateInventoryPDF } from '../lib/pdfGenerator';
-import SignatureModal, { type SignatureType, SIGNATURE_CONFIGS } from './SignatureModal';
 
 interface DocUploadProps {
   records: LandRecord[];
@@ -73,9 +72,6 @@ export default function DocUpload({
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(preselectedRecordId || null);
   const [isSavingPDFToDrive, setIsSavingPDFToDrive] = useState(false);
   const [activeCategoryTab, setActiveCategoryTab] = useState<ParcelSubfolderCategory>('1. Dokumentasi Lapangan dan Foto Warga');
-
-  // Digital Signature Modal state
-  const [activeSignatureType, setActiveSignatureType] = useState<SignatureType | null>(null);
 
   useEffect(() => {
     if (preselectedRecordId) {
@@ -299,43 +295,6 @@ export default function DocUpload({
     }
   };
 
-  // Handle saving digital signature / stamp directly into subfolder 3 (Dokumen)
-  const handleSaveSignature = async (type: SignatureType, dataUrl: string) => {
-    if (!selectedRecord) return;
-    try {
-      const updated = { ...selectedRecord, [type]: dataUrl };
-      if (accessToken && accessToken !== 'GUEST_BYPASS' && accessToken !== 'null') {
-        const mainFolderId = uploadsFolderId || await findOrCreateFolder(accessToken, "SIP_Berkas_Pertanahan_Desa");
-        const hierarchy = await getOrCreateParcelFolderHierarchy(
-          accessToken,
-          mainFolderId,
-          selectedRecord,
-          '3. Dokumen'
-        );
-        const uploadRes = await uploadBase64ImageToDrive(
-          accessToken,
-          dataUrl,
-          type,
-          selectedRecord,
-          hierarchy.targetFolderId
-        );
-        updated[type] = uploadRes.webViewLink;
-        updated.DRIVE_FOLDER_ID = hierarchy.parcelFolderId;
-      }
-      await onUpdateRecord(updated);
-      setStatusMessage({
-        type: 'success',
-        text: `Tanda tangan/Cap ${type.replace(/_/g, ' ')} berhasil disimpan ke folder 1. Dokumentasi Lapangan dan Foto Warga!`
-      });
-    } catch (err: any) {
-      console.error(err);
-      setStatusMessage({
-        type: 'error',
-        text: `Gagal menyimpan tanda tangan: ${err.message}`
-      });
-    }
-  };
-
   const handleDownloadPDFDirectly = async () => {
     if (!selectedRecord) return;
     setIsDownloadingPDF(true);
@@ -421,11 +380,15 @@ export default function DocUpload({
       slot.key === 'LINK_WAJAH_PEMILIK' ||
       slot.isSignature;
       
-    const acceptTypes = isImageAndPdf 
-      ? 'application/pdf,image/jpeg,image/jpg,image/png' 
-      : 'application/pdf';
+    const acceptTypes = slot.isSignature 
+      ? 'image/*' 
+      : isImageAndPdf 
+        ? 'application/pdf,image/jpeg,image/jpg,image/png' 
+        : 'application/pdf';
     
-    const uploadLabel = isImageAndPdf ? 'Unggah Berkas' : 'Unggah PDF';
+    const uploadLabel = slot.isSignature 
+      ? 'Ambil Foto / File HP' 
+      : (isImageAndPdf ? 'Unggah Berkas' : 'Unggah PDF');
 
     return (
       <div key={slot.key} className="p-4 rounded-xl border border-slate-200 dark:border-white/5 bg-white dark:bg-slate-900/45 shadow-xs flex flex-col gap-3">
@@ -444,16 +407,6 @@ export default function DocUpload({
           </div>
 
           <div className="shrink-0 self-end sm:self-auto flex items-center gap-2">
-            {slot.isSignature && (
-              <button
-                type="button"
-                onClick={() => setActiveSignatureType(slot.docType as SignatureType)}
-                className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
-              >
-                <PenTool className="w-3.5 h-3.5" />
-                <span>{isUploaded ? 'Ganti TTD' : 'Gores TTD'}</span>
-              </button>
-            )}
 
             {isUploaded ? (
               <div className="flex items-center gap-2">
@@ -919,27 +872,6 @@ export default function DocUpload({
           </div>
         )}
       </div>
-
-      {/* MODAL TANDA TANGAN DIGITAL */}
-      {activeSignatureType && selectedRecord && (
-        <SignatureModal
-          isOpen={!!activeSignatureType}
-          onClose={() => setActiveSignatureType(null)}
-          type={activeSignatureType}
-          title={SIGNATURE_CONFIGS[activeSignatureType]?.label || 'Tanda Tangan'}
-          personName={
-            activeSignatureType === 'TTD_PEMILIK' ? (selectedRecord.NAMA || undefined) :
-            activeSignatureType === 'TTD_SAKSI_1' ? (selectedRecord.NAMA_SAKSI_1 || undefined) :
-            activeSignatureType === 'TTD_SAKSI_2' ? (selectedRecord.NAMA_SAKSI_2 || undefined) :
-            activeSignatureType === 'TTD_TIM_1' ? (selectedRecord.nama_tim_1 || undefined) :
-            activeSignatureType === 'TTD_TIM_2' ? (selectedRecord.nama_tim_2 || undefined) :
-            activeSignatureType === 'TTD_KADES' ? (selectedRecord.NAMA_KADES || undefined) :
-            `Pemerintah Desa ${selectedRecord.DESA || ''}`
-          }
-          initialImage={selectedRecord[activeSignatureType]}
-          onSave={handleSaveSignature}
-        />
-      )}
     </div>
   );
 }
