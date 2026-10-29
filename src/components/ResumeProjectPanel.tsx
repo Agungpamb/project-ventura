@@ -4,6 +4,7 @@ import {
   UploadCloud, 
   CheckCircle2, 
   AlertTriangle, 
+  AlertCircle,
   Clock, 
   Search, 
   Filter, 
@@ -78,6 +79,7 @@ interface ResumeProjectPanelProps {
   spreadsheetId?: string;
   allProjects?: ProjectConfig[];
   uploadsFolderId?: string;
+  resumeUploadsFolderId?: string;
   publicCsvUrl?: string;
   onRefreshGoogleToken?: () => Promise<string | null>;
   onNavigateToInput?: (record: LandRecord) => void;
@@ -98,6 +100,7 @@ export default function ResumeProjectPanel({
   spreadsheetId,
   allProjects,
   uploadsFolderId,
+  resumeUploadsFolderId,
   publicCsvUrl,
   onRefreshGoogleToken,
   resumeStages,
@@ -502,6 +505,26 @@ export default function ResumeProjectPanel({
   // Handle Save Edited Village Stage
   const handleSaveVillageChanges = async () => {
     if (!editingDesa) return;
+
+    // Validate minimal 4 photos for active stages that require photos
+    const stageWarnings: string[] = [];
+    for (const stage of activeStages) {
+      if (stage.hasPhoto && stage.active !== false) {
+        const stageDoc = (editingDesa as any)[stage.key];
+        const count = stageDoc?.docPhotos?.length || 0;
+        if (stageDoc?.status !== 'BELUM' && count < 4) {
+          stageWarnings.push(`• ${stage.fullName}: ${count} foto (kurang ${4 - count} foto)`);
+        }
+      }
+    }
+
+    if (stageWarnings.length > 0) {
+      const msg = `Perhatian: Sesuai SOP dokumentasi, setiap tahapan kegiatan wajib mengunggah MINIMAL 4 FOTO dokumentasi lapangan:\n\n${stageWarnings.join('\n')}\n\nApakah Anda yakin ingin tetap menyimpan perubahan sekarang? Disarankan melengkapi minimal 4 foto.`;
+      if (!confirm(msg)) {
+        return;
+      }
+    }
+
     setIsSaving(true);
     setSaveFeedback(null);
     try {
@@ -566,8 +589,8 @@ export default function ResumeProjectPanel({
     }
   };
 
-  // Helper to ensure a dedicated Google Drive folder exists for the village
-  const getOrCreateDesaFolder = async (desaName: string): Promise<string | null> => {
+  // Helper to ensure dedicated Google Drive folders exist: Folder Desa -> Folder Desa/Kegiatan
+  const getOrCreateDesaFolder = async (desaName: string, stageName?: string): Promise<{ desaFolderId: string; stageFolderId?: string; stageFolderUrl?: string } | null> => {
     let currentToken = accessToken;
     if (!currentToken && onRefreshGoogleToken) {
       currentToken = (await onRefreshGoogleToken()) || undefined;
@@ -575,16 +598,24 @@ export default function ResumeProjectPanel({
     if (!currentToken) return null;
 
     try {
-      // 1. Root / master upload folder in Drive
-      const mainFolderId = uploadsFolderId || await findOrCreateFolder(currentToken, "SIP_Berkas_Pertanahan_Desa");
-      // 2. Dedicated master folder for Resume Proyek
-      const resumeMasterFolderId = await findOrCreateFolder(currentToken, "RESUME_PROYEK_DESA", mainFolderId);
-      // 3. Subfolder dedicated for this specific Desa: RESUME_DESA_[NAMA_DESA]
+      // 1. Root / master upload folder in Drive specifically for Resume Proyek
+      const mainFolderId = resumeUploadsFolderId || uploadsFolderId || await findOrCreateFolder(currentToken, "SIP_RESUME_PROYEK_DESA");
+      // 2. Dedicated folder for this Desa: DESA_[NAMA_DESA]
       const cleanDesaName = desaName.trim().toUpperCase().replace(/[\/\\?%*:|"<>\s]/g, '_');
-      const desaFolderId = await findOrCreateFolder(currentToken, `RESUME_DESA_${cleanDesaName}`, resumeMasterFolderId);
-      return desaFolderId;
+      const desaFolderId = await findOrCreateFolder(currentToken, `DESA_${cleanDesaName}`, mainFolderId);
+
+      // 3. Subfolder per kegiatan jika disediakan: [NAMA_DESA] - [NAMA_KEGIATAN]
+      let stageFolderId: string | undefined = undefined;
+      let stageFolderUrl: string | undefined = undefined;
+      if (stageName) {
+        const cleanStageName = stageName.trim().toUpperCase().replace(/[\/\\?%*:|"<>\s]/g, '_');
+        stageFolderId = await findOrCreateFolder(currentToken, `${cleanDesaName}_${cleanStageName}`, desaFolderId);
+        stageFolderUrl = `https://drive.google.com/drive/folders/${stageFolderId}`;
+      }
+
+      return { desaFolderId, stageFolderId, stageFolderUrl };
     } catch (err) {
-      console.warn("Gagal membuat/mencari folder desa di Google Drive:", err);
+      console.warn("Gagal membuat/mencari folder desa/kegiatan di Google Drive:", err);
       return null;
     }
   };
@@ -601,20 +632,27 @@ export default function ResumeProjectPanel({
         currentToken = (await onRefreshGoogleToken()) || undefined;
       }
 
+      const stageObj = activeStages.find(s => s.key === stageKey);
+      const stageLabel = stageObj?.fullName || stageKey;
+
       if (currentToken) {
-        setUploadProgressText(`Membuat folder Google Drive untuk Desa ${editingDesa.desaName}...`);
-        const desaFolderId = await getOrCreateDesaFolder(editingDesa.desaName);
-        if (desaFolderId) {
-          setUploadProgressText(`Mengunggah file PDF "${file.name}" langsung ke Google Drive...`);
+        setUploadProgressText(`Membuat folder Google Drive untuk Desa ${editingDesa.desaName} / ${stageLabel}...`);
+        const folderResult = await getOrCreateDesaFolder(editingDesa.desaName, stageLabel);
+        const targetUploadFolderId = folderResult?.stageFolderId || folderResult?.desaFolderId;
+        if (targetUploadFolderId) {
+          setUploadProgressText(`Mengunggah berkas PDF "${file.name}" langsung ke Google Drive...`);
           const res = await uploadFileToDrive(
             currentToken, 
             file, 
             `BA_${stageKey.toUpperCase()}`, 
             editingDesa.desaName, 
-            desaFolderId
+            targetUploadFolderId
           );
           webLink = res.webViewLink;
-          setEditingDesa(prev => prev ? { ...prev, driveFolderId: desaFolderId } : null);
+          setEditingDesa(prev => prev ? { 
+            ...prev, 
+            driveFolderId: folderResult?.desaFolderId || prev.driveFolderId 
+          } : null);
         } else {
           webLink = await fileToBase64(file);
         }
@@ -653,49 +691,63 @@ export default function ResumeProjectPanel({
     }
   };
 
-  // Upload Documentation Photos Handler inside editing modal
-  const handleUploadPhoto = async (file: File, stageKey: string) => {
+  // Upload Documentation Photos Handler inside editing modal (Multiple support & Min 4 Photos)
+  const handleUploadPhotos = async (files: FileList | File[], stageKey: string) => {
     if (!editingDesa) return;
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
+
     setIsUploadingFile(true);
-    setUploadProgressText('Menghubungkan ke Google Drive...');
+    setUploadProgressText(`Menyiapkan ${fileArray.length} foto dokumentasi...`);
     try {
-      let photoUrl = '';
       let currentToken = accessToken;
       if (!currentToken && onRefreshGoogleToken) {
         currentToken = (await onRefreshGoogleToken()) || undefined;
       }
 
+      const stageObj = activeStages.find(s => s.key === stageKey);
+      const stageLabel = stageObj?.fullName || stageKey;
+      let targetUploadFolderId: string | undefined = undefined;
+
       if (currentToken) {
-        setUploadProgressText(`Membuat folder Google Drive untuk Desa ${editingDesa.desaName}...`);
-        const desaFolderId = await getOrCreateDesaFolder(editingDesa.desaName);
-        if (desaFolderId) {
-          setUploadProgressText(`Mengunggah foto dokumentasi ke Google Drive...`);
+        setUploadProgressText(`Membuat folder Google Drive untuk Desa ${editingDesa.desaName} / ${stageLabel}...`);
+        const folderResult = await getOrCreateDesaFolder(editingDesa.desaName, stageLabel);
+        targetUploadFolderId = folderResult?.stageFolderId || folderResult?.desaFolderId;
+      }
+
+      const uploadedPhotoUrls: string[] = [];
+
+      for (let i = 0; i < fileArray.length; i++) {
+        const file = fileArray[i];
+        setUploadProgressText(`Mengunggah foto ${i + 1} dari ${fileArray.length} ke Google Drive...`);
+        let photoUrl = '';
+        if (currentToken && targetUploadFolderId) {
           const res = await uploadFileToDrive(
             currentToken, 
             file, 
-            `DOK_${stageKey.toUpperCase()}`, 
+            `DOK_${stageKey.toUpperCase()}_FOTO_${i + 1}`, 
             editingDesa.desaName, 
-            desaFolderId
+            targetUploadFolderId
           );
           photoUrl = res.webViewLink;
-          setEditingDesa(prev => prev ? { ...prev, driveFolderId: desaFolderId } : null);
         } else {
           photoUrl = await compressImageFile(file, 1000, 1000, 0.65);
         }
-      } else {
-        // Auto compress camera photos to ~60-90KB for safe Firestore storage if offline
-        photoUrl = await compressImageFile(file, 1000, 1000, 0.65);
+        if (photoUrl) {
+          uploadedPhotoUrls.push(photoUrl);
+        }
       }
 
       setEditingDesa(prev => {
         if (!prev) return null;
         const currentStage = (prev as any)[stageKey] || createEmptyStageDoc();
         const existingPhotos = currentStage.docPhotos || [];
+        const combined = [...existingPhotos, ...uploadedPhotoUrls];
         return {
           ...prev,
           [stageKey]: {
             ...currentStage,
-            docPhotos: [...existingPhotos, photoUrl],
+            docPhotos: combined,
             status: currentStage.status === 'BELUM' ? 'PROSES' : currentStage.status
           }
         };
@@ -703,11 +755,11 @@ export default function ResumeProjectPanel({
 
       setSaveFeedback({
         type: 'success',
-        text: `Foto dokumentasi berhasil diunggah langsung ke folder Google Drive Desa ${editingDesa.desaName}!`
+        text: `✅ ${uploadedPhotoUrls.length} foto dokumentasi berhasil diunggah ke Google Drive!`
       });
       setTimeout(() => setSaveFeedback(null), 5000);
     } catch (err: any) {
-      console.error('Failed to upload photo:', err);
+      console.error('Failed to upload photos:', err);
       alert('Gagal mengunggah foto dokumentasi: ' + (err?.message || 'Cek koneksi internet.'));
     } finally {
       setIsUploadingFile(false);
@@ -1588,78 +1640,123 @@ export default function ResumeProjectPanel({
                     {/* Photo Documentation Section (If applicable) */}
                     {currentStageConfig.hasPhoto && (
                       <div className="space-y-3 bg-slate-900/40 p-4 rounded-2xl border border-white/5">
-                        <div className="flex items-center justify-between">
-                          <h5 className="text-xs font-bold text-white flex items-center gap-1.5 uppercase tracking-wider">
-                            <ImageIcon className="w-4 h-4 text-purple-400" />
-                            Dokumentasi Foto Lapangan
-                          </h5>
-                          <span className="text-[10px] font-mono text-slate-400">
-                            {(stageData.docPhotos || []).length} Foto Terunggah
-                          </span>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <h5 className="text-xs font-bold text-white flex items-center gap-1.5 uppercase tracking-wider">
+                              <ImageIcon className="w-4 h-4 text-purple-400" />
+                              Dokumentasi Foto Lapangan (Wajib Minimal 4 Foto)
+                            </h5>
+                          </div>
+                          <div>
+                            {(stageData.docPhotos || []).length >= 4 ? (
+                              <span className="text-[10px] font-extrabold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-1 rounded-lg flex items-center gap-1">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                Lengkap ({(stageData.docPhotos || []).length}/4 Foto)
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-extrabold text-amber-400 bg-amber-500/15 border border-amber-500/30 px-2.5 py-1 rounded-lg flex items-center gap-1">
+                                <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                                Wajib Min. 4 Foto (Saat ini: {(stageData.docPhotos || []).length}/4)
+                              </span>
+                            )}
+                          </div>
                         </div>
 
-                        {/* Photos Grid */}
-                        {(stageData.docPhotos || []).length > 0 && (
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                            {(stageData.docPhotos || []).map((photoUrl, idx) => (
-                              <div key={idx} className="relative group rounded-xl overflow-hidden border border-white/10 aspect-video bg-slate-950">
-                                <img
-                                  src={photoUrl}
-                                  alt={`Dokumentasi ${idx + 1}`}
-                                  className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                                />
-                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                                  <button
-                                    onClick={() => setPreviewModal({
-                                      isOpen: true,
-                                      title: `Dokumentasi Foto ${idx + 1} - Desa ${editingDesa.desaName}`,
-                                      photos: [photoUrl]
-                                    })}
-                                    className="p-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-white text-xs cursor-pointer"
-                                    title="Lihat Lebih Besar"
-                                  >
-                                    <Eye className="w-4 h-4" />
-                                  </button>
-                                  {!isGuest && (
-                                    <button
-                                      onClick={() => {
-                                        setEditingDesa(prev => {
-                                          if (!prev) return null;
-                                          const photos = [...(stageData.docPhotos || [])];
-                                          photos.splice(idx, 1);
-                                          return {
-                                            ...prev,
-                                            [activeStageTab]: {
-                                              ...stageData,
-                                              docPhotos: photos
-                                            }
-                                          };
-                                        });
-                                      }}
-                                      className="p-1.5 bg-rose-500/30 hover:bg-rose-500/50 rounded-lg text-rose-300 text-xs cursor-pointer"
-                                      title="Hapus Foto"
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                        {/* SOP Info Box */}
+                        <div className="p-3 bg-purple-500/10 rounded-xl border border-purple-500/20 text-[11px] text-purple-200 flex items-start gap-2">
+                          <Info className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+                          <p className="leading-relaxed">
+                            Sesuai standar operasional, setiap tahapan kegiatan wajib mengunggah <strong>minimal 4 foto dokumentasi</strong> (tampak lokasi, musyawarah/penyerahan, peserta warga, dan penandatanganan berkas). Foto otomatis tersimpan rapi di Google Drive dalam folder <code>[Nama Desa] - [Nama Kegiatan]</code>.
+                          </p>
+                        </div>
 
-                        {/* Upload Photo Button */}
+                        {/* Photos Grid & Empty Slots */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          {/* Uploaded Photos */}
+                          {(stageData.docPhotos || []).map((photoUrl, idx) => (
+                            <div key={idx} className="relative group rounded-xl overflow-hidden border border-purple-500/30 aspect-video bg-slate-950 shadow-sm">
+                              <img
+                                src={photoUrl}
+                                alt={`Dokumentasi ${idx + 1}`}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                              />
+                              <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/75 text-[9px] font-bold text-white border border-white/10">
+                                Foto {idx + 1}
+                              </span>
+                              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => setPreviewModal({
+                                    isOpen: true,
+                                    title: `Dokumentasi Foto ${idx + 1} - Desa ${editingDesa.desaName}`,
+                                    photos: [photoUrl]
+                                  })}
+                                  className="p-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-white text-xs cursor-pointer"
+                                  title="Lihat Lebih Besar"
+                                >
+                                  <Eye className="w-4 h-4" />
+                                </button>
+                                {!isGuest && (
+                                  <button
+                                    onClick={() => {
+                                      setEditingDesa(prev => {
+                                        if (!prev) return null;
+                                        const photos = [...(stageData.docPhotos || [])];
+                                        photos.splice(idx, 1);
+                                        return {
+                                          ...prev,
+                                          [activeStageTab]: {
+                                            ...stageData,
+                                            docPhotos: photos
+                                          }
+                                        };
+                                      });
+                                    }}
+                                    className="p-1.5 bg-rose-500/30 hover:bg-rose-500/50 rounded-lg text-rose-300 text-xs cursor-pointer"
+                                    title="Hapus Foto"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+
+                          {/* Empty Slots if less than 4 */}
+                          {!isGuest && Array.from({ length: Math.max(0, 4 - (stageData.docPhotos || []).length) }).map((_, slotIdx) => {
+                            const slotNumber = (stageData.docPhotos || []).length + slotIdx + 1;
+                            return (
+                              <label key={`empty-${slotIdx}`} className="border-2 border-dashed border-purple-500/30 hover:border-purple-400 rounded-xl aspect-video flex flex-col items-center justify-center gap-1.5 p-2 bg-purple-500/5 hover:bg-purple-500/10 cursor-pointer transition-all text-center">
+                                <UploadCloud className="w-5 h-5 text-purple-400" />
+                                <span className="text-[10px] font-bold text-purple-200">Slot Foto {slotNumber}</span>
+                                <span className="text-[8px] text-slate-400">+ Unggah</span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  multiple
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    if (e.target.files) handleUploadPhotos(e.target.files, activeStageTab);
+                                  }}
+                                />
+                              </label>
+                            );
+                          })}
+                        </div>
+
+                        {/* General Multi-Photo Upload Button */}
                         {!isGuest && (
-                          <label className="border-2 border-dashed border-white/10 hover:border-purple-500/50 rounded-2xl p-4 flex items-center justify-center gap-2 cursor-pointer transition-all bg-white/[0.01] hover:bg-purple-500/5">
-                            <UploadCloud className="w-5 h-5 text-purple-400" />
-                            <span className="text-xs font-bold text-white">Tambah Foto Dokumentasi</span>
+                          <label className="border border-purple-500/30 hover:border-purple-400 rounded-xl p-3 flex items-center justify-center gap-2 cursor-pointer transition-all bg-purple-500/10 hover:bg-purple-500/20">
+                            <UploadCloud className="w-4 h-4 text-purple-400" />
+                            <span className="text-xs font-bold text-purple-200">
+                              Unggah Foto Dokumentasi (Bisa Pilih Sekaligus dari Galeri HP / Komputer)
+                            </span>
                             <input
                               type="file"
                               accept="image/*"
+                              multiple
                               className="hidden"
                               onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) handleUploadPhoto(file, activeStageTab);
+                                if (e.target.files) handleUploadPhotos(e.target.files, activeStageTab);
                               }}
                             />
                           </label>

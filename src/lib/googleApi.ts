@@ -1116,30 +1116,43 @@ export const RESUME_SHEET_HEADERS = [
   "TOTAL_BIDANG",
   "TOTAL_LUAS_M2",
   "PROGRES_PERSEN",
+  // 1. Sosialisasi Pendahuluan
   "STATUS_PENDAHULUAN",
   "TGL_PENDAHULUAN",
-  "LINK_DRIVE_PENDAHULUAN",
+  "LINK_PDF_PENDAHULUAN",
+  "FOTO_DOKUMENTASI_PENDAHULUAN",
   "CATATAN_PENDAHULUAN",
+  // 2. Sosialisasi Pengumuman Inv
   "STATUS_PENGUMUMAN_INV",
   "TGL_PENGUMUMAN_INV",
-  "LINK_DRIVE_PENGUMUMAN_INV",
+  "LINK_PDF_PENGUMUMAN_INV",
+  "FOTO_DOKUMENTASI_PENGUMUMAN_INV",
   "CATATAN_PENGUMUMAN_INV",
+  // 3. BAPT Register
   "STATUS_BAPT_REGISTER",
   "TGL_BAPT_REGISTER",
-  "LINK_DRIVE_BAPT_REGISTER",
+  "LINK_PDF_BAPT_REGISTER",
+  "FOTO_DOKUMENTASI_BAPT_REGISTER",
   "CATATAN_BAPT_REGISTER",
+  // 4. Sosialisasi Penyampaian Nilai
   "STATUS_PENYAMPAIAN_NILAI",
   "TGL_PENYAMPAIAN_NILAI",
-  "LINK_DRIVE_PENYAMPAIAN_NILAI",
+  "LINK_PDF_PENYAMPAIAN_NILAI",
+  "FOTO_DOKUMENTASI_PENYAMPAIAN_NILAI",
   "CATATAN_PENYAMPAIAN_NILAI",
+  // 5. Sosialisasi Pembayaran Kompensasi
   "STATUS_PEMBAYARAN_KOMP",
   "TGL_PEMBAYARAN_KOMP",
-  "LINK_DRIVE_PEMBAYARAN_KOMP",
+  "LINK_PDF_PEMBAYARAN_KOMP",
+  "FOTO_DOKUMENTASI_PEMBAYARAN_KOMP",
   "CATATAN_PEMBAYARAN_KOMP",
+  // 6. Bush Clearing
   "STATUS_BUSH_CLEARING",
   "TGL_BUSH_CLEARING",
-  "LINK_DRIVE_BUSH_CLEARING",
+  "LINK_PDF_BUSH_CLEARING",
+  "FOTO_DOKUMENTASI_BUSH_CLEARING",
   "CATATAN_BUSH_CLEARING",
+  // Link Folder Google Drive Desa & Metadata
   "LINK_FOLDER_DESA_DRIVE",
   "TERAKHIR_DIPERBARUI",
   "OPERATOR"
@@ -1403,31 +1416,44 @@ export function villageResumeToSheetRow(
     totalBidang > 0 ? totalBidang : '',
     totalLuas > 0 ? totalLuas : '',
     `${progressPct}%`,
+    // 1. Sosialisasi Pendahuluan
     resume.baSosialisasiAwal?.status || 'BELUM',
     resume.baSosialisasiAwal?.date || '',
     resume.baSosialisasiAwal?.pdfUrl || '',
+    (resume.baSosialisasiAwal?.docPhotos || []).join(' ; '),
     resume.baSosialisasiAwal?.notes || '',
+    // 2. Sosialisasi Pengumuman Inv
     resume.baPengumuman?.status || 'BELUM',
     resume.baPengumuman?.date || '',
     resume.baPengumuman?.pdfUrl || '',
+    (resume.baPengumuman?.docPhotos || []).join(' ; '),
     resume.baPengumuman?.notes || '',
+    // 3. BAPT Register
     resume.lampiranBapt?.status || 'BELUM',
     resume.lampiranBapt?.date || '',
     resume.lampiranBapt?.pdfUrl || '',
+    (resume.lampiranBapt?.docPhotos || []).join(' ; '),
     resume.lampiranBapt?.notes || '',
+    // 4. Sosialisasi Penyampaian Nilai
     resume.baPenyampaianNilai?.status || 'BELUM',
     resume.baPenyampaianNilai?.date || '',
     resume.baPenyampaianNilai?.pdfUrl || '',
+    (resume.baPenyampaianNilai?.docPhotos || []).join(' ; '),
     resume.baPenyampaianNilai?.notes || '',
+    // 5. Sosialisasi Pembayaran Komp
     resume.baSerahTerimaRekening?.status || 'BELUM',
     resume.baSerahTerimaRekening?.date || '',
     resume.baSerahTerimaRekening?.pdfUrl || '',
+    (resume.baSerahTerimaRekening?.docPhotos || []).join(' ; '),
     resume.baSerahTerimaRekening?.notes || '',
+    // 6. Bush Clearing
     resume.bushClearing?.status || 'BELUM',
     resume.bushClearing?.date || '',
-    resume.bushClearing?.pdfUrl || (resume.bushClearing?.docPhotos?.[0] || ''),
+    resume.bushClearing?.pdfUrl || '',
+    (resume.bushClearing?.docPhotos || []).join(' ; '),
     resume.bushClearing?.notes || '',
-    resume.driveFolderId ? `https://drive.google.com/drive/folders/${resume.driveFolderId}` : '',
+    // Folder Drive Desa & Metadata
+    resume.driveFolderId ? (resume.driveFolderId.startsWith('http') ? resume.driveFolderId : `https://drive.google.com/drive/folders/${resume.driveFolderId}`) : '',
     new Date(resume.lastUpdated || Date.now()).toLocaleString('id-ID'),
     resume.updatedBy || 'Operator'
   ];
@@ -1435,6 +1461,7 @@ export function villageResumeToSheetRow(
 
 /**
  * Maps a row from Google Sheets back into a VillageResume object.
+ * Supports both new 42-column format and legacy 36-column format seamlessly.
  */
 export function sheetRowToVillageResume(row: any[]): VillageResume {
   const id = row[0] || '';
@@ -1443,12 +1470,76 @@ export function sheetRowToVillageResume(row: any[]): VillageResume {
   const kecamatan = row[4] || '';
   const kabupaten = row[5] || '';
 
+  const parsePhotos = (val: any): string[] => {
+    if (!val || typeof val !== 'string') return [];
+    return val.split(/[;\n]/).map((s: string) => s.trim()).filter((s: string) => s.length > 0);
+  };
+
+  const isNewFormat = row.length >= 40;
+
+  if (isNewFormat) {
+    return {
+      id: id || `${projectId}_${desaName.toUpperCase().replace(/[^a-zA-Z0-9]/g, '_')}`,
+      projectId,
+      desaName: desaName.toUpperCase(),
+      kecamatan,
+      kabupaten,
+      driveFolderId: row[39] || undefined,
+      baSosialisasiAwal: {
+        status: (row[9] as any) || 'BELUM',
+        date: row[10] || '',
+        pdfUrl: row[11] || undefined,
+        docPhotos: parsePhotos(row[12]),
+        notes: row[13] || ''
+      },
+      baPengumuman: {
+        status: (row[14] as any) || 'BELUM',
+        date: row[15] || '',
+        pdfUrl: row[16] || undefined,
+        docPhotos: parsePhotos(row[17]),
+        notes: row[18] || ''
+      },
+      lampiranBapt: {
+        status: (row[19] as any) || 'BELUM',
+        date: row[20] || '',
+        pdfUrl: row[21] || undefined,
+        docPhotos: parsePhotos(row[22]),
+        notes: row[23] || ''
+      },
+      baPenyampaianNilai: {
+        status: (row[24] as any) || 'BELUM',
+        date: row[25] || '',
+        pdfUrl: row[26] || undefined,
+        docPhotos: parsePhotos(row[27]),
+        notes: row[28] || ''
+      },
+      baSerahTerimaRekening: {
+        status: (row[29] as any) || 'BELUM',
+        date: row[30] || '',
+        pdfUrl: row[31] || undefined,
+        docPhotos: parsePhotos(row[32]),
+        notes: row[33] || ''
+      },
+      bushClearing: {
+        status: (row[34] as any) || 'BELUM',
+        date: row[35] || '',
+        pdfUrl: row[36] || undefined,
+        docPhotos: parsePhotos(row[37]),
+        notes: row[38] || ''
+      },
+      lastUpdated: Date.now(),
+      updatedBy: row[41] || 'Google Sheet'
+    };
+  }
+
+  // Legacy format (36 columns)
   return {
     id: id || `${projectId}_${desaName.toUpperCase().replace(/[^a-zA-Z0-9]/g, '_')}`,
     projectId,
     desaName: desaName.toUpperCase(),
     kecamatan,
     kabupaten,
+    driveFolderId: row[33] || undefined,
     baSosialisasiAwal: {
       status: (row[9] as any) || 'BELUM',
       date: row[10] || '',
@@ -1713,6 +1804,7 @@ export function agencyLetterToSheetRow(letter: AgencyLetter, index: number = 1):
     letter.picInstansi || '',
     letter.suratPdfUrl || '',
     (letter.docPhotos && letter.docPhotos.length > 0) ? letter.docPhotos.join(' ; ') : '',
+    letter.driveFolderId ? (letter.driveFolderUrl || (letter.driveFolderId.startsWith('http') ? letter.driveFolderId : `https://drive.google.com/drive/folders/${letter.driveFolderId}`)) : (letter.driveFolderUrl || ''),
     letter.updatedBy || 'Operator',
     new Date(letter.updatedAt || Date.now()).toLocaleString('id-ID')
   ];
@@ -1733,9 +1825,11 @@ export function sheetRowToAgencyLetter(row: any[], projectId: string): AgencyLet
   const suratPdfUrl = row[9] || undefined;
   const rawPhotos = row[10] || '';
   const docPhotos = typeof rawPhotos === 'string' && rawPhotos.trim()
-    ? rawPhotos.split(';').map((s: string) => s.trim()).filter(Boolean)
+    ? rawPhotos.split(/[;\n]/).map((s: string) => s.trim()).filter(Boolean)
     : [];
-  const updatedBy = row[11] || 'Google Sheet';
+
+  const driveFolderUrl = row.length >= 14 ? (row[11] || undefined) : undefined;
+  const updatedBy = (row.length >= 14 ? row[12] : row[11]) || 'Google Sheet';
 
   return {
     id,
@@ -1749,6 +1843,7 @@ export function sheetRowToAgencyLetter(row: any[], projectId: string): AgencyLet
     picInstansi,
     suratPdfUrl,
     docPhotos,
+    driveFolderUrl,
     updatedBy,
     createdAt: Date.now(),
     updatedAt: Date.now()
@@ -2064,4 +2159,282 @@ export async function sendInventoryWebhook(
     throw err;
   }
 }
+
+/**
+ * Safely extracts clean Drive folder ID even if the user pastes a complete URL.
+ */
+export function extractDriveFolderId(input: string): string {
+  if (!input) return '';
+  const trimmed = input.trim();
+  
+  // 1. Google Drive folder link: /folders/<ID>
+  const match = trimmed.match(/folders\/([a-zA-Z0-9_-]+)/);
+  if (match && match[1]) return match[1];
+
+  // 2. Google Drive /d/<ID> link (file or folder)
+  const dMatch = trimmed.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (dMatch && dMatch[1]) return dMatch[1];
+
+  // 3. Query param id: ?id=<ID> or &id=<ID>
+  const idMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (idMatch && idMatch[1]) return idMatch[1];
+
+  // 4. Clean trailing slashes and queries if bare ID or URL path
+  const clean = trimmed.split('?')[0].split('#')[0].replace(/\/+$/, '');
+  const lastSegment = clean.split('/').pop() || '';
+  if (lastSegment && /^[a-zA-Z0-9_-]{15,}$/.test(lastSegment)) {
+    return lastSegment;
+  }
+
+  return clean || trimmed;
+}
+
+export interface DetectedDriveGeoJSON {
+  id: string;
+  name: string;
+  type: 'bidang' | 'jalur' | 'tower';
+  data: any;
+  featureCount: number;
+  geometryType: string;
+}
+
+/**
+ * Scans a Google Drive folder for GeoJSON files, automatically downloads them,
+ * and detects their layer type ('bidang' | 'jalur' | 'tower') based on filename keywords
+ * and geometric feature types.
+ */
+export async function fetchDriveGeoJSONFiles(
+  accessToken: string,
+  folderIdOrUrl: string
+): Promise<DetectedDriveGeoJSON[]> {
+  const folderId = extractDriveFolderId(folderIdOrUrl);
+  if (!folderId) {
+    throw new Error('ID atau Tautan Folder Google Drive tidak valid.');
+  }
+
+  // 1. Inspect target item metadata to check if it exists, is a folder, or a single file
+  let targetMeta: any = null;
+  let targetName = 'Folder Google Drive';
+  let isSingleFile = false;
+
+  try {
+    const metaUrl = `https://www.googleapis.com/drive/v3/files/${folderId}?fields=id,name,mimeType,parents,trashed&supportsAllDrives=true`;
+    const metaRes = await fetchWithTimeout(metaUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    }, 12000);
+
+    if (metaRes.ok) {
+      targetMeta = await metaRes.json();
+      targetName = targetMeta?.name || 'Folder Google Drive';
+      isSingleFile = targetMeta?.mimeType !== 'application/vnd.google-apps.folder';
+    } else if (metaRes.status === 404) {
+      throw new Error(`Folder atau file dengan ID "${folderId}" tidak ditemukan di akun Google Drive Anda. Pastikan folder tersebut ada di Google Drive Anda atau telah dibagikan.`);
+    } else if (metaRes.status === 403 || metaRes.status === 401) {
+      await handleResponseError(metaRes, 'Izin akses Google Drive ditolak');
+    }
+  } catch (metaErr: any) {
+    if (metaErr?.message && metaErr.message.includes('tidak ditemukan')) {
+      throw metaErr;
+    }
+    console.warn("Could not retrieve target metadata, falling back to direct search:", metaErr);
+  }
+
+  const candidateFiles: any[] = [];
+
+  // If the user provided a link to a specific GeoJSON file directly
+  if (isSingleFile && targetMeta) {
+    candidateFiles.push(targetMeta);
+    // Also search parent folder for companion GeoJSON files if available
+    if (targetMeta.parents && targetMeta.parents.length > 0) {
+      const parentFolderId = targetMeta.parents[0];
+      try {
+        const siblingQuery = `'${parentFolderId}' in parents and trashed = false`;
+        const siblingUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(siblingQuery)}&fields=files(id,name,mimeType,size)&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true`;
+        const sibRes = await fetchWithTimeout(siblingUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        }, 12000);
+        if (sibRes.ok) {
+          const sibData = await sibRes.json();
+          for (const s of (sibData.files || [])) {
+            if (s.id !== targetMeta.id) {
+              candidateFiles.push(s);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("Could not query siblings:", e);
+      }
+    }
+  } else {
+    // Normal folder search
+    const query = `'${folderId}' in parents and trashed = false`;
+    const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,parents)&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true`;
+
+    const response = await fetchWithTimeout(searchUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    }, 15000);
+
+    if (!response.ok) {
+      await handleResponseError(response, `Gagal mengakses folder "${targetName}" di Google Drive`);
+    }
+
+    const data = await response.json();
+    const allFiles: any[] = data.files || [];
+    candidateFiles.push(...allFiles);
+
+    // If folder contains subfolders and no direct geojson files, search immediate subfolders
+    const directGeojson = allFiles.filter(f => {
+      const n = (f.name || '').toLowerCase();
+      return n.endsWith('.geojson') || n.endsWith('.json');
+    });
+
+    if (directGeojson.length === 0) {
+      const subfolders = allFiles.filter(f => f.mimeType === 'application/vnd.google-apps.folder');
+      for (const sf of subfolders.slice(0, 5)) {
+        try {
+          const subQuery = `'${sf.id}' in parents and trashed = false`;
+          const subUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(subQuery)}&fields=files(id,name,mimeType,size,parents)&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true`;
+          const subRes = await fetchWithTimeout(subUrl, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+          }, 12000);
+          if (subRes.ok) {
+            const subData = await subRes.json();
+            if (subData.files) {
+              candidateFiles.push(...subData.files);
+            }
+          }
+        } catch (subErr) {
+          console.warn(`Could not read subfolder ${sf.name}:`, subErr);
+        }
+      }
+    }
+  }
+
+  // Filter geojson or json files
+  const geojsonFiles = candidateFiles.filter(f => {
+    if (f.mimeType === 'application/vnd.google-apps.folder') return false;
+    const name = (f.name || '').toLowerCase();
+    return (
+      name.endsWith('.geojson') ||
+      name.endsWith('.json') ||
+      name.includes('.geojson') ||
+      f.mimeType === 'application/geo+json' ||
+      f.mimeType === 'application/json' ||
+      (name.includes('geojson') && (f.mimeType === 'application/octet-stream' || f.mimeType === 'text/plain'))
+    );
+  });
+
+  if (geojsonFiles.length === 0) {
+    const nonFolderFiles = candidateFiles.filter(f => f.mimeType !== 'application/vnd.google-apps.folder');
+    if (nonFolderFiles.length === 0) {
+      throw new Error(
+        `Folder Google Drive "${targetName}" berhasil terhubung, namun folder ini masih KOSONG (0 file di Google Drive).\n\n` +
+        `Solusi:\n` +
+        `1. Buka folder "${targetName}" di Google Drive Anda.\n` +
+        `2. Unggah/seret 3 berkas .geojson ke dalam folder tersebut:\n` +
+        `   • Bidang Tanah: KOMPENSASI_ROW_BIDANG_WARGA.geojson\n` +
+        `   • Jalur ROW: KOMPENSASI_ROW_JALUR_TRANSMISI.geojson\n` +
+        `   • Tapak Tower: KOMPENSASI_ROW_TITIK_TOWER.geojson\n` +
+        `3. Setelah berkas selesai terunggah di Drive, klik kembali tombol "Tarik 3 GeoJSON Sekarang".`
+      );
+    } else {
+      const sampleNames = nonFolderFiles.slice(0, 5).map(f => `"${f.name}"`).join(', ');
+      throw new Error(
+        `Folder Google Drive "${targetName}" berisi ${nonFolderFiles.length} berkas: [${sampleNames}], namun tidak ditemukan berkas berformat .geojson atau .json.\n\n` +
+        `Solusi: Pastikan nama berkas berakhiran .geojson (misalnya: KOMPENSASI_ROW_BIDANG_WARGA.geojson).`
+      );
+    }
+  }
+
+  const results: DetectedDriveGeoJSON[] = [];
+
+  for (const file of geojsonFiles) {
+    try {
+      const downloadUrl = `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media&supportsAllDrives=true`;
+      const fileRes = await fetchWithTimeout(downloadUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      }, 30000);
+
+      if (!fileRes.ok) {
+        console.warn(`Gagal mengunduh ${file.name} dari Drive`);
+        continue;
+      }
+
+      const parsedData = await fileRes.json();
+      if (!parsedData || (parsedData.type !== 'FeatureCollection' && !Array.isArray(parsedData.features))) {
+        console.warn(`File ${file.name} bukan format GeoJSON yang valid`);
+        continue;
+      }
+
+      const features: any[] = Array.isArray(parsedData.features) ? parsedData.features : [];
+      
+      // Determine geometry types present
+      const geomTypes = new Set<string>();
+      for (const feat of features.slice(0, 30)) {
+        if (feat?.geometry?.type) {
+          geomTypes.add(feat.geometry.type);
+        }
+      }
+      const geomTypeStr = Array.from(geomTypes).join(', ') || 'Unknown';
+
+      // Smart classification based on Filename Keywords + Geometry Fallback
+      const lowerName = file.name.toLowerCase();
+      let layerType: 'bidang' | 'jalur' | 'tower' = 'bidang';
+
+      if (
+        lowerName.includes('bidang') || 
+        lowerName.includes('warga') || 
+        lowerName.includes('persil') || 
+        lowerName.includes('tanah') || 
+        lowerName.includes('lahan') || 
+        lowerName.includes('parcel') ||
+        lowerName.includes('polygon')
+      ) {
+        layerType = 'bidang';
+      } else if (
+        lowerName.includes('jalur') || 
+        lowerName.includes('row') || 
+        lowerName.includes('koridor') || 
+        lowerName.includes('corridor') || 
+        lowerName.includes('span') || 
+        lowerName.includes('line') || 
+        lowerName.includes('kabel') ||
+        lowerName.includes('polyline')
+      ) {
+        layerType = 'jalur';
+      } else if (
+        lowerName.includes('tower') || 
+        lowerName.includes('tapak') || 
+        lowerName.includes('tiang') || 
+        lowerName.includes('titik') || 
+        lowerName.includes('point')
+      ) {
+        layerType = 'tower';
+      } else {
+        // Fallback by geometry type
+        if (geomTypes.has('Polygon') || geomTypes.has('MultiPolygon')) {
+          layerType = 'bidang';
+        } else if (geomTypes.has('LineString') || geomTypes.has('MultiLineString')) {
+          layerType = 'jalur';
+        } else if (geomTypes.has('Point') || geomTypes.has('MultiPoint')) {
+          layerType = 'tower';
+        }
+      }
+
+      results.push({
+        id: file.id,
+        name: file.name,
+        type: layerType,
+        data: parsedData,
+        featureCount: features.length,
+        geometryType: geomTypeStr
+      });
+    } catch (fileErr) {
+      console.warn(`Error parsing GeoJSON file ${file.name}:`, fileErr);
+    }
+  }
+
+  return results;
+}
+
 

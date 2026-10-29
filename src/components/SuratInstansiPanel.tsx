@@ -28,7 +28,9 @@ import {
   ClipboardList,
   RefreshCw,
   FileSpreadsheet,
-  Globe
+  Globe,
+  Folder,
+  FolderOpen
 } from 'lucide-react';
 import type { AgencyLetter, AgencyLetterStatus } from '../types';
 import { 
@@ -42,7 +44,8 @@ import {
   uploadFileToDrive, 
   fetchAgencyLettersFromGoogleSheet, 
   fetchAgencyLettersFromPublicCsv, 
-  saveAgencyLetterToSheet 
+  saveAgencyLetterToSheet,
+  findOrCreateFolder
 } from '../lib/googleApi';
 import { downloadAgencyLetterHeaderTemplate } from '../lib/sheetTemplateHelper';
 
@@ -54,6 +57,7 @@ interface SuratInstansiPanelProps {
   operatorName?: string;
   accessToken?: string;
   uploadsFolderId?: string;
+  agencyLetterUploadsFolderId?: string;
   spreadsheetId?: string;
   publicCsvUrl?: string;
   onRefreshGoogleToken?: () => Promise<string | null>;
@@ -81,6 +85,7 @@ export default function SuratInstansiPanel({
   operatorName = 'Operator',
   accessToken,
   uploadsFolderId,
+  agencyLetterUploadsFolderId,
   spreadsheetId,
   publicCsvUrl,
   onRefreshGoogleToken
@@ -104,6 +109,8 @@ export default function SuratInstansiPanel({
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingLetter, setEditingLetter] = useState<AgencyLetter | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgressText, setUploadProgressText] = useState('');
 
   // Form Fields
   const [formInstansi, setFormInstansi] = useState('');
@@ -116,6 +123,8 @@ export default function SuratInstansiPanel({
   const [formPdfUrl, setFormPdfUrl] = useState<string | undefined>();
   const [formPdfName, setFormPdfName] = useState<string | undefined>();
   const [formDocPhotos, setFormDocPhotos] = useState<string[]>([]);
+  const [formDriveFolderId, setFormDriveFolderId] = useState<string | undefined>();
+  const [formDriveFolderUrl, setFormDriveFolderUrl] = useState<string | undefined>();
   const [formError, setFormError] = useState<string | null>(null);
 
   // Preview Modal
@@ -124,6 +133,7 @@ export default function SuratInstansiPanel({
     title: string;
     pdfUrl?: string;
     photos?: string[];
+    folderUrl?: string;
   }>({ isOpen: false, title: '' });
 
   // Sync from source (Google Sheets / Web CSV / Local)
@@ -272,6 +282,29 @@ export default function SuratInstansiPanel({
     }).sort((a, b) => (b.tanggalSurat || '').localeCompare(a.tanggalSurat || '') || b.updatedAt - a.updatedAt);
   }, [letters, searchQuery, statusFilter, selectedInstansiFilter]);
 
+  // Helper to ensure dedicated Google Drive folder exists: Folder Surat -> INSTANSI_[NAMA_INSTANSI]
+  const getOrCreateInstansiFolder = async (instansiName: string): Promise<{ instansiFolderId: string; instansiFolderUrl?: string } | null> => {
+    let currentToken = accessToken;
+    if (!currentToken && onRefreshGoogleToken) {
+      currentToken = (await onRefreshGoogleToken()) || undefined;
+    }
+    if (!currentToken) return null;
+
+    try {
+      // 1. Root / master upload folder in Drive specifically for Surat Instansi
+      const mainFolderId = agencyLetterUploadsFolderId || uploadsFolderId || await findOrCreateFolder(currentToken, "SIP_SURAT_INSTANSI");
+      // 2. Dedicated folder for this Instansi: INSTANSI_[NAMA_INSTANSI]
+      const cleanInstansiName = (instansiName || 'INSTANSI').trim().toUpperCase().replace(/[\/\\?%*:|"<>\s]/g, '_');
+      const instansiFolderId = await findOrCreateFolder(currentToken, `INSTANSI_${cleanInstansiName}`, mainFolderId);
+      const instansiFolderUrl = `https://drive.google.com/drive/folders/${instansiFolderId}`;
+
+      return { instansiFolderId, instansiFolderUrl };
+    } catch (err) {
+      console.warn("Gagal membuat/mencari folder instansi di Google Drive:", err);
+      return null;
+    }
+  };
+
   // Open Form for Adding New Letter
   const handleOpenAdd = () => {
     setEditingLetter(null);
@@ -285,6 +318,8 @@ export default function SuratInstansiPanel({
     setFormPdfUrl(undefined);
     setFormPdfName(undefined);
     setFormDocPhotos([]);
+    setFormDriveFolderId(undefined);
+    setFormDriveFolderUrl(undefined);
     setFormError(null);
     setIsFormOpen(true);
   };
@@ -302,16 +337,35 @@ export default function SuratInstansiPanel({
     setFormPdfUrl(letter.suratPdfUrl);
     setFormPdfName(letter.suratPdfName);
     setFormDocPhotos(letter.docPhotos || []);
+    setFormDriveFolderId(letter.driveFolderId);
+    setFormDriveFolderUrl(letter.driveFolderUrl);
     setFormError(null);
     setIsFormOpen(true);
   };
 
-  // Upload PDF for Form
+  // Upload PDF for Form (saved inside INSTANSI_[NAMA_INSTANSI] folder)
   const handleUploadPdf = async (file: File) => {
+    setIsUploading(true);
+    setUploadProgressText('Menghubungkan ke Google Drive...');
     try {
       let webLink = '';
-      if (accessToken && uploadsFolderId) {
-        const res = await uploadFileToDrive(accessToken, file, 'SURAT_INSTANSI', formInstansi || 'INSTANSI', uploadsFolderId);
+      let currentToken = accessToken;
+      if (!currentToken && onRefreshGoogleToken) {
+        currentToken = (await onRefreshGoogleToken()) || undefined;
+      }
+
+      if (currentToken) {
+        setUploadProgressText(`Membuat/mencari folder Drive untuk ${formInstansi || 'Instansi'}...`);
+        const folderRes = await getOrCreateInstansiFolder(formInstansi || 'INSTANSI');
+        const targetFolderId = folderRes?.instansiFolderId;
+
+        if (folderRes) {
+          setFormDriveFolderId(folderRes.instansiFolderId);
+          setFormDriveFolderUrl(folderRes.instansiFolderUrl);
+        }
+
+        setUploadProgressText(`Mengunggah berkas PDF surat "${file.name}" ke Google Drive...`);
+        const res = await uploadFileToDrive(currentToken, file, 'SURAT', formInstansi || 'INSTANSI', targetFolderId);
         webLink = res.webViewLink;
       } else {
         webLink = await fileToBase64(file);
@@ -319,27 +373,67 @@ export default function SuratInstansiPanel({
       setFormPdfUrl(webLink);
       setFormPdfName(file.name);
       setFormError(null);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Gagal upload file PDF surat:', err);
       setFormError('Gagal mengunggah file PDF. Silakan coba lagi.');
+    } finally {
+      setIsUploading(false);
+      setUploadProgressText('');
     }
   };
 
-  // Upload Photos for Form
-  const handleUploadPhoto = async (file: File) => {
+  // Upload Photos for Form (Multiple files, saved in INSTANSI_[NAMA_INSTANSI] folder)
+  const handleUploadPhotos = async (files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
+
+    setIsUploading(true);
+    setUploadProgressText(`Menyiapkan ${fileArray.length} foto dokumentasi / tanda terima...`);
     try {
-      let photoUrl = '';
-      if (accessToken && uploadsFolderId) {
-        const res = await uploadFileToDrive(accessToken, file, 'DOK_SURAT', formInstansi || 'INSTANSI', uploadsFolderId);
-        photoUrl = res.webViewLink;
-      } else {
-        photoUrl = await fileToBase64(file);
+      let currentToken = accessToken;
+      if (!currentToken && onRefreshGoogleToken) {
+        currentToken = (await onRefreshGoogleToken()) || undefined;
       }
-      setFormDocPhotos(prev => [...prev, photoUrl]);
+
+      let targetFolderId: string | undefined = undefined;
+      if (currentToken) {
+        setUploadProgressText(`Membuat/mencari folder Drive untuk ${formInstansi || 'Instansi'}...`);
+        const folderRes = await getOrCreateInstansiFolder(formInstansi || 'INSTANSI');
+        if (folderRes) {
+          targetFolderId = folderRes.instansiFolderId;
+          setFormDriveFolderId(folderRes.instansiFolderId);
+          setFormDriveFolderUrl(folderRes.instansiFolderUrl);
+        }
+      }
+
+      const uploadedPhotoUrls: string[] = [];
+      for (let i = 0; i < fileArray.length; i++) {
+        const file = fileArray[i];
+        setUploadProgressText(`Mengunggah foto ${i + 1} dari ${fileArray.length} ke Google Drive...`);
+        let photoUrl = '';
+        if (currentToken && targetFolderId) {
+          const res = await uploadFileToDrive(
+            currentToken, 
+            file, 
+            `DOK_TANDATERIMA_${Date.now()}_${i + 1}`, 
+            formInstansi || 'INSTANSI', 
+            targetFolderId
+          );
+          photoUrl = res.webViewLink;
+        } else {
+          photoUrl = await fileToBase64(file);
+        }
+        uploadedPhotoUrls.push(photoUrl);
+      }
+
+      setFormDocPhotos(prev => [...prev, ...uploadedPhotoUrls]);
       setFormError(null);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Gagal upload dokumentasi surat:', err);
       setFormError('Gagal mengunggah foto dokumentasi.');
+    } finally {
+      setIsUploading(false);
+      setUploadProgressText('');
     }
   };
 
@@ -349,6 +443,14 @@ export default function SuratInstansiPanel({
     if (!formInstansi.trim() || !formNoSurat.trim() || !formPerihal.trim()) {
       setFormError('Harap lengkapi Instansi Tujuan, Nomor Surat, dan Perihal.');
       return;
+    }
+
+    // SOP Validation: Minimal 4 photos documentation (bukti tanda terima / serah terima)
+    if (formDocPhotos.length < 4) {
+      const confirmSave = confirm(
+        `Perhatian SOP Dokumentasi:\nSurat instansi wajib disertai MINIMAL 4 FOTO dokumentasi (tanda terima ekspedisi, stempel basah, tanda tangan penerima/pejabat instansi, dan dokumentasi penyerahan).\n\nSaat ini baru diunggah ${formDocPhotos.length} foto (kurang ${4 - formDocPhotos.length} foto).\n\nApakah Anda tetap ingin menyimpan sekarang? Disarankan melengkapi minimal 4 foto dokumentasi.`
+      );
+      if (!confirmSave) return;
     }
 
     setFormError(null);
@@ -362,6 +464,8 @@ export default function SuratInstansiPanel({
       suratPdfUrl: formPdfUrl,
       suratPdfName: formPdfName,
       docPhotos: formDocPhotos,
+      driveFolderId: formDriveFolderId,
+      driveFolderUrl: formDriveFolderUrl,
       status: formStatus,
       catatanTindakLanjut: formTindakLanjut.trim(),
       picInstansi: formPic.trim(),
@@ -928,13 +1032,26 @@ export default function SuratInstansiPanel({
                             onClick={() => setPreviewModal({
                               isOpen: true,
                               title: `Dokumentasi / Tanda Terima - ${letter.instansiName}`,
-                              photos: letter.docPhotos
+                              photos: letter.docPhotos,
+                              folderUrl: letter.driveFolderUrl || (letter.driveFolderId ? `https://drive.google.com/drive/folders/${letter.driveFolderId}` : undefined)
                             })}
                             className="px-2 py-0.5 rounded-lg bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-all"
                             title="Lihat Foto Dokumentasi / Bukti Tanda Terima"
                           >
                             <ImageIcon className="w-3 h-3" /> {letter.docPhotos?.length} Bukti
                           </button>
+                        )}
+
+                        {(letter.driveFolderUrl || letter.driveFolderId) && (
+                          <a
+                            href={letter.driveFolderUrl || `https://drive.google.com/drive/folders/${letter.driveFolderId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 text-[9px] font-bold flex items-center gap-1 cursor-pointer transition-all"
+                            title="Buka Folder Instansi di Google Drive"
+                          >
+                            <Folder className="w-2.5 h-2.5" /> Folder Drive
+                          </a>
                         )}
                       </div>
                     </td>
@@ -1219,23 +1336,52 @@ export default function SuratInstansiPanel({
                 )}
               </div>
 
-              {/* Upload Foto Dokumentasi / Bukti Tanda Terima */}
-              <div className="space-y-2 bg-slate-900/40 p-3.5 rounded-2xl border border-white/5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+              {/* Upload Foto Dokumentasi / Bukti Tanda Terima (Minimal 4 Foto) */}
+              <div className="space-y-3 bg-slate-900/60 p-4 rounded-2xl border border-white/10 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-white flex items-center gap-2">
                     <ImageIcon className="w-4 h-4 text-purple-400" />
-                    Bukti Tanda Terima / Dokumentasi Foto (Cap Basah, Ekspedisi, Pertemuan)
+                    Dokumentasi & Tanda Terima (Min. 4 Foto)
                   </span>
-                  <span className="text-[10px] font-mono text-slate-400">
-                    {formDocPhotos.length} Foto
-                  </span>
+                  <div>
+                    {formDocPhotos.length >= 4 ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                        Lengkap ({formDocPhotos.length}/4 Foto)
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        <AlertCircle className="w-3 h-3 text-amber-400" />
+                        Wajib Min. 4 Foto (Saat ini: {formDocPhotos.length}/4)
+                      </span>
+                    )}
+                  </div>
                 </div>
 
-                {formDocPhotos.length > 0 && (
-                  <div className="grid grid-cols-3 gap-2">
-                    {formDocPhotos.map((photo, i) => (
-                      <div key={i} className="relative group rounded-lg overflow-hidden border border-white/10 aspect-video bg-slate-950">
-                        <img src={photo} alt="" className="w-full h-full object-cover" />
+                {/* SOP Notice for Surat Instansi */}
+                <div className="p-3 bg-purple-950/40 border border-purple-500/20 rounded-xl text-[11px] text-purple-200/90 leading-relaxed space-y-1">
+                  <div className="font-bold flex items-center gap-1.5 text-purple-300">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                    Standar Dokumentasi Lapangan (Minimal 4 Foto):
+                  </div>
+                  <ol className="list-decimal list-inside text-[10.5px] space-y-0.5 text-purple-200/80 pl-1">
+                    <li>Foto Lembar Surat Fisik / Tanda Terima Ekspedisi</li>
+                    <li>Foto Cap/Stempel Basah Instansi & Tanggal Masuk</li>
+                    <li>Foto Tanda Tangan Penerima / Pejabat yang Berwenang</li>
+                    <li>Foto Penyerahan Langsung di Kantor Instansi Bersangkutan</li>
+                  </ol>
+                </div>
+
+                {/* Grid 4 Slots (Uploaded + Empty Slots) */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  {/* Uploaded Photos */}
+                  {formDocPhotos.map((photo, i) => (
+                    <div 
+                      key={i} 
+                      className="relative group rounded-xl overflow-hidden border border-purple-500/30 aspect-square bg-slate-950 shadow-sm"
+                    >
+                      <img src={photo} alt={`Foto ${i + 1}`} className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1">
                         <button
                           type="button"
                           onClick={() => {
@@ -1243,25 +1389,58 @@ export default function SuratInstansiPanel({
                             cp.splice(i, 1);
                             setFormDocPhotos(cp);
                           }}
-                          className="absolute top-1 right-1 p-1 bg-rose-600 text-white rounded cursor-pointer"
+                          className="p-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer"
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-3 h-3" /> Hapus
                         </button>
                       </div>
-                    ))}
+                      <span className="absolute bottom-1 left-1 px-1.5 py-0.5 bg-black/70 rounded text-[9px] font-mono text-white">
+                        Foto {i + 1}
+                      </span>
+                    </div>
+                  ))}
+
+                  {/* Empty Slots placeholder if less than 4 */}
+                  {Array.from({ length: Math.max(0, 4 - formDocPhotos.length) }).map((_, idx) => (
+                    <div 
+                      key={`empty-slot-${idx}`} 
+                      className="border-2 border-dashed border-purple-500/20 rounded-xl aspect-square flex flex-col items-center justify-center p-2 text-center bg-purple-950/10 text-slate-500"
+                    >
+                      <ImageIcon className="w-5 h-5 text-purple-400/40 mb-1" />
+                      <span className="text-[10px] font-bold text-slate-400">
+                        Slot Foto {formDocPhotos.length + idx + 1}
+                      </span>
+                      <span className="text-[9px] text-purple-300/60">Wajib Diisi</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Upload Status / Progress */}
+                {isUploading && (
+                  <div className="p-2.5 bg-sky-500/10 border border-sky-500/20 rounded-xl flex items-center gap-2 text-xs text-sky-300">
+                    <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
+                    <span>{uploadProgressText || 'Sedang mengunggah berkas ke Google Drive...'}</span>
                   </div>
                 )}
 
-                <label className="border-2 border-dashed border-white/10 hover:border-purple-500/50 rounded-xl p-3 flex items-center justify-center gap-2 text-center cursor-pointer transition-all bg-white/[0.01]">
+                {/* Upload Input Button (Supports multi-select) */}
+                <label className="border-2 border-dashed border-purple-500/30 hover:border-purple-400 hover:bg-purple-500/5 rounded-xl p-3 flex items-center justify-center gap-2 text-center cursor-pointer transition-all bg-white/[0.01]">
                   <UploadCloud className="w-4 h-4 text-purple-400" />
-                  <span className="text-xs font-bold text-white">Tambah Foto Tanda Terima / Dokumentasi</span>
+                  <span className="text-xs font-bold text-white">
+                    {formDocPhotos.length === 0 
+                      ? 'Pilih Sekaligus 4 Foto Dokumentasi Lapangan' 
+                      : 'Tambah / Pilih Foto Dokumentasi Tambahan'}
+                  </span>
                   <input
                     type="file"
                     accept="image/*"
+                    multiple
+                    disabled={isUploading}
                     className="hidden"
                     onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) handleUploadPhoto(f);
+                      if (e.target.files && e.target.files.length > 0) {
+                        handleUploadPhotos(e.target.files);
+                      }
                     }}
                   />
                 </label>
@@ -1327,7 +1506,19 @@ export default function SuratInstansiPanel({
               )}
             </div>
 
-            <div className="p-3 border-t border-white/10 bg-slate-900 flex justify-end">
+            <div className="p-3 border-t border-white/10 bg-slate-900 flex justify-between items-center">
+              <div>
+                {previewModal.folderUrl && (
+                  <a
+                    href={previewModal.folderUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 bg-emerald-600/30 text-emerald-300 hover:bg-emerald-600/50 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5" /> Buka Folder Instansi di Drive
+                  </a>
+                )}
+              </div>
               <button
                 onClick={() => setPreviewModal({ isOpen: false, title: '' })}
                 className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl cursor-pointer"

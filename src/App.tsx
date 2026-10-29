@@ -7,7 +7,9 @@ import { doc, getDoc, setDoc, collection, addDoc, getDocs, deleteDoc, onSnapshot
 import { 
   findOrCreateSpreadsheet, fetchSpreadsheetRecords, saveRecordToSpreadsheet, setupProjectDriveStructure, findOrCreateFolder, fetchWithTimeout, registerTokenRefreshHandler, deleteSpreadsheetRow,
   createDedicatedResumeSpreadsheet,
-  createDedicatedAgencyLetterSpreadsheet
+  createDedicatedAgencyLetterSpreadsheet,
+  fetchDriveGeoJSONFiles,
+  extractDriveFolderId
 } from './lib/googleApi';
 import { executeDeleteParcel } from './lib/parcelManagement';
 import {
@@ -64,10 +66,10 @@ import {
 } from 'lucide-react';
 
 const DEFAULT_PROJECTS: ProjectConfig[] = [
-  { id: 'proj-1', name: 'KOMPENSASI ROW 150 kV JELOK - SANGGARAHAN', folderId: null, spreadsheetId: null, uploadsFolderId: null, publicCsvUrl: null, resumeStages: DEFAULT_RESUME_STAGES },
-  { id: 'proj-2', name: 'KOMPENSASI ROW 150 kV BANGIL - BULUKANDANG', folderId: null, spreadsheetId: null, uploadsFolderId: null, publicCsvUrl: null, resumeStages: DEFAULT_RESUME_STAGES },
-  { id: 'proj-3', name: 'KOMPENSASI ROW 150 kV LAWANG - BULUKANDANG', folderId: null, spreadsheetId: null, uploadsFolderId: null, publicCsvUrl: null, resumeStages: DEFAULT_RESUME_STAGES },
-  { id: 'proj-4', name: 'KOMPENSASI ROW 150 kV GRATI - BANGIL', folderId: null, spreadsheetId: null, uploadsFolderId: null, publicCsvUrl: null, resumeStages: DEFAULT_RESUME_STAGES },
+  { id: 'proj-1', name: 'KOMPENSASI ROW 150 kV JELOK - SANGGARAHAN', folderId: null, spreadsheetId: null, uploadsFolderId: null, geojsonFolderId: null, resumeUploadsFolderId: null, agencyLetterUploadsFolderId: null, publicCsvUrl: null, resumeStages: DEFAULT_RESUME_STAGES },
+  { id: 'proj-2', name: 'KOMPENSASI ROW 150 kV BANGIL - BULUKANDANG', folderId: null, spreadsheetId: null, uploadsFolderId: null, geojsonFolderId: null, resumeUploadsFolderId: null, agencyLetterUploadsFolderId: null, publicCsvUrl: null, resumeStages: DEFAULT_RESUME_STAGES },
+  { id: 'proj-3', name: 'KOMPENSASI ROW 150 kV LAWANG - BULUKANDANG', folderId: null, spreadsheetId: null, uploadsFolderId: null, geojsonFolderId: null, resumeUploadsFolderId: null, agencyLetterUploadsFolderId: null, publicCsvUrl: null, resumeStages: DEFAULT_RESUME_STAGES },
+  { id: 'proj-4', name: 'KOMPENSASI ROW 150 kV GRATI - BANGIL', folderId: null, spreadsheetId: null, uploadsFolderId: null, geojsonFolderId: null, resumeUploadsFolderId: null, agencyLetterUploadsFolderId: null, publicCsvUrl: null, resumeStages: DEFAULT_RESUME_STAGES },
 ];
 
 // RFC-compliant CSV Parser
@@ -429,6 +431,9 @@ export default function App() {
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectFolderId, setNewProjectFolderId] = useState('');
   const [newProjectUploadsFolderId, setNewProjectUploadsFolderId] = useState('');
+  const [newProjectResumeUploadsFolderId, setNewProjectResumeUploadsFolderId] = useState('');
+  const [newProjectAgencyLetterUploadsFolderId, setNewProjectAgencyLetterUploadsFolderId] = useState('');
+  const [newProjectGeojsonFolderId, setNewProjectGeojsonFolderId] = useState('');
   // File 1: Data Lahan
   const [newProjectSpreadsheetId, setNewProjectSpreadsheetId] = useState('');
   const [newProjectPublicCsvUrl, setNewProjectPublicCsvUrl] = useState('');
@@ -453,6 +458,9 @@ export default function App() {
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editFolderId, setEditFolderId] = useState('');
   const [editUploadsFolderId, setEditUploadsFolderId] = useState('');
+  const [editGeojsonFolderId, setEditGeojsonFolderId] = useState('');
+  const [editResumeUploadsFolderId, setEditResumeUploadsFolderId] = useState('');
+  const [editAgencyLetterUploadsFolderId, setEditAgencyLetterUploadsFolderId] = useState('');
   // File 1: Data Lahan
   const [editSpreadsheetId, setEditSpreadsheetId] = useState('');
   const [editPublicCsvUrl, setEditPublicCsvUrl] = useState('');
@@ -462,6 +470,10 @@ export default function App() {
   // File 3: Surat Instansi
   const [editAgencyLetterSpreadsheetId, setEditAgencyLetterSpreadsheetId] = useState('');
   const [editAgencyLetterPublicCsvUrl, setEditAgencyLetterPublicCsvUrl] = useState('');
+
+  // GeoJSON Drive Sync state
+  const [isSyncingDriveGeoJSON, setIsSyncingDriveGeoJSON] = useState<string | null>(null);
+  const [driveGeoJsonFolderInput, setDriveGeoJsonFolderInput] = useState('');
 
   const [editingStagesProjectId, setEditingStagesProjectId] = useState<string | null>(null);
   const [tempProjectStages, setTempProjectStages] = useState<ResumeStageConfig[]>(DEFAULT_RESUME_STAGES);
@@ -2569,6 +2581,9 @@ export default function App() {
       name: newProjectName.trim().toUpperCase(),
       folderId: newProjectFolderId.trim() || null,
       uploadsFolderId: newProjectUploadsFolderId.trim() || null,
+      geojsonFolderId: newProjectGeojsonFolderId.trim() || null,
+      resumeUploadsFolderId: newProjectResumeUploadsFolderId.trim() || null,
+      agencyLetterUploadsFolderId: newProjectAgencyLetterUploadsFolderId.trim() || null,
       // File 1: Data Lahan (267 Kolom)
       spreadsheetId: newProjectSpreadsheetId.trim() || null,
       publicCsvUrl: newProjectPublicCsvUrl.trim() || null,
@@ -2600,6 +2615,9 @@ export default function App() {
     setNewProjectName('');
     setNewProjectFolderId('');
     setNewProjectUploadsFolderId('');
+    setNewProjectGeojsonFolderId('');
+    setNewProjectResumeUploadsFolderId('');
+    setNewProjectAgencyLetterUploadsFolderId('');
     setNewProjectSpreadsheetId('');
     setNewProjectPublicCsvUrl('');
     setNewProjectResumeSpreadsheetId('');
@@ -2654,6 +2672,9 @@ export default function App() {
     setEditingProjectId(proj.id);
     setEditFolderId(proj.folderId || '');
     setEditUploadsFolderId(proj.uploadsFolderId || '');
+    setEditGeojsonFolderId(proj.geojsonFolderId || '');
+    setEditResumeUploadsFolderId(proj.resumeUploadsFolderId || '');
+    setEditAgencyLetterUploadsFolderId(proj.agencyLetterUploadsFolderId || '');
     // File 1: Data Lahan
     setEditSpreadsheetId(proj.spreadsheetId || '');
     setEditPublicCsvUrl(proj.publicCsvUrl || '');
@@ -2670,6 +2691,9 @@ export default function App() {
     setEditingProjectId(null);
     setEditFolderId('');
     setEditUploadsFolderId('');
+    setEditGeojsonFolderId('');
+    setEditResumeUploadsFolderId('');
+    setEditAgencyLetterUploadsFolderId('');
     setEditSpreadsheetId('');
     setEditPublicCsvUrl('');
     setEditResumeSpreadsheetId('');
@@ -2689,6 +2713,9 @@ export default function App() {
           ...p,
           folderId: editFolderId.trim() || null,
           uploadsFolderId: editUploadsFolderId.trim() || null,
+          geojsonFolderId: editGeojsonFolderId.trim() || null,
+          resumeUploadsFolderId: editResumeUploadsFolderId.trim() || null,
+          agencyLetterUploadsFolderId: editAgencyLetterUploadsFolderId.trim() || null,
           // File 1: Data Lahan
           spreadsheetId: editSpreadsheetId.trim() || null,
           publicCsvUrl: editPublicCsvUrl.trim() || null,
@@ -2718,6 +2745,94 @@ export default function App() {
 
     cancelEditingProject();
     alert("Konfigurasi 3 Spreadsheet & Folder ID berhasil disimpan!");
+  };
+
+  // Auto-sync 3 GeoJSON layers directly from Google Drive folder
+  const handleSyncDriveGeoJSON = async (proj: ProjectConfig, explicitFolderId?: string) => {
+    const rawFolder = explicitFolderId || proj.geojsonFolderId || proj.folderId;
+    const cleanFolderId = extractDriveFolderId(rawFolder || '');
+    
+    if (!cleanFolderId) {
+      alert("ID atau Tautan Folder Google Drive untuk GeoJSON belum diisi.\n\nSilakan masukkan ID atau Tautan Folder Google Drive pada kolom 'ID Folder Google Drive Berkas GeoJSON'.");
+      return;
+    }
+
+    let activeAuthToken = token;
+    if (!activeAuthToken || activeAuthToken === 'GUEST_BYPASS' || activeAuthToken === 'null') {
+      try {
+        activeAuthToken = (await handleRefreshGoogleAuth()) || null;
+      } catch (e) {
+        console.warn("Auth failed:", e);
+      }
+    }
+
+    if (!activeAuthToken) {
+      alert("Silakan hubungkan akun Google Anda terlebih dahulu untuk membaca folder Google Drive.");
+      return;
+    }
+
+    setIsSyncingDriveGeoJSON(proj.id);
+    setSyncFeedback({
+      type: 'info',
+      message: `Sedang memindai & mengunduh 3 berkas GeoJSON dari Google Drive untuk "${proj.name}"...`,
+      timestamp: Date.now()
+    });
+
+    try {
+      const detectedFiles = await fetchDriveGeoJSONFiles(activeAuthToken, cleanFolderId);
+      if (!detectedFiles || detectedFiles.length === 0) {
+        alert("Tidak ditemukan berkas .geojson di dalam folder Google Drive tersebut.");
+        return;
+      }
+
+      // Process each detected layer
+      const newLayers: any[] = [];
+      for (const item of detectedFiles) {
+        const layerId = `${proj.id}_${item.type}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const savedLayer = {
+          id: layerId,
+          name: item.name,
+          type: item.type,
+          data: item.data,
+          visible: true,
+          projectId: proj.id,
+          createdAt: new Date().toISOString()
+        };
+
+        await saveGeoJSONLayerToFirestore(savedLayer);
+        saveLayerToLocalStorage(savedLayer);
+        newLayers.push(savedLayer);
+      }
+
+      // Refresh loadedGeoJSONs in state
+      setLoadedGeoJSONs(prev => {
+        const filtered = prev.filter(l => !(l.projectId === proj.id && newLayers.some(nl => nl.type === l.type)));
+        return [...filtered, ...newLayers];
+      });
+
+      const summaryDetails = detectedFiles.map(f => {
+        const typeLabel = f.type === 'bidang' ? '1. Bidang Tanah (Polygon)' : f.type === 'jalur' ? '2. Jalur ROW (LineString)' : '3. Tapak Tower (Point)';
+        return `• ${typeLabel}: "${f.name}" (${f.featureCount} fitur, geometri: ${f.geometryType})`;
+      }).join('\n');
+
+      setSyncFeedback({
+        type: 'success',
+        message: `✅ Berhasil menarik ${detectedFiles.length} berkas GeoJSON dari Google Drive untuk "${proj.name}".`,
+        timestamp: Date.now()
+      });
+
+      alert(`✅ Berhasil Menarik ${detectedFiles.length} Berkas GeoJSON dari Google Drive!\n\nJalur: ${proj.name}\nRincian Deteksi:\n${summaryDetails}\n\nPeta Spasial (GIS), Peta Bidang Tanah, dan Formulir PDF telah otomatis disinkronkan.`);
+    } catch (err: any) {
+      console.error("Error syncing GeoJSON from Drive:", err);
+      setSyncFeedback({
+        type: 'error',
+        message: `Gagal menarik GeoJSON dari Google Drive: ${err?.message || err}`,
+        timestamp: Date.now()
+      });
+      alert(`Gagal menarik GeoJSON: ${err?.message || err}`);
+    } finally {
+      setIsSyncingDriveGeoJSON(null);
+    }
   };
 
   const [isAutoCreatingSheet, setIsAutoCreatingSheet] = useState(false);
@@ -3013,21 +3128,27 @@ export default function App() {
     });
 
     try {
-      // 1. Folder + File 1: Data Lahan (267 Kolom)
+      // 1. Folder Utama & Uploads Lahan (267 Kolom)
       const setup = await setupProjectDriveStructure(currentToken, proj.name);
       
-      // 2. File 2: Resume Project (36 Kolom)
+      // 2. Folder Khusus Berkas Resume Proyek (Per Desa/Kegiatan)
+      const resumeFolderId = await findOrCreateFolder(currentToken, "SIP_RESUME_PROYEK_DESA", setup.folderId);
+
+      // 3. Folder Khusus Berkas Surat Instansi (Per Instansi)
+      const agencyFolderId = await findOrCreateFolder(currentToken, "SIP_SURAT_INSTANSI", setup.folderId);
+
+      // 4. File 2: Resume Project (42 Kolom)
       const resumeResult = await createDedicatedResumeSpreadsheet(
         currentToken,
         proj.name,
-        setup.uploadsFolderId || setup.folderId
+        resumeFolderId || setup.uploadsFolderId || setup.folderId
       );
 
-      // 3. File 3: Surat Instansi (13 Kolom)
+      // 5. File 3: Surat Instansi (14 Kolom)
       const letterResult = await createDedicatedAgencyLetterSpreadsheet(
         currentToken,
         proj.name,
-        setup.uploadsFolderId || setup.folderId
+        agencyFolderId || setup.uploadsFolderId || setup.folderId
       );
 
       const updated = projects.map(p => {
@@ -3036,6 +3157,8 @@ export default function App() {
             ...p,
             folderId: setup.folderId,
             uploadsFolderId: setup.uploadsFolderId,
+            resumeUploadsFolderId: resumeFolderId,
+            agencyLetterUploadsFolderId: agencyFolderId,
             spreadsheetId: setup.spreadsheetId,
             resumeSpreadsheetId: resumeResult.spreadsheetId,
             agencyLetterSpreadsheetId: letterResult.spreadsheetId
@@ -4761,6 +4884,7 @@ export default function App() {
                     spreadsheetId={projects.find(p => p.id === activeProjectId)?.resumeSpreadsheetId || spreadsheetId || projects.find(p => p.id === activeProjectId)?.spreadsheetId || undefined}
                     allProjects={projects}
                     uploadsFolderId={projectUploadsFolderId || undefined}
+                    resumeUploadsFolderId={projects.find(p => p.id === activeProjectId)?.resumeUploadsFolderId || undefined}
                     onRefreshGoogleToken={handleRefreshGoogleAuth}
                     onNavigateToInput={(rec) => {
                       setSelectedRecordForEdit(rec);
@@ -4790,6 +4914,7 @@ export default function App() {
                     operatorName={operatorName}
                     accessToken={token || undefined}
                     uploadsFolderId={projectUploadsFolderId || undefined}
+                    agencyLetterUploadsFolderId={projects.find(p => p.id === activeProjectId)?.agencyLetterUploadsFolderId || undefined}
                     spreadsheetId={projects.find(p => p.id === activeProjectId)?.agencyLetterSpreadsheetId || undefined}
                     publicCsvUrl={projects.find(p => p.id === activeProjectId)?.agencyLetterPublicCsvUrl || undefined}
                     onRefreshGoogleToken={handleRefreshGoogleAuth}
@@ -5397,6 +5522,24 @@ export default function App() {
                                             <span className="text-slate-500">PDF: </span>
                                             <span className="text-slate-300">{proj.uploadsFolderId ? `${proj.uploadsFolderId.slice(0, 10)}...` : '-'}</span>
                                           </div>
+                                          {proj.resumeUploadsFolderId && (
+                                            <div className="text-amber-300">
+                                              <span className="text-amber-400 font-bold">Resume: </span>
+                                              <span title={proj.resumeUploadsFolderId}>{`${proj.resumeUploadsFolderId.slice(0, 10)}...`}</span>
+                                            </div>
+                                          )}
+                                          {proj.agencyLetterUploadsFolderId && (
+                                            <div className="text-sky-300">
+                                              <span className="text-sky-400 font-bold">Surat: </span>
+                                              <span title={proj.agencyLetterUploadsFolderId}>{`${proj.agencyLetterUploadsFolderId.slice(0, 10)}...`}</span>
+                                            </div>
+                                          )}
+                                          {proj.geojsonFolderId && (
+                                            <div className="text-amber-300">
+                                              <span className="text-amber-400 font-bold">GeoJSON: </span>
+                                              <span>{`${proj.geojsonFolderId.slice(0, 10)}...`}</span>
+                                            </div>
+                                          )}
                                         </div>
                                       </td>
 
@@ -5411,6 +5554,19 @@ export default function App() {
                                               title="Jadikan jalur ini aktif"
                                             >
                                               Buka
+                                            </button>
+                                          )}
+
+                                          {proj.geojsonFolderId && (
+                                            <button
+                                              type="button"
+                                              disabled={isSyncingDriveGeoJSON === proj.id}
+                                              onClick={() => handleSyncDriveGeoJSON(proj)}
+                                              className="px-2 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-[10px] font-bold rounded cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                                              title="Tarik 3 Berkas GeoJSON dari Google Drive Folder"
+                                            >
+                                              <RefreshCw className={`w-2.5 h-2.5 ${isSyncingDriveGeoJSON === proj.id ? 'animate-spin' : 'text-amber-400'}`} />
+                                              GeoJSON
                                             </button>
                                           )}
 
@@ -5676,10 +5832,28 @@ export default function App() {
                                   </div>
 
                                   {/* Folder IDs info */}
-                                  {(proj.folderId || proj.uploadsFolderId) && (
-                                    <div className="text-[9px] font-mono text-slate-500 flex flex-wrap gap-x-4 gap-y-1 pt-1 border-t border-white/5">
+                                  {(proj.folderId || proj.uploadsFolderId || proj.resumeUploadsFolderId || proj.agencyLetterUploadsFolderId || proj.geojsonFolderId) && (
+                                    <div className="text-[9px] font-mono text-slate-500 flex flex-wrap gap-x-4 gap-y-1 pt-1 border-t border-white/5 items-center">
                                       {proj.folderId && <span>Folder Drive: <span className="text-slate-300 select-all">{proj.folderId}</span></span>}
                                       {proj.uploadsFolderId && <span>Folder PDF: <span className="text-slate-300 select-all">{proj.uploadsFolderId}</span></span>}
+                                      {proj.resumeUploadsFolderId && (
+                                        <span className="flex items-center gap-1 text-amber-300">
+                                          <Folder className="w-3 h-3 text-amber-400" />
+                                          Folder Resume: <span className="text-amber-200 select-all">{proj.resumeUploadsFolderId}</span>
+                                        </span>
+                                      )}
+                                      {proj.agencyLetterUploadsFolderId && (
+                                        <span className="flex items-center gap-1 text-sky-300">
+                                          <Folder className="w-3 h-3 text-sky-400" />
+                                          Folder Surat: <span className="text-sky-200 select-all">{proj.agencyLetterUploadsFolderId}</span>
+                                        </span>
+                                      )}
+                                      {proj.geojsonFolderId && (
+                                        <span className="flex items-center gap-1 text-purple-300">
+                                          <Layers className="w-3 h-3 text-purple-400" />
+                                          Folder GeoJSON: <span className="text-purple-200 select-all">{proj.geojsonFolderId}</span>
+                                        </span>
+                                      )}
                                     </div>
                                   )}
 
@@ -5699,6 +5873,20 @@ export default function App() {
                                           title="Jadikan jalur ini sebagai proyek aktif"
                                         >
                                           Buka Jalur Ini
+                                        </button>
+                                      )}
+
+                                      {/* Tombol Tarik 3 GeoJSON dari Drive jika folder ID disetel */}
+                                      {proj.geojsonFolderId && (
+                                        <button
+                                          type="button"
+                                          disabled={isSyncingDriveGeoJSON === proj.id}
+                                          onClick={() => handleSyncDriveGeoJSON(proj)}
+                                          className="text-[11px] font-bold text-amber-300 hover:text-amber-200 px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 rounded-lg border border-amber-500/30 transition-all cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                                          title="Tarik & sinkronkan 3 file GeoJSON (Bidang, Jalur, Tower) dari folder Google Drive ini"
+                                        >
+                                          <RefreshCw className={`w-3 h-3 ${isSyncingDriveGeoJSON === proj.id ? 'animate-spin' : 'text-amber-400'}`} />
+                                          {isSyncingDriveGeoJSON === proj.id ? 'Menarik GeoJSON...' : 'Tarik 3 GeoJSON'}
                                         </button>
                                       )}
 
@@ -5894,27 +6082,124 @@ export default function App() {
                                 </div>
                               </div>
 
-                              {/* Folder Drive */}
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {/* Folder Drive (Terpisah untuk Resume & Surat) */}
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">ID Folder Utama Drive (Opsional)</label>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">ID Folder Utama Proyek (Drive)</label>
                                   <input
                                     type="text"
                                     value={newProjectFolderId}
                                     onChange={(e) => setNewProjectFolderId(e.target.value)}
-                                    placeholder="ID Folder (Contoh: 1XyZ...)"
+                                    placeholder="ID Folder Utama (Contoh: 1XyZ...)"
                                     className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
                                   />
                                 </div>
                                 <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">ID Folder PDF Bukti (Opsional)</label>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">ID Folder PDF Lahan (Opsional)</label>
                                   <input
                                     type="text"
                                     value={newProjectUploadsFolderId}
                                     onChange={(e) => setNewProjectUploadsFolderId(e.target.value)}
-                                    placeholder="ID Folder PDF (Contoh: 1AbC...)"
+                                    placeholder="ID Folder PDF Lahan (Contoh: 1AbC...)"
                                     className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
                                   />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-amber-400 uppercase block mb-1 flex items-center gap-1">
+                                    <Folder className="w-3 h-3" />
+                                    ID Folder Berkas Resume (Desa & Min. 4 Foto)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={newProjectResumeUploadsFolderId}
+                                    onChange={(e) => setNewProjectResumeUploadsFolderId(e.target.value)}
+                                    placeholder="ID / Link Folder Resume Proyek di Drive"
+                                    className="w-full px-3 py-2 bg-slate-900 border border-amber-500/30 rounded-xl text-xs text-amber-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                  />
+                                  <span className="text-[9px] text-slate-500 mt-0.5 block">Otomatis membuat subfolder per Desa & Kegiatan</span>
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-sky-400 uppercase block mb-1 flex items-center gap-1">
+                                    <Folder className="w-3 h-3" />
+                                    ID Folder Berkas Surat (Instansi & Min. 4 Foto)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={newProjectAgencyLetterUploadsFolderId}
+                                    onChange={(e) => setNewProjectAgencyLetterUploadsFolderId(e.target.value)}
+                                    placeholder="ID / Link Folder Surat Instansi di Drive"
+                                    className="w-full px-3 py-2 bg-slate-900 border border-sky-500/30 rounded-xl text-xs text-sky-200 font-mono focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                  />
+                                  <span className="text-[9px] text-slate-500 mt-0.5 block">Otomatis membuat subfolder per Instansi</span>
+                                </div>
+                              </div>
+
+                              {/* Input ID Folder Google Drive Berkas GeoJSON */}
+                              <div className="p-4 bg-slate-950/80 rounded-xl border border-amber-500/30 space-y-3">
+                                <label className="text-xs font-bold text-amber-300 uppercase flex items-center gap-1.5">
+                                  <Layers className="w-4 h-4 text-amber-400" />
+                                  ID Folder Google Drive Berkas GeoJSON (3 Berkas Spasial)
+                                </label>
+                                <input
+                                  type="text"
+                                  value={newProjectGeojsonFolderId}
+                                  onChange={(e) => setNewProjectGeojsonFolderId(e.target.value)}
+                                  placeholder="Masukkan ID Folder atau Tautan Google Drive (Contoh: 1aBcDeFgH123456789...)"
+                                  className="w-full px-3 py-2.5 bg-slate-900 border border-white/10 rounded-xl text-xs text-amber-200 font-mono focus:outline-none focus:border-amber-500"
+                                />
+
+                                {/* Kotak Contoh Format Penamaan 3 Berkas GeoJSON */}
+                                <div className="p-3 bg-slate-900/90 rounded-xl border border-white/10 space-y-2">
+                                  <div className="flex items-center gap-1.5 text-amber-300 font-bold text-[11px]">
+                                    <Info className="w-3.5 h-3.5 text-amber-400" />
+                                    <span>Contoh & Standar Penamaan 3 Berkas GeoJSON di Google Drive:</span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-400 leading-relaxed">
+                                    Cukup letakkan 3 berkas <code>.geojson</code> di dalam folder Google Drive Anda. Sistem akan secara otomatis mendeteksi dan mengklasifikasikan tipe layer berdasarkan kata kunci nama berkas atau tipe geometrinya:
+                                  </p>
+                                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1 text-[10px]">
+                                    {/* 1. Bidang Tanah */}
+                                    <div className="p-2 bg-slate-950 rounded-lg border border-emerald-500/30 space-y-1">
+                                      <div className="flex items-center gap-1 font-bold text-emerald-300">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                                        <span>1. Bidang Tanah (Polygon)</span>
+                                      </div>
+                                      <div className="font-mono text-[9px] text-emerald-200 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-500/20 break-all select-all">
+                                        KOMPENSASI_ROW_BIDANG_WARGA.geojson
+                                      </div>
+                                      <p className="text-[9px] text-slate-400">
+                                        Kata kunci: <span className="text-slate-200 font-semibold">bidang, warga, persil, tanah, lahan</span>
+                                      </p>
+                                    </div>
+
+                                    {/* 2. Jalur ROW */}
+                                    <div className="p-2 bg-slate-950 rounded-lg border border-amber-500/30 space-y-1">
+                                      <div className="flex items-center gap-1 font-bold text-amber-300">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                                        <span>2. Jalur / Koridor (LineString)</span>
+                                      </div>
+                                      <div className="font-mono text-[9px] text-amber-200 bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-500/20 break-all select-all">
+                                        KOMPENSASI_ROW_JALUR_TRANSMISI.geojson
+                                      </div>
+                                      <p className="text-[9px] text-slate-400">
+                                        Kata kunci: <span className="text-slate-200 font-semibold">jalur, row, koridor, span, line</span>
+                                      </p>
+                                    </div>
+
+                                    {/* 3. Tapak Tower */}
+                                    <div className="p-2 bg-slate-950 rounded-lg border border-sky-500/30 space-y-1">
+                                      <div className="flex items-center gap-1 font-bold text-sky-300">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
+                                        <span>3. Tapak Tower (Point)</span>
+                                      </div>
+                                      <div className="font-mono text-[9px] text-sky-200 bg-sky-950/60 px-1.5 py-0.5 rounded border border-sky-500/20 break-all select-all">
+                                        KOMPENSASI_ROW_TITIK_TOWER.geojson
+                                      </div>
+                                      <p className="text-[9px] text-slate-400">
+                                        Kata kunci: <span className="text-slate-200 font-semibold">tower, tapak, tiang, titik, point</span>
+                                      </p>
+                                    </div>
+                                  </div>
                                 </div>
                               </div>
 
@@ -5926,6 +6211,7 @@ export default function App() {
                                     setNewProjectName('');
                                     setNewProjectFolderId('');
                                     setNewProjectUploadsFolderId('');
+                                    setNewProjectGeojsonFolderId('');
                                     setNewProjectSpreadsheetId('');
                                     setNewProjectPublicCsvUrl('');
                                     setNewProjectResumeSpreadsheetId('');
@@ -6108,7 +6394,7 @@ export default function App() {
                               
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Folder Utama ID (Optional)</label>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Folder Utama ID (Drive)</label>
                                   <input
                                     type="text"
                                     value={editFolderId}
@@ -6118,7 +6404,7 @@ export default function App() {
                                   />
                                 </div>
                                 <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Folder PDF ID (Optional)</label>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Folder PDF Lahan ID</label>
                                   <input
                                     type="text"
                                     value={editUploadsFolderId}
@@ -6126,6 +6412,120 @@ export default function App() {
                                     placeholder="Contoh: 1AbC..."
                                     className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-amber-500"
                                   />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-amber-400 uppercase block mb-1 flex items-center gap-1">
+                                    <Folder className="w-3 h-3" />
+                                    Folder Berkas Resume Proyek (Desa & 4 Foto)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={editResumeUploadsFolderId}
+                                    onChange={(e) => setEditResumeUploadsFolderId(e.target.value)}
+                                    placeholder="ID / Link Folder Resume di Google Drive"
+                                    className="w-full px-3 py-2 bg-slate-900 border border-amber-500/30 rounded-xl text-xs text-amber-200 font-mono focus:outline-none focus:border-amber-500"
+                                  />
+                                  <span className="text-[9px] text-slate-500 mt-0.5 block">Subfolder dibuat otomatis per Desa & Kegiatan</span>
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-sky-400 uppercase block mb-1 flex items-center gap-1">
+                                    <Folder className="w-3 h-3" />
+                                    Folder Berkas Surat Instansi (Instansi & 4 Foto)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={editAgencyLetterUploadsFolderId}
+                                    onChange={(e) => setEditAgencyLetterUploadsFolderId(e.target.value)}
+                                    placeholder="ID / Link Folder Surat di Google Drive"
+                                    className="w-full px-3 py-2 bg-slate-900 border border-sky-500/30 rounded-xl text-xs text-sky-200 font-mono focus:outline-none focus:border-sky-500"
+                                  />
+                                  <span className="text-[9px] text-slate-500 mt-0.5 block">Subfolder dibuat otomatis per Instansi</span>
+                                </div>
+                              </div>
+
+                              {/* Input ID Folder Google Drive Berkas GeoJSON */}
+                              <div className="p-4 bg-slate-950/80 rounded-xl border border-amber-500/30 space-y-3">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                  <label className="text-xs font-bold text-amber-300 uppercase flex items-center gap-1.5">
+                                    <Layers className="w-4 h-4 text-amber-400" />
+                                    ID Folder Google Drive Berkas GeoJSON (3 Berkas Spasial)
+                                  </label>
+                                  {editGeojsonFolderId && editingProjectId && (
+                                    <button
+                                      type="button"
+                                      disabled={isSyncingDriveGeoJSON === editingProjectId}
+                                      onClick={() => {
+                                        const proj = projects.find(p => p.id === editingProjectId);
+                                        if (proj) handleSyncDriveGeoJSON(proj, editGeojsonFolderId);
+                                      }}
+                                      className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-lg cursor-pointer flex items-center gap-1.5 shadow transition-all self-start sm:self-auto disabled:opacity-50"
+                                      title="Tarik langsung 3 file GeoJSON dari Google Drive ke database Firestore & Peta"
+                                    >
+                                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncingDriveGeoJSON === editingProjectId ? 'animate-spin' : ''}`} />
+                                      {isSyncingDriveGeoJSON === editingProjectId ? 'Mengunduh...' : 'Tarik 3 GeoJSON Sekarang'}
+                                    </button>
+                                  )}
+                                </div>
+                                <input
+                                  type="text"
+                                  value={editGeojsonFolderId}
+                                  onChange={(e) => setEditGeojsonFolderId(e.target.value)}
+                                  placeholder="Masukkan ID Folder atau Tautan Google Drive (Contoh: 1aBcDeFgH123456789...)"
+                                  className="w-full px-3 py-2.5 bg-slate-900 border border-white/10 rounded-xl text-xs text-amber-200 font-mono focus:outline-none focus:border-amber-500"
+                                />
+
+                                {/* Kotak Contoh Format Penamaan 3 Berkas GeoJSON */}
+                                <div className="p-3 bg-slate-900/90 rounded-xl border border-white/10 space-y-2">
+                                  <div className="flex items-center gap-1.5 text-amber-300 font-bold text-[11px]">
+                                    <Info className="w-3.5 h-3.5 text-amber-400" />
+                                    <span>Contoh & Standar Penamaan 3 Berkas GeoJSON di Google Drive:</span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-400 leading-relaxed">
+                                    Cukup letakkan 3 berkas <code>.geojson</code> di dalam folder Google Drive Anda. Sistem akan secara otomatis mendeteksi dan mengklasifikasikan tipe layer berdasarkan kata kunci nama berkas atau tipe geometrinya:
+                                  </p>
+                                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1 text-[10px]">
+                                    {/* 1. Bidang Tanah */}
+                                    <div className="p-2 bg-slate-950 rounded-lg border border-emerald-500/30 space-y-1">
+                                      <div className="flex items-center gap-1 font-bold text-emerald-300">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                                        <span>1. Bidang Tanah (Polygon)</span>
+                                      </div>
+                                      <div className="font-mono text-[9px] text-emerald-200 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-500/20 break-all select-all">
+                                        KOMPENSASI_ROW_BIDANG_WARGA.geojson
+                                      </div>
+                                      <p className="text-[9px] text-slate-400">
+                                        Kata kunci: <span className="text-slate-200 font-semibold">bidang, warga, persil, tanah, lahan</span>
+                                      </p>
+                                    </div>
+
+                                    {/* 2. Jalur ROW */}
+                                    <div className="p-2 bg-slate-950 rounded-lg border border-amber-500/30 space-y-1">
+                                      <div className="flex items-center gap-1 font-bold text-amber-300">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                                        <span>2. Jalur / Koridor (LineString)</span>
+                                      </div>
+                                      <div className="font-mono text-[9px] text-amber-200 bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-500/20 break-all select-all">
+                                        KOMPENSASI_ROW_JALUR_TRANSMISI.geojson
+                                      </div>
+                                      <p className="text-[9px] text-slate-400">
+                                        Kata kunci: <span className="text-slate-200 font-semibold">jalur, row, koridor, span, line</span>
+                                      </p>
+                                    </div>
+
+                                    {/* 3. Tapak Tower */}
+                                    <div className="p-2 bg-slate-950 rounded-lg border border-sky-500/30 space-y-1">
+                                      <div className="flex items-center gap-1 font-bold text-sky-300">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
+                                        <span>3. Tapak Tower (Point)</span>
+                                      </div>
+                                      <div className="font-mono text-[9px] text-sky-200 bg-sky-950/60 px-1.5 py-0.5 rounded border border-sky-500/20 break-all select-all">
+                                        KOMPENSASI_ROW_TITIK_TOWER.geojson
+                                      </div>
+                                      <p className="text-[9px] text-slate-400">
+                                        Kata kunci: <span className="text-slate-200 font-semibold">tower, tapak, tiang, titik, point</span>
+                                      </p>
+                                    </div>
+                                  </div>
                                 </div>
                               </div>
                             </div>
@@ -6470,17 +6870,145 @@ export default function App() {
                       <div className="space-y-6 animate-fadeIn" id="admin_manage_geojson">
                         
                         {/* A. Info & Description */}
-                        <div className="glass-card p-6 rounded-2xl border border-amber-500/30 shadow-xl space-y-4">
+                        <div className="glass-card p-6 rounded-2xl border border-amber-500/30 shadow-xl space-y-5">
                           <div className="flex items-center gap-1.5 text-amber-300 text-sm font-bold uppercase tracking-wider border-b border-white/5 pb-2.5">
                             <Layers className="w-5 h-5 text-amber-400" />
                             Manajemen File Spasial GeoJSON
                           </div>
                           <p className="text-xs text-slate-400 leading-normal">
-                            Unggah, aktifkan, atau atur pemetaan kolom atribut file spasial GeoJSON Anda. Data yang diunggah di sini akan secara otomatis disinkronkan ke seluruh klien dan ditampilkan di Peta Spasial (GIS) secara real-time.
+                            Sinkronkan berkas spasial GeoJSON Anda langsung dari folder Google Drive atau unggah manual dari perangkat. Sistem akan otomatis mendeteksi dan mengelompokkan 3 layer (Bidang Tanah, Jalur Transmisi, Tapak Tower) serta memetakannya di Peta Spasial (GIS) secara real-time.
                           </p>
 
+                          {/* Fitur Utama: Tarik Otomatis dari Google Drive Folder */}
+                          <div className="p-4 bg-amber-500/10 rounded-2xl border border-amber-500/30 space-y-3.5">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30 shrink-0">
+                                  <Layers className="w-4 h-4" />
+                                </div>
+                                <div>
+                                  <h4 className="text-xs font-black text-amber-300 uppercase tracking-wide">
+                                    Tarik Otomatis 3 Berkas GeoJSON dari Google Drive Folder
+                                  </h4>
+                                  <p className="text-[10px] text-slate-400">
+                                    Sistem akan otomatis mengidentifikasi 3 berkas GeoJSON di dalam folder Google Drive Anda.
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-bold text-slate-400">Untuk Jalur:</span>
+                                <select
+                                  value={driveGeoJsonFolderInput ? '' : (projects.find(p => p.id === activeProjectId)?.id || projects[0]?.id || '')}
+                                  onChange={(e) => {
+                                    const selectedProj = projects.find(p => p.id === e.target.value);
+                                    if (selectedProj) {
+                                      setDriveGeoJsonFolderInput(selectedProj.geojsonFolderId || '');
+                                    }
+                                  }}
+                                  className="px-2 py-1 bg-slate-900 border border-white/10 text-amber-300 rounded-lg text-xs font-bold focus:outline-none focus:border-amber-500 max-w-[200px] truncate"
+                                >
+                                  {projects.map(p => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col sm:flex-row gap-2">
+                              <input
+                                type="text"
+                                value={driveGeoJsonFolderInput || (projects.find(p => p.id === activeProjectId)?.geojsonFolderId || '')}
+                                onChange={(e) => setDriveGeoJsonFolderInput(e.target.value)}
+                                placeholder="Masukkan ID Folder atau Tautan Google Drive (Contoh: 1aBcDeFgH123456789...)"
+                                className="flex-1 px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-amber-200 font-mono focus:outline-none focus:border-amber-500 placeholder:text-slate-600"
+                              />
+                              <button
+                                type="button"
+                                disabled={Boolean(isSyncingDriveGeoJSON)}
+                                onClick={async () => {
+                                  const targetProj = projects.find(p => p.id === activeProjectId) || projects[0];
+                                  if (!targetProj) {
+                                    alert('Pilih atau buat jalur proyek terlebih dahulu!');
+                                    return;
+                                  }
+                                  const folderIdToUse = driveGeoJsonFolderInput || targetProj.geojsonFolderId || '';
+                                  if (!folderIdToUse.trim()) {
+                                    alert('Silakan masukkan ID Folder atau Link Google Drive yang berisi 3 berkas .geojson!');
+                                    return;
+                                  }
+                                  await handleSyncDriveGeoJSON(targetProj, folderIdToUse);
+                                }}
+                                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-xl cursor-pointer flex items-center justify-center gap-2 shadow-lg transition-all shrink-0 disabled:opacity-50"
+                              >
+                                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingDriveGeoJSON ? 'animate-spin' : ''}`} />
+                                {isSyncingDriveGeoJSON ? 'Mengunduh GeoJSON...' : 'Tarik 3 GeoJSON Sekarang'}
+                              </button>
+                            </div>
+
+                            {/* Kotak Panduan Contoh Nama Berkas */}
+                            <div className="p-3 bg-slate-950/80 rounded-xl border border-white/10 space-y-2">
+                              <div className="flex items-center gap-1.5 text-amber-300 font-bold text-[11px]">
+                                <Info className="w-3.5 h-3.5 text-amber-400" />
+                                <span>Contoh Standar Penamaan 3 Berkas GeoJSON di Google Drive:</span>
+                              </div>
+                              <p className="text-[10px] text-slate-400 leading-relaxed">
+                                Letakkan 3 berkas <code>.geojson</code> di dalam folder Google Drive tersebut. Sistem mendeteksi otomatis berdasarkan kata kunci nama file atau tipe geometri:
+                              </p>
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1 text-[10px]">
+                                {/* 1. Bidang Tanah */}
+                                <div className="p-2 bg-slate-900 rounded-lg border border-emerald-500/30 space-y-1">
+                                  <div className="flex items-center gap-1 font-bold text-emerald-300">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                                    <span>1. Bidang Tanah (Polygon)</span>
+                                  </div>
+                                  <div className="font-mono text-[9px] text-emerald-200 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-500/20 break-all select-all">
+                                    KOMPENSASI_ROW_BIDANG_WARGA.geojson
+                                  </div>
+                                  <p className="text-[9px] text-slate-400">
+                                    Kata kunci: <span className="text-slate-200 font-semibold">bidang, warga, persil, tanah, lahan</span>
+                                  </p>
+                                </div>
+
+                                {/* 2. Jalur ROW */}
+                                <div className="p-2 bg-slate-900 rounded-lg border border-amber-500/30 space-y-1">
+                                  <div className="flex items-center gap-1 font-bold text-amber-300">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                                    <span>2. Jalur / Koridor (LineString)</span>
+                                  </div>
+                                  <div className="font-mono text-[9px] text-amber-200 bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-500/20 break-all select-all">
+                                    KOMPENSASI_ROW_JALUR_TRANSMISI.geojson
+                                  </div>
+                                  <p className="text-[9px] text-slate-400">
+                                    Kata kunci: <span className="text-slate-200 font-semibold">jalur, row, koridor, span, line</span>
+                                  </p>
+                                </div>
+
+                                {/* 3. Tapak Tower */}
+                                <div className="p-2 bg-slate-900 rounded-lg border border-sky-500/30 space-y-1">
+                                  <div className="flex items-center gap-1 font-bold text-sky-300">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
+                                    <span>3. Tapak Tower (Point)</span>
+                                  </div>
+                                  <div className="font-mono text-[9px] text-sky-200 bg-sky-950/60 px-1.5 py-0.5 rounded border border-sky-500/20 break-all select-all">
+                                    KOMPENSASI_ROW_TITIK_TOWER.geojson
+                                  </div>
+                                  <p className="text-[9px] text-slate-400">
+                                    Kata kunci: <span className="text-slate-200 font-semibold">tower, tapak, tiang, titik, point</span>
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="pt-2">
+                            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
+                              Atau Unggah Manual dari Perangkat (Opsional):
+                            </span>
+                          </div>
+
                           {/* Upload Cards Grid */}
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 pt-2">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                             {/* Card upload Bidang */}
                             <div className="p-4 bg-emerald-950/20 rounded-xl border border-emerald-500/30 flex flex-col justify-between space-y-3">
                               <div>

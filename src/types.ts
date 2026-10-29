@@ -516,7 +516,9 @@ export type StageStatus = 'BELUM' | 'PROSES' | 'SELESAI';
 export interface VillageStageDoc {
   pdfUrl?: string;
   pdfName?: string;
-  docPhotos?: string[]; // Array of base64 or drive URLs
+  docPhotos?: string[]; // Array of base64 or drive URLs (Wajib minimal 4 foto dokumentasi)
+  driveFolderId?: string;
+  driveFolderUrl?: string;
   date?: string;
   status: StageStatus;
   notes?: string;
@@ -530,12 +532,12 @@ export interface VillageResume {
   kabupaten?: string;
   driveFolderId?: string; // ID folder Google Drive khusus untuk desa ini
   // 6 Tahapan Proyek Lapangan
-  baSosialisasiAwal: VillageStageDoc;       // Dokumen BA sos awal (upload pdf dan dokumentasi)
-  baPengumuman: VillageStageDoc;            // Dokumen BA Pengumuman (upload pdf dan dokumentasi)
+  baSosialisasiAwal: VillageStageDoc;       // Dokumen BA sos awal (upload pdf dan dokumentasi min 4 foto)
+  baPengumuman: VillageStageDoc;            // Dokumen BA Pengumuman (upload pdf dan dokumentasi min 4 foto)
   lampiranBapt: VillageStageDoc;            // Lampiran BAPT (upload pdf)
-  baPenyampaianNilai: VillageStageDoc;      // Dok BA penyampaian nilai (upload pdf dan dokumentasi)
-  baSerahTerimaRekening: VillageStageDoc;   // Dok BA serah terima buku rekening (upload pdf dan dokumentasi)
-  bushClearing: VillageStageDoc;            // Bush Clearing (upload dokumentasi)
+  baPenyampaianNilai: VillageStageDoc;      // Dok BA penyampaian nilai (upload pdf dan dokumentasi min 4 foto)
+  baSerahTerimaRekening: VillageStageDoc;   // Dok BA serah terima buku rekening (upload pdf dan dokumentasi min 4 foto)
+  bushClearing: VillageStageDoc;            // Bush Clearing (upload dokumentasi min 4 foto)
   lastUpdated?: number;
   updatedBy?: string;
 }
@@ -552,7 +554,9 @@ export interface AgencyLetter {
   perihal: string;
   suratPdfUrl?: string;
   suratPdfName?: string;
-  docPhotos?: string[]; // Dokumentasi / foto tanda terima
+  driveFolderId?: string; // ID folder Google Drive khusus instansi ini
+  driveFolderUrl?: string;
+  docPhotos?: string[]; // Dokumentasi / foto tanda terima (Wajib minimal 4 foto)
   status: AgencyLetterStatus;
   catatanTindakLanjut?: string; // Isian manual, misal: harus turun lapangan atau memasukkan surat baru
   picInstansi?: string;
@@ -639,7 +643,8 @@ export const getAgencyLetterSheetHeaders = (): string[] => [
   "CATATAN_TINDAK_LANJUT",
   "PIC_INSTANSI",
   "LINK_PDF_SURAT",
-  "LINK_FOTO_TANDA_TERIMA",
+  "LINK_FOTO_DOKUMENTASI",
+  "LINK_FOLDER_INSTANSI_DRIVE",
   "DIPERBARUI_OLEH",
   "TERAKHIR_DIPERBARUI"
 ];
@@ -648,17 +653,20 @@ export interface ProjectConfig {
   id: string;
   name: string;
   folderId: string | null;
-  uploadsFolderId: string | null;
+  uploadsFolderId: string | null; // Folder Berkas Lahan (KTP, KK, Surat Kuasa)
+  geojsonFolderId?: string | null; // Folder Berkas GeoJSON
   // 1. Data Lahan (267 Kolom)
   spreadsheetId: string | null;
   publicCsvUrl?: string | null;
-  // 2. Resume Project (36 Kolom)
+  // 2. Resume Project (Per Desa / Kegiatan)
   resumeSpreadsheetId?: string | null;
   resumePublicCsvUrl?: string | null;
+  resumeUploadsFolderId?: string | null; // ID Folder Berkas Resume Proyek (PDF & Foto per Desa/Kegiatan)
   resumeStages?: ResumeStageConfig[];
-  // 3. Surat Instansi (12 Kolom)
+  // 3. Surat Instansi (Per Instansi)
   agencyLetterSpreadsheetId?: string | null;
   agencyLetterPublicCsvUrl?: string | null;
+  agencyLetterUploadsFolderId?: string | null; // ID Folder Berkas Surat Instansi (PDF & Foto per Instansi)
   status?: string;
   webhookUrl?: string;
   geojsonPolylineUrl?: string;
