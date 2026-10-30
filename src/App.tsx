@@ -4402,7 +4402,7 @@ export default function App() {
                   <span>Buku Panduan (PDF)</span>
                 </div>
                 <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 text-[10px] font-mono font-extrabold border border-amber-500/30">
-                  v2.4
+                  v4.0
                 </span>
               </button>
             </div>

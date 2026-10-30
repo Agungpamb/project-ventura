@@ -1,1332 +1,1185 @@
 import { jsPDF } from 'jspdf';
+import { ProjectConfig } from '../types';
 
-export interface TutorialPDFOptions {
-  projectName?: string;
-  generatedBy?: string;
-}
-
-export function generateTutorialPDF(options: TutorialPDFOptions = {}) {
+/**
+ * GENERATOR BUKU PANDUAN PENGGUNA (BERGAMBAR) — SIP VSS EDISI v4.0
+ * Menghasilkan dokumen PDF 8 Halaman A4 lengkap dengan Simulasi Tampilan Layar (UI Mockup)
+ * dan Lingkaran Petunjuk Klik (① ② ③ ④) untuk Operator Lapangan, Viewer, dan Admin.
+ */
+export function generateTutorialPdf(activeProject?: ProjectConfig): void {
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
-    format: 'a4'
+    format: 'a4',
   });
 
-  const pageWidth = 210;
-  const pageHeight = 297;
+  const pageWidth = doc.internal.pageSize.getWidth(); // 210
+  const pageHeight = doc.internal.pageSize.getHeight(); // 297
   const margin = 14;
-  const contentWidth = pageWidth - (margin * 2);
-  const totalPages = 6;
+  const contentWidth = pageWidth - margin * 2; // 182
+  const totalPages = 8;
 
-  // Modern Executive Color Palette
-  const navyDark = [15, 23, 42];        // #0f172a - Deep Slate Navy
-  const navyBlue = [30, 41, 59];        // #1e293b - Slate Accent
-  const brandPrimary = [14, 116, 144];   // #0e7490 - Deep Cyan / Teal Executive
-  const brandAccent = [217, 119, 6];     // #d97706 - Warm Amber Accent
-  const textDark = [15, 23, 42];        // #0f172a - Primary Headings
-  const textBody = [51, 65, 85];        // #334155 - High-contrast readable body
-  const textMuted = [100, 116, 139];    // #64748b - Meta / Subtitles
-  const lightBg = [248, 250, 252];      // #f8fafc - Card Background
-  const cardBorder = [226, 232, 240];   // #e2e8f0 - Clean border
-  const emerald = [16, 149, 106];       // #10956a - Verified Green
-  const darkGreen = [21, 128, 61];      // #15803d
-  const darkAmber = [180, 83, 9];       // #b45309
-  const blue = [37, 99, 235];           // #2563eb - Informational Blue
-  const rose = [225, 29, 72];           // #e11d48 - Rejected Rose
-  const darkRose = [190, 18, 60];       // #be123c
+  const projectName = activeProject?.name || 'PROYEK TRANSMISI SUTT 150 kV / SUTET 500 kV';
+  const projectCode = activeProject?.id ? activeProject.id.toUpperCase() : 'SIP-VSS-V4';
+  const printedDate = new Date().toLocaleDateString('id-ID', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
 
-  // Professional Header & Footer on each page
-  const addHeaderFooter = (pageNumber: number, sectionTitle: string) => {
-    // Top banner
-    doc.setFillColor(navyDark[0], navyDark[1], navyDark[2]);
-    doc.rect(0, 0, pageWidth, 11, 'F');
-    
-    // Thin accent stripe
-    doc.setFillColor(brandAccent[0], brandAccent[1], brandAccent[2]);
-    doc.rect(0, 11, pageWidth, 1, 'F');
+  // Helper: Header & Footer
+  const drawPageChrome = (pageNum: number, sectionTitle: string) => {
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, pageWidth, 13, 'F');
 
-    // Header Titles
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
+    doc.setFontSize(7.5);
     doc.setTextColor(255, 255, 255);
-    doc.text('SISTEM INFORMASI PERTANAHAN & INVENTARISASI TRANSMISI (SIP-VSS)', margin, 7.5);
+    doc.text('BUKU PANDUAN PENGGUNA BERGAMBAR — SIP VSS EDISI v4.0', margin, 8.2);
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
-    doc.setTextColor(203, 213, 225);
-    doc.text(sectionTitle, pageWidth - margin, 7.5, { align: 'right' });
+    doc.setTextColor(148, 163, 184);
+    doc.text(sectionTitle, pageWidth - margin, 8.2, { align: 'right' });
 
-    // Footer divider
-    doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
+    // Footer
+    doc.setDrawColor(226, 232, 240);
     doc.setLineWidth(0.3);
     doc.line(margin, pageHeight - 12, pageWidth - margin, pageHeight - 12);
 
-    // Footer details
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.setTextColor(textMuted[0], textMuted[1], textMuted[2]);
-    doc.text('Buku Panduan Operasional Resmi (Standard Operating Procedure) • Versi 2.4 Terintegrasi', margin, pageHeight - 7.5);
-    
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Panduan Praktis Pengguna • ${projectName}`, margin, pageHeight - 7);
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(navyBlue[0], navyBlue[1], navyBlue[2]);
-    doc.text(`Halaman ${pageNumber} dari ${totalPages}`, pageWidth - margin, pageHeight - 7.5, { align: 'right' });
+    doc.text(`Halaman ${pageNum} dari ${totalPages}`, pageWidth - margin, pageHeight - 7, {
+      align: 'right',
+    });
   };
 
-  // Helper: Section Title Bar
-  const drawSectionHeader = (y: number, num: string, title: string, subtitle?: string) => {
-    // Number badge
-    doc.setFillColor(brandPrimary[0], brandPrimary[1], brandPrimary[2]);
-    doc.roundedRect(margin, y, 9, 6.5, 1.2, 1.2, 'F');
+  // Helper: Section Banner
+  const drawSectionBanner = (y: number, badge: string, title: string, subtitle: string): number => {
+    doc.setFillColor(241, 245, 249);
+    doc.setDrawColor(203, 213, 225);
+    doc.roundedRect(margin, y, contentWidth, 17, 2.5, 2.5, 'FD');
+
+    doc.setFillColor(37, 99, 235);
+    doc.roundedRect(margin + 3, y + 3, 28, 5.5, 1.5, 1.5, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.8);
+    doc.setTextColor(255, 255, 255);
+    doc.text(badge.toUpperCase(), margin + 17, y + 6.8, { align: 'center' });
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text(title, margin + 34, y + 7.2);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.8);
+    doc.setTextColor(71, 85, 105);
+    doc.text(subtitle, margin + 3, y + 13.8);
+
+    return y + 21;
+  };
+
+  // Helper: Red Callout Circle (1, 2, 3...)
+  const drawCallout = (x: number, y: number, num: number) => {
+    doc.setFillColor(225, 29, 72); // rose-600
+    doc.setDrawColor(255, 255, 255);
+    doc.setLineWidth(0.6);
+    doc.circle(x, y, 3.1, 'FD');
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
     doc.setTextColor(255, 255, 255);
-    doc.text(num, margin + 4.5, y + 4.6, { align: 'center' });
-
-    // Title Text
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.setTextColor(textDark[0], textDark[1], textDark[2]);
-    doc.text(title, margin + 12, y + 5);
-
-    if (subtitle) {
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7.2);
-      doc.setTextColor(textMuted[0], textMuted[1], textMuted[2]);
-      doc.text(subtitle, margin + 12, y + 9);
-      return y + 11.5;
-    }
-    return y + 8.5;
+    doc.text(String(num), x, y + 1, { align: 'center' });
   };
 
-  // ==========================================
-  // PAGE 1: COVER & MATRIKS HAK AKSES PERAN
-  // ==========================================
-  
-  // Executive Header Hero Card (No external logos, pure clean typography & geometric framing)
-  const heroY = 17;
-  const heroH = 46;
-  doc.setFillColor(248, 250, 252);
-  doc.roundedRect(margin, heroY, contentWidth, heroH, 3, 3, 'F');
-  doc.setDrawColor(203, 213, 225);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(margin, heroY, contentWidth, heroH, 3, 3, 'S');
-
-  // Left accent line
-  doc.setFillColor(brandPrimary[0], brandPrimary[1], brandPrimary[2]);
-  doc.rect(margin, heroY, 2.5, heroH, 'F');
-
-  // Category Tag
-  doc.setFillColor(224, 242, 254);
-  doc.roundedRect(margin + 6, heroY + 5.5, 48, 5, 1, 1, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(3, 105, 161);
-  doc.text('BUKU PANDUAN PENGGUNA RESMI (USER MANUAL)', margin + 8, heroY + 9);
-
-  // Main Title
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14.5);
-  doc.setTextColor(textDark[0], textDark[1], textDark[2]);
-  doc.text('SISTEM INFORMASI PERTANAHAN & INVENTARISASI (SIP-VSS)', margin + 6, heroY + 19);
-
-  // Subtitle
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8.5);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  doc.text('Modul Manajemen Pendataan Pengadaan Tanah, Right of Way (ROW) & Kompensasi Transmisi Listrik', margin + 6, heroY + 25);
-
-  // Metadata pills row
-  const metaY = heroY + 31;
-  const projectName = options.projectName || 'KOMPENSASI ROW 150 kV';
-  
-  // Project Pill
-  doc.setFillColor(255, 255, 255);
-  doc.roundedRect(margin + 6, metaY, 95, 9, 1.5, 1.5, 'F');
-  doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-  doc.setLineWidth(0.4);
-  doc.roundedRect(margin + 6, metaY, 95, 9, 1.5, 1.5, 'S');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.2);
-  doc.setTextColor(textMuted[0], textMuted[1], textMuted[2]);
-  doc.text('JALUR AKTIF:', margin + 9, metaY + 4);
-  doc.setFontSize(7.5);
-  doc.setTextColor(navyBlue[0], navyBlue[1], navyBlue[2]);
-  const splitProj = doc.splitTextToSize(projectName, 90);
-  doc.text(splitProj[0], margin + 9, metaY + 7.5);
-
-  // Version Pill
-  doc.roundedRect(margin + 104, metaY, 36, 9, 1.5, 1.5, 'F');
-  doc.roundedRect(margin + 104, metaY, 36, 9, 1.5, 1.5, 'S');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.2);
-  doc.setTextColor(textMuted[0], textMuted[1], textMuted[2]);
-  doc.text('VERSI SISTEM:', margin + 107, metaY + 4);
-  doc.setFontSize(7.5);
-  doc.setTextColor(brandAccent[0], brandAccent[1], brandAccent[2]);
-  doc.text('v2.4 (Terintegrasi)', margin + 107, metaY + 7.5);
-
-  // Date Pill
-  doc.roundedRect(margin + 143, metaY, contentWidth - 143, 9, 1.5, 1.5, 'F');
-  doc.roundedRect(margin + 143, metaY, contentWidth - 143, 9, 1.5, 1.5, 'S');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.2);
-  doc.setTextColor(textMuted[0], textMuted[1], textMuted[2]);
-  doc.text('STATUS DOKUMEN:', margin + 146, metaY + 4);
-  doc.setFontSize(7.5);
-  doc.setTextColor(darkGreen[0], darkGreen[1], darkGreen[2]);
-  doc.text('Edisi Mutakhir', margin + 146, metaY + 7.5);
-
-  // Section 1: Ringkasan Arsitektur
-  let curY = heroY + heroH + 6;
-  curY = drawSectionHeader(curY, '01', 'PENDAHULUAN & ARSITEKTUR SISTEM', 'Prinsip kerja aplikasi terintegrasi cloud, sinkronisasi spreadsheet, dan keamanan data');
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  const introText = 
-    'Sistem Informasi Pertanahan (SIP-VSS) adalah platform digital terpadu yang dirancang khusus untuk memfasilitasi percepatan ' +
-    'inventarisasi fisik, pengujian yuridis, verifikasi dokumen alas hak, pemetaan spasial (GIS), dan penerbitan berkas kompensasi ' +
-    'lahan Right of Way (ROW) serta Tapak Tower transmisi. Sistem mengadopsi arsitektur hibrida berkecepatan tinggi yang ' +
-    'mengintegrasikan Google Spreadsheet sebagai basis data tabel live dan Google Drive Cloud Storage sebagai repositori arsip digital.';
-  const splitIntro = doc.splitTextToSize(introText, contentWidth);
-  doc.text(splitIntro, margin, curY);
-
-  curY += splitIntro.length * 3.8 + 4.5;
-
-  // Section 2: Matriks Peran Pengguna (Role-Based Access Control)
-  curY = drawSectionHeader(curY, '02', 'MATRIKS HAK AKSES PERAN PENGGUNA (ROLE MATRIX)', 'Pembagian wewenang, batasan aksi, dan menu yang dapat diakses oleh setiap kelompok pengguna');
-
-  // Table Header
-  const colX = {
-    role: margin,
-    target: margin + 35,
-    rights: margin + 78,
-    modules: margin + 128
-  };
-  const tableW = contentWidth;
-
-  doc.setFillColor(navyDark[0], navyDark[1], navyDark[2]);
-  doc.rect(margin, curY, tableW, 6.5, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7);
-  doc.setTextColor(255, 255, 255);
-  doc.text('PERAN (ROLE)', colX.role + 3, curY + 4.5);
-  doc.text('TARGET PENGGUNA', colX.target, curY + 4.5);
-  doc.text('WEWENANG UTAMA', colX.rights, curY + 4.5);
-  doc.text('MODUL YANG DAPAT DIAKSES', colX.modules, curY + 4.5);
-
-  curY += 6.5;
-
-  const roles = [
-    {
-      name: 'TAMU (GUEST)',
-      badgeBg: [226, 232, 240],
-      badgeText: [51, 65, 85],
-      target: 'Stakeholder, Direksi, Instansi Pengawas, Publik',
-      rights: 'Read-Only (Hanya Lihat), Monitoring Progres, Eksplorasi Peta GIS & Nominatif, Cetak Dokumen Publik. Tidak dapat merubah data.',
-      modules: 'Dashboard Progres, Peta GIS Spasial, Tabel Nominatif, Resume Jalur Proyek'
-    },
-    {
-      name: 'LAPANGAN (FIELD)',
-      badgeBg: [209, 250, 229],
-      badgeText: [6, 95, 70],
-      target: 'Surveyor Lapangan, Tim Identifikasi Fisik & Inventarisasi',
-      rights: 'Input Data Baru, Edit/Koreksi Bidang, Upload Foto/Scan Dokumen, Tanda Tangan Digital, Simpan Cepat (Ctrl+S).',
-      modules: 'Formulir Input (5 Tab + Ctrl+S), Daftar Nominatif, Berkas Fisik, Peta GIS'
-    },
-    {
-      name: 'QC (VALIDATOR)',
-      badgeBg: [254, 243, 199],
-      badgeText: [146, 64, 14],
-      target: 'Quality Control, Tim Legal Yuridis, Auditor Berkas',
-      rights: 'Pemeriksaan 7 Berkas Fisik, Penetapan Status APPROVED / PENDING / REJECTED, Catatan Koreksi, Sandingan ESDM.',
-      modules: 'Modul QC Validasi, Sandingan ESDM, Berkas Fisik, Cetak Kwitansi Resmi'
-    },
-    {
-      name: 'ADMINISTRATOR',
-      badgeBg: [254, 226, 226],
-      badgeText: [153, 27, 27],
-      target: 'Project Manager, Lead Engineer, IT Database Admin',
-      rights: 'Manajemen Multi-Jalur Proyek, Ganti ID Spreadsheet/Drive, Hapus Bidang Tanah (PIN Protected), Atur Pengguna.',
-      modules: 'Seluruh Fitur Sistem + Konfigurasi Jalur + Audit Log + Manajemen PIN'
-    }
-  ];
-
-  roles.forEach((r, idx) => {
-    const rowH = 15;
-    if (idx % 2 === 1) {
-      doc.setFillColor(248, 250, 252);
-    } else {
-      doc.setFillColor(255, 255, 255);
-    }
-    doc.rect(margin, curY, tableW, rowH, 'F');
-    doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-    doc.setLineWidth(0.3);
-    doc.line(margin, curY + rowH, margin + tableW, curY + rowH);
-
-    // Role badge
-    doc.setFillColor(r.badgeBg[0], r.badgeBg[1], r.badgeBg[2]);
-    doc.roundedRect(colX.role + 2, curY + 3.5, 30, 6.5, 1.2, 1.2, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.5);
-    doc.setTextColor(r.badgeText[0], r.badgeText[1], r.badgeText[2]);
-    doc.text(r.name, colX.role + 17, curY + 7.8, { align: 'center' });
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.2);
-    doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-
-    // Target text
-    const splitTarget = doc.splitTextToSize(r.target, 41);
-    doc.text(splitTarget, colX.target, curY + 4.5);
-
-    // Rights text
-    const splitRights = doc.splitTextToSize(r.rights, 48);
-    doc.text(splitRights, colX.rights, curY + 4.5);
-
-    // Modules text
-    const splitModules = doc.splitTextToSize(r.modules, 52);
-    doc.text(splitModules, colX.modules, curY + 4.5);
-
-    curY += rowH;
-  });
-
-  curY += 6;
-
-  // Section 3: Alur Siklus Pengadaan Tanah (Workflow Visual)
-  curY = drawSectionHeader(curY, '03', 'ALUR SIKLUS PENGADAAN & PENDATAAN LAHAN', 'Tahapan operasional berurutan dari pengukuran lapangan hingga penerbitan Berita Acara');
-
-  const stepBoxW = (contentWidth - 18) / 4;
-  const stepBoxH = 21;
-  const steps = [
-    { num: 'TAHAP 1', title: 'Inventarisasi Lapangan', desc: 'Surveyor mendata batas lahan, subjek hak, jenis tegakan, dan bangunan via Form Input.' },
-    { num: 'TAHAP 2', title: 'Unggah Arsip Digital', desc: 'Dokumen KTP, KK, Sertifikat, SPPT, dan foto patok diunggah langsung ke Cloud Google Drive.' },
-    { num: 'TAHAP 3', title: 'Verifikasi Tim QC', desc: 'Tim QC memeriksa kelengkapan yuridis & menetapkan status APPROVED / PENDING / REJECTED.' },
-    { num: 'TAHAP 4', title: 'Kwitansi & Pembayaran', desc: 'Penerbitan Berita Acara Kesepakatan, cetak kwitansi resmi, dan transfer kompensasi lahan.' }
-  ];
-
-  steps.forEach((s, idx) => {
-    const bx = margin + (idx * (stepBoxW + 6));
-    
-    // Step container
-    doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
-    doc.roundedRect(bx, curY, stepBoxW, stepBoxH, 2, 2, 'F');
-    doc.setDrawColor(203, 213, 225);
+  // Helper: Browser/Window Frame for Visual Screenshot
+  const drawScreenWindow = (
+    y: number,
+    height: number,
+    windowTitle: string,
+    rightBadge?: string
+  ) => {
+    // Outer frame
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(148, 163, 184);
     doc.setLineWidth(0.4);
-    doc.roundedRect(bx, curY, stepBoxW, stepBoxH, 2, 2, 'S');
+    doc.roundedRect(margin, y, contentWidth, height, 3, 3, 'FD');
 
-    // Step Header Pill
-    doc.setFillColor(navyBlue[0], navyBlue[1], navyBlue[2]);
-    doc.roundedRect(bx + 2, curY + 2.5, 14, 4.5, 1, 1, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(5.8);
-    doc.setTextColor(255, 255, 255);
-    doc.text(s.num, bx + 9, curY + 5.6, { align: 'center' });
+    // Top bar
+    doc.setFillColor(30, 41, 59);
+    doc.roundedRect(margin, y, contentWidth, 8, 3, 3, 'F');
+    doc.rect(margin, y + 4, contentWidth, 4, 'F');
 
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.8);
-    doc.setTextColor(textDark[0], textDark[1], textDark[2]);
-    doc.text(s.title, bx + 18, curY + 5.8);
-
-    // Step Description
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.2);
-    doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-    const splitDesc = doc.splitTextToSize(s.desc, stepBoxW - 4);
-    doc.text(splitDesc, bx + 2.5, curY + 10.5);
-
-    // Connector Arrow
-    if (idx < 3) {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(brandAccent[0], brandAccent[1], brandAccent[2]);
-      doc.text('->', bx + stepBoxW + 1.2, curY + 11.5);
-    }
-  });
-
-  addHeaderFooter(1, 'Bagian 1: Pengenalan & Matriks Hak Akses');
-
-  // =========================================================================
-  // PAGE 2: PANDUAN LENGKAP MENAMBAH DATA BARU (ADD DATA) & PINTASAN ERGONOMIS
-  // =========================================================================
-  doc.addPage();
-  curY = 17;
-
-  curY = drawSectionHeader(curY, '04', 'PANDUAN OPERASIONAL: CARA MENAMBAH DATA BIDANG BARU (ADD DATA)', 'Panduan teknis langkah demi langkah input data inventarisasi baru dari lapangan ke sistem');
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  const addIntro = 
-    'Penambahan data bidang tanah baru dilakukan oleh Petugas Lapangan setelah melakukan identifikasi fisik, ' +
-    'pengukuran koordinat batas lahan, pencatatan alas hak kepemilikan, dan inventarisasi tegakan tanaman / bangunan terdampak.';
-  const splitAddIntro = doc.splitTextToSize(addIntro, contentWidth);
-  doc.text(splitAddIntro, margin, curY);
-
-  curY += splitAddIntro.length * 3.8 + 4;
-
-  // 6 Step Breakdown for Adding Data
-  const addSteps = [
-    {
-      step: 'LANGKAH 1: BUKA MENU INPUT DATA',
-      desc: 'Klik menu "Input Data" di sidebar navigasi utama, atau klik tombol "+ Tambah Bidang Baru" di bagian atas halaman Tabel Nominatif. Formulir akan terbuka dalam mode isian kosong.'
-    },
-    {
-      step: 'LANGKAH 2: ISI TAB 1 (LAHAN & PEMILIK) - KOLOM WAJIB (*)',
-      desc: 'Pilih Desa, masukkan Span Tower (format standar dua angka: "01-02"), ketik Nomor Bidang unik, Luas Tanah ROW/Tapak (m2), Nama Lengkap Pemilik sesuai KTP, NIK e-KTP (16 Digit Wajib), Alamat Lengkap 4 Baris, serta Nama Pemilik Batas Lahan (Utara, Selatan, Timur, Barat).'
-    },
-    {
-      step: 'LANGKAH 3: ISI TAB 2 (STATUS ALAS HAK & BANGUNAN)',
-      desc: 'Pilih Jenis Bukti Hak (SHM, Letter C, Girik, Petok D, SPPFT), masukkan Nomor Dokumen & Tahun Terbit. Jika terdapat bangunan terdampak, isi Luas Bangunan, Jenis Konstruksi (Permanen/Semi/Panggung), dan rincian komponen terdampak (atap, dinding, lantai).'
-    },
-    {
-      step: 'LANGKAH 4: ISI TAB 3 (INVENTARISASI TANAMAN & TEGAKAN)',
-      desc: 'Tambahkan data tanaman terdampak (tersedia hingga 30 baris slot): Pilih Nama Jenis Tanaman, Kategori Usia (Sudah Menghasilkan / Belum Menghasilkan), Ukuran Batang (Kecil/Sedang/Besar), dan Jumlah Pohon untuk perhitungan nilai kompensasi ESDM.'
-    },
-    {
-      step: 'LANGKAH 5: ISI TAB 4 (ADMINISTRASI & SAKSI LAPANGAN)',
-      desc: 'Lengkapi Nama Kepala Desa/Lurah, Identitas Saksi Batas 1 & 2, Nama Tim Pelaksana Pengukuran, Status Pengunggahan ke Sistem TRABAS (SUDAH/BELUM), serta Catatan Khusus Lapangan bila ada sengketa atau kesepakatan khusus.'
-    },
-    {
-      step: 'LANGKAH 6: SIMPAN DATA DENGAN PINTASAN "Ctrl + S"',
-      desc: 'Anda TIDAK PERLU klik ke Tab 5 untuk menyimpan! Cukup tekan kombinasi keyboard "Ctrl + S" (Windows) atau "Cmd + S" (Mac) dari tab manapun, atau klik tombol "Simpan Cepat" di pojok kanan atas. Sistem otomatis memvalidasi kolom wajib dan menyimpan ke cloud.'
-    }
-  ];
-
-  addSteps.forEach(as => {
-    doc.setFillColor(248, 250, 252);
-    doc.roundedRect(margin, curY, contentWidth, 12, 1.5, 1.5, 'F');
-    doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-    doc.setLineWidth(0.3);
-    doc.roundedRect(margin, curY, contentWidth, 12, 1.5, 1.5, 'S');
-
-    // Left accent badge
-    doc.setFillColor(brandPrimary[0], brandPrimary[1], brandPrimary[2]);
-    doc.rect(margin, curY, 1.5, 12, 'F');
+    // Traffic dots
+    doc.setFillColor(239, 68, 68);
+    doc.circle(margin + 4.5, y + 4, 1.2, 'F');
+    doc.setFillColor(245, 158, 11);
+    doc.circle(margin + 8.5, y + 4, 1.2, 'F');
+    doc.setFillColor(16, 185, 129);
+    doc.circle(margin + 12.5, y + 4, 1.2, 'F');
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.8);
-    doc.setTextColor(brandPrimary[0], brandPrimary[1], brandPrimary[2]);
-    doc.text(as.step, margin + 4, curY + 4.2);
+    doc.setFontSize(7);
+    doc.setTextColor(226, 232, 240);
+    doc.text(`TAMPILAN LAYAR: ${windowTitle.toUpperCase()}`, margin + 17, y + 5);
 
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.4);
-    doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-    const splitDesc = doc.splitTextToSize(as.desc, contentWidth - 8);
-    doc.text(splitDesc, margin + 4, curY + 7.8);
-
-    curY += 14.5;
-  });
-
-  curY += 1;
-
-  // Highlight Box: Shortcut Ctrl+S
-  doc.setFillColor(254, 243, 199);
-  doc.roundedRect(margin, curY, contentWidth, 16, 2, 2, 'F');
-  doc.setDrawColor(brandAccent[0], brandAccent[1], brandAccent[2]);
-  doc.setLineWidth(0.6);
-  doc.roundedRect(margin, curY, contentWidth, 16, 2, 2, 'S');
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.setTextColor(darkAmber[0], darkAmber[1], darkAmber[2]);
-  doc.text('FITUR PINTASAN KEYBOARD "Ctrl + S" (SIMPAN CEPAT KAPAN SAJA TANPA PINDAH TAB)', margin + 4, curY + 5);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  const sDesc = 
-    'Mempercepat input lapangan hingga 3x lipat. Begitu Anda selesai mengetik data pemilik atau alas hak di Tab 1 atau Tab 2, ' +
-    'cukup tekan Ctrl+S. Sistem langsung memverifikasi kolom wajib bertanda (*) dan memberikan konfirmasi visual "Data Berhasil Disimpan".';
-  const splitSDesc = doc.splitTextToSize(sDesc, contentWidth - 8);
-  doc.text(splitSDesc, margin + 4, curY + 9.5);
-
-  curY += 20;
-
-  // Clean Form Input Mockup
-  doc.setFillColor(255, 255, 255);
-  doc.roundedRect(margin, curY, contentWidth, 68, 3, 3, 'F');
-  doc.setDrawColor(203, 213, 225);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(margin, curY, contentWidth, 68, 3, 3, 'S');
-
-  // Title Bar of the Form
-  doc.setFillColor(navyDark[0], navyDark[1], navyDark[2]);
-  doc.roundedRect(margin, curY, contentWidth, 8, 3, 3, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.2);
-  doc.setTextColor(255, 255, 255);
-  doc.text('SIMULASI ANTARMUKA: FORMULIR INPUT DATA DENGAN PINTASAN SIMPAN CEPAT [Ctrl+S]', margin + 4, curY + 5.5);
-
-  // Tab Navigation Strip
-  const formTabY = curY + 11;
-  const fTabs = [
-    { name: '1. Lahan & Pemilik', active: true },
-    { name: '2. Alas Hak & Bgn', active: false },
-    { name: '3. Tanaman', active: false },
-    { name: '4. Administrasi', active: false },
-    { name: '5. Cetak & Unggah', active: false }
-  ];
-
-  let ftX = margin + 3;
-  fTabs.forEach(ft => {
-    const tw = 25;
-    if (ft.active) {
-      doc.setFillColor(255, 255, 255);
-      doc.roundedRect(ftX, formTabY, tw, 6, 1, 1, 'F');
-      doc.setDrawColor(brandPrimary[0], brandPrimary[1], brandPrimary[2]);
-      doc.setLineWidth(0.5);
-      doc.roundedRect(ftX, formTabY, tw, 6, 1, 1, 'S');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(5.8);
-      doc.setTextColor(brandPrimary[0], brandPrimary[1], brandPrimary[2]);
-    } else {
-      doc.setFillColor(241, 245, 249);
-      doc.roundedRect(ftX, formTabY, tw, 6, 1, 1, 'F');
+    if (rightBadge) {
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(5.8);
-      doc.setTextColor(textMuted[0], textMuted[1], textMuted[2]);
+      doc.setFontSize(6.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text(rightBadge, pageWidth - margin - 4, y + 5, { align: 'right' });
     }
-    doc.text(ft.name, ftX + (tw / 2), formTabY + 4, { align: 'center' });
-    ftX += tw + 1.5;
-  });
+  };
 
-  // Top Save Button Indicator
-  doc.setFillColor(emerald[0], emerald[1], emerald[2]);
-  doc.roundedRect(margin + contentWidth - 42, formTabY, 39, 6, 1, 1, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6);
-  doc.setTextColor(255, 255, 255);
-  doc.text('SIMPAN CEPAT [Ctrl+S]', margin + contentWidth - 22.5, formTabY + 4.2, { align: 'center' });
+  // Helper: Numbered Step Explanation Row
+  const drawStepRow = (y: number, num: number, title: string, desc: string): number => {
+    const descLines = doc.splitTextToSize(desc, contentWidth - 16);
+    const boxH = 8 + descLines.length * 3.8;
 
-  // Fields Area
-  const fieldsY = formTabY + 9;
-  doc.setFillColor(248, 250, 252);
-  doc.roundedRect(margin + 3, fieldsY, contentWidth - 6, 42, 1.5, 1.5, 'F');
-  doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-  doc.roundedRect(margin + 3, fieldsY, contentWidth - 6, 42, 1.5, 1.5, 'S');
-
-  // Input row 1
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(5.8);
-  doc.setTextColor(textDark[0], textDark[1], textDark[2]);
-  doc.text('DESA *', margin + 6, fieldsY + 5);
-  doc.setFillColor(255, 255, 255);
-  doc.roundedRect(margin + 6, fieldsY + 6.5, 52, 5.5, 0.8, 0.8, 'FD');
-  doc.setFont('helvetica', 'normal');
-  doc.text('SUKAMAJU', margin + 8, fieldsY + 10.2);
-
-  doc.setFont('helvetica', 'bold');
-  doc.text('SPAN TOWER *', margin + 62, fieldsY + 5);
-  doc.roundedRect(margin + 62, fieldsY + 6.5, 52, 5.5, 0.8, 0.8, 'FD');
-  doc.setFont('helvetica', 'normal');
-  doc.text('01-02', margin + 64, fieldsY + 10.2);
-
-  doc.setFont('helvetica', 'bold');
-  doc.text('NO BIDANG *', margin + 118, fieldsY + 5);
-  doc.roundedRect(margin + 118, fieldsY + 6.5, 56, 5.5, 0.8, 0.8, 'FD');
-  doc.setFont('helvetica', 'normal');
-  doc.text('042', margin + 120, fieldsY + 10.2);
-
-  // Input row 2
-  doc.setFont('helvetica', 'bold');
-  doc.text('NAMA LENGKAP PEMILIK (SESUAI KTP) *', margin + 6, fieldsY + 16);
-  doc.roundedRect(margin + 6, fieldsY + 17.5, 80, 5.5, 0.8, 0.8, 'FD');
-  doc.setFont('helvetica', 'normal');
-  doc.text('H. ACHMAD SYAFEI', margin + 8, fieldsY + 21.2);
-
-  doc.setFont('helvetica', 'bold');
-  doc.text('NIK e-KTP (16 DIGIT) *', margin + 90, fieldsY + 16);
-  doc.roundedRect(margin + 90, fieldsY + 17.5, 84, 5.5, 0.8, 0.8, 'FD');
-  doc.setFont('helvetica', 'normal');
-  doc.text('3302142005820003', margin + 92, fieldsY + 21.2);
-
-  // Bottom action buttons inside mockup
-  doc.setFillColor(emerald[0], emerald[1], emerald[2]);
-  doc.roundedRect(margin + contentWidth - 78, fieldsY + 31.5, 36, 6.5, 1, 1, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6);
-  doc.setTextColor(255, 255, 255);
-  doc.text('SIMPAN (Ctrl+S)', margin + contentWidth - 60, fieldsY + 35.8, { align: 'center' });
-
-  doc.setFillColor(navyBlue[0], navyBlue[1], navyBlue[2]);
-  doc.roundedRect(margin + contentWidth - 39, fieldsY + 31.5, 35, 6.5, 1, 1, 'F');
-  doc.text('TAB BERIKUTNYA ->', margin + contentWidth - 21.5, fieldsY + 35.8, { align: 'center' });
-
-  addHeaderFooter(2, 'Bagian 2: Panduan Tambah Data Baru (Add Data) & Pintasan Ctrl+S');
-
-  // =========================================================================
-  // PAGE 3: PANDUAN CARA EDIT DATA, HAPUS BIDANG & PENGELOLAAN BERKAS CLOUD
-  // =========================================================================
-  doc.addPage();
-  curY = 17;
-
-  curY = drawSectionHeader(curY, '05', 'PANDUAN OPERASIONAL: CARA MENGUBAH DATA (EDIT DATA)', 'Prosedur pembaruan data bidang yang telah tersimpan di sistem');
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  const editIntro = 
-    'Data bidang tanah yang telah disimpan sewaktu-waktu perlu diperbarui (misalnya: penambahan data ahli waris, koreksi nomor sertifikat, ' +
-    'revisi luas ukur ulang BPN, atau penambahan jumlah tanaman tegakan). Pengeditan dapat dilakukan melalui 2 jalur yang sangat fleksibel:';
-  const splitEditIntro = doc.splitTextToSize(editIntro, contentWidth);
-  doc.text(splitEditIntro, margin, curY);
-
-  curY += splitEditIntro.length * 3.8 + 4;
-
-  // 2 Ways to Edit Data
-  const editColsW = (contentWidth - 6) / 2;
-
-  // Method 1 Card
-  doc.setFillColor(248, 250, 252);
-  doc.roundedRect(margin, curY, editColsW, 36, 2, 2, 'F');
-  doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-  doc.setLineWidth(0.4);
-  doc.roundedRect(margin, curY, editColsW, 36, 2, 2, 'S');
-
-  doc.setFillColor(brandPrimary[0], brandPrimary[1], brandPrimary[2]);
-  doc.roundedRect(margin + 2.5, curY + 2.5, 46, 5, 1, 1, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(255, 255, 255);
-  doc.text('METODE 1: EDIT DARI TABEL NOMINATIF', margin + 25.5, curY + 6, { align: 'center' });
-
-  const m1Steps = [
-    '1. Masuk ke menu "Daftar Nominatif".',
-    '2. Gunakan kolom pencarian untuk mencari Nama Pemilik atau No. Bidang.',
-    '3. Klik tombol "Edit" (ikon pensil kuning) pada baris bidang terkait.',
-    '4. Formulir Input akan terbuka & seluruh data bidang langsung termuat penuh.',
-    '5. Lakukan perubahan data, lalu tekan "Ctrl + S" untuk menyimpan.'
-  ];
-  let mY = curY + 10.5;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  m1Steps.forEach(st => {
-    doc.text(st, margin + 4, mY);
-    mY += 4.8;
-  });
-
-  // Method 2 Card
-  const m2X = margin + editColsW + 6;
-  doc.setFillColor(248, 250, 252);
-  doc.roundedRect(m2X, curY, editColsW, 36, 2, 2, 'F');
-  doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-  doc.setLineWidth(0.4);
-  doc.roundedRect(m2X, curY, editColsW, 36, 2, 2, 'S');
-
-  doc.setFillColor(navyBlue[0], navyBlue[1], navyBlue[2]);
-  doc.roundedRect(m2X + 2.5, curY + 2.5, 46, 5, 1, 1, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(255, 255, 255);
-  doc.text('METODE 2: EDIT DARI PETA SPASIAL GIS', m2X + 25.5, curY + 6, { align: 'center' });
-
-  const m2Steps = [
-    '1. Masuk ke menu "Peta Spasial GIS".',
-    '2. Klik poligon lahan yang ingin diubah di peta spasial.',
-    '3. Kartu Detail Koordinat Presisi akan muncul di sudut layar.',
-    '4. Klik tombol "Buka / Edit Bidang" pada kartu info tersebut.',
-    '5. Anda diarahkan langsung ke Formulir Input dengan data siap diedit.'
-  ];
-  mY = curY + 10.5;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  m2Steps.forEach(st => {
-    doc.text(st, m2X + 4, mY);
-    mY += 4.8;
-  });
-
-  curY += 41;
-
-  // Section: Cara Hapus Bidang Tanah (Delete Data) - Admin Protected
-  curY = drawSectionHeader(curY, '06', 'PANDUAN PENGHAPUSAN BIDANG TANAH (DELETE DATA)', 'Keamanan integritas data dan pembatasan hak akses penghapusan');
-
-  doc.setFillColor(254, 242, 242);
-  doc.roundedRect(margin, curY, contentWidth, 23, 2, 2, 'F');
-  doc.setDrawColor(rose[0], rose[1], rose[2]);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(margin, curY, contentWidth, 23, 2, 2, 'S');
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(darkRose[0], darkRose[1], darkRose[2]);
-  doc.text('PERINGATAN: PENGHAPUSAN DATA HANYA DAPAT DILAKUKAN OLEH ADMINISTRATOR DENGAN PIN RESMI', margin + 4, curY + 5.2);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.8);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  const delDesc = 
-    'Untuk melindungi data proyek dari kesalahan penghapusan yang disengaja maupun tidak disengaja, tombol hapus (ikon tempat sampah merah) ' +
-    'hanya aktif bagi peran Administrator. Saat tombol hapus ditekan, sistem akan memicu dialog verifikasi keamanan: ' +
-    'Admin wajib mengonfirmasi nama pemilik dan memasukkan PIN Keamanan 6-digit. Seluruh aksi penghapusan akan tercatat otomatis ' +
-    'di dalam Log Audit Sistem (menyimpan waktu, ID bidang, nama pengguna yang menghapus, dan nomor IP).';
-  const splitDelDesc = doc.splitTextToSize(delDesc, contentWidth - 8);
-  doc.text(splitDelDesc, margin + 4, curY + 9.5);
-
-  curY += 28;
-
-  // Section: Panduan Unggah Berkas & Tanda Tangan Digital (Tab 5)
-  curY = drawSectionHeader(curY, '07', 'PENGUNGGAHAN BERKAS FISIK CLOUD & TANDA TANGAN DIGITAL (TAB 5)', 'Pengarsipan dokumen elektronik langsung ke Google Drive repository proyek');
-
-  const uploadColsW = (contentWidth - 6) / 2;
-
-  // Subcard 1: Upload Berkas
-  doc.setFillColor(248, 250, 252);
-  doc.roundedRect(margin, curY, uploadColsW, 50, 2, 2, 'F');
-  doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-  doc.setLineWidth(0.4);
-  doc.roundedRect(margin, curY, uploadColsW, 50, 2, 2, 'S');
-
-  doc.setFillColor(brandPrimary[0], brandPrimary[1], brandPrimary[2]);
-  doc.roundedRect(margin + 2.5, curY + 2.5, 42, 5, 1, 1, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(255, 255, 255);
-  doc.text('UNGGAH DOKUMEN KE DRIVE', margin + 23.5, curY + 6, { align: 'center' });
-
-  const upDesc = [
-    '• Struktur Folder Otomatis: Sistem mengelompokkan dokumen ke folder Desa dan Nomor Bidang (contoh: SUKAMAJU/BIDANG_042_ACHMAD_SYAFEI).',
-    '• Dokumen Wajib Diunggah: Scan KTP & KK, Bukti Kepemilikan (SHM/Letter C), SPPT PBB tahun berjalan, dan Surat Kades.',
-    '• Format File: Mendukung PDF dokumen resmi dan foto JPG/PNG (foto patok batas, kondisi tegakan, dan bangunan).',
-    '• Pratinjau Cepat: Berkas dapat dipratinjau langsung di aplikasi.'
-  ];
-  let upY = curY + 10.5;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.4);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  upDesc.forEach(ud => {
-    const splitUd = doc.splitTextToSize(ud, uploadColsW - 6);
-    doc.text(splitUd, margin + 3.5, upY);
-    upY += splitUd.length * 3.3 + 1.8;
-  });
-
-  // Subcard 2: Tanda Tangan Digital
-  const signX = margin + uploadColsW + 6;
-  doc.setFillColor(248, 250, 252);
-  doc.roundedRect(signX, curY, uploadColsW, 50, 2, 2, 'F');
-  doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-  doc.setLineWidth(0.4);
-  doc.roundedRect(signX, curY, uploadColsW, 50, 2, 2, 'S');
-
-  doc.setFillColor(navyBlue[0], navyBlue[1], navyBlue[2]);
-  doc.roundedRect(signX + 2.5, curY + 2.5, 42, 5, 1, 1, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(255, 255, 255);
-  doc.text('TANDA TANGAN DIGITAL RESMI', signX + 23.5, curY + 6, { align: 'center' });
-
-  const signDesc = [
-    '• Kanvas Tanda Tangan Touchscreen: Tersedia kanvas digital interaktif di Tab 5 yang dapat ditandatangani langsung menggunakan stylus atau jari.',
-    '• Tanda Tangan Tersemat: Tanda tangan pemilik lahan dan surveyor lapangan akan otomatis tertanam pada lembar Formulir Inventarisasi resmi.',
-    '• Bukti Yuridis Lapangan: Tanda tangan digital ini memperkuat keabsahan persetujuan inventarisasi sebelum berkas diajukan ke tahap verifikasi QC.'
-  ];
-  let sY = curY + 10.5;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.4);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  signDesc.forEach(sd => {
-    const splitSd = doc.splitTextToSize(sd, uploadColsW - 6);
-    doc.text(splitSd, signX + 3.5, sY);
-    sY += splitSd.length * 3.3 + 2;
-  });
-
-  addHeaderFooter(3, 'Bagian 3: Panduan Edit Data, Hapus Bidang & Dokumen Cloud');
-
-  // =========================================================================
-  // PAGE 4: PANDUAN PENGGUNA TAMU, PETA GIS SPASIAL & EKSPOR LAPORAN
-  // =========================================================================
-  doc.addPage();
-  curY = 17;
-
-  curY = drawSectionHeader(curY, '08', 'PANDUAN OPERASIONAL: PENGGUNA TAMU (GUEST MODE)', 'Akses monitoring dan tinjauan progres lahan tanpa otentikasi Google Drive');
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  const guestIntro = 
-    'Akses Mode Tamu disediakan khusus bagi manajemen puncak, tim pengawas proyek, auditor independen, dan instansi eksternal ' +
-    'yang membutuhkan transparansi progres inventarisasi tanah secara aktual tanpa hak mengubah (read-only), guna menjamin ' +
-    'keamanan dan integritas data lapangan.';
-  const splitGuestIntro = doc.splitTextToSize(guestIntro, contentWidth);
-  doc.text(splitGuestIntro, margin, curY);
-
-  curY += splitGuestIntro.length * 3.8 + 4;
-
-  // Step-by-Step Guest Access
-  const leftColW = (contentWidth - 6) / 2;
-  const rightColW = leftColW;
-
-  // Card: Cara Masuk Mode Tamu
-  doc.setFillColor(248, 250, 252);
-  doc.roundedRect(margin, curY, leftColW, 35, 2, 2, 'F');
-  doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-  doc.setLineWidth(0.4);
-  doc.roundedRect(margin, curY, leftColW, 35, 2, 2, 'S');
-
-  doc.setFillColor(blue[0], blue[1], blue[2]);
-  doc.roundedRect(margin + 2.5, curY + 2.5, 30, 5, 1, 1, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(255, 255, 255);
-  doc.text('LANGKAH AKSES TAMU', margin + 17.5, curY + 6, { align: 'center' });
-
-  const guestSteps = [
-    '1. Buka tautan resmi portal aplikasi di peramban web.',
-    '2. Pada jendela masuk, pilih Jalur Transmisi yang ingin ditinjau.',
-    '3. Klik tombol "Masuk Sebagai Tamu (Mode Pantau)".',
-    '4. Anda langsung diarahkan ke Dashboard tanpa login Google.'
-  ];
-  let stepY = curY + 11.5;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.2);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  guestSteps.forEach(gs => {
-    doc.text(gs, margin + 4, stepY);
-    stepY += 5;
-  });
-
-  // Card: Fitur yang Tersedia
-  const rightX = margin + leftColW + 6;
-  doc.setFillColor(248, 250, 252);
-  doc.roundedRect(rightX, curY, rightColW, 35, 2, 2, 'F');
-  doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-  doc.setLineWidth(0.4);
-  doc.roundedRect(rightX, curY, rightColW, 35, 2, 2, 'S');
-
-  doc.setFillColor(navyBlue[0], navyBlue[1], navyBlue[2]);
-  doc.roundedRect(rightX + 2.5, curY + 2.5, 34, 5, 1, 1, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(255, 255, 255);
-  doc.text('FITUR UTAMA YANG DIAKSES', rightX + 19.5, curY + 6, { align: 'center' });
-
-  const guestRights = [
-    '• Dashboard Eksekutif: Metrik real-time progres bidang & berkas.',
-    '• Peta Spasial GIS: Klik bidang poligon & navigasi Google Maps.',
-    '• Daftar Nominatif: Tabel filter desa, pemilik, & span tower.',
-    '• Ekspor Laporan: Unduh data ringkas ke format Excel / CSV.'
-  ];
-  stepY = curY + 11.5;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.2);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  guestRights.forEach(gr => {
-    doc.text(gr, rightX + 4, stepY);
-    stepY += 5;
-  });
-
-  curY += 40;
-
-  // Visual Clean Mockup: Dashboard & Peta Spasial GIS
-  doc.setFillColor(255, 255, 255);
-  doc.roundedRect(margin, curY, contentWidth, 88, 3, 3, 'F');
-  doc.setDrawColor(203, 213, 225);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(margin, curY, contentWidth, 88, 3, 3, 'S');
-
-  // Title Bar of the Mockup Window
-  doc.setFillColor(navyDark[0], navyDark[1], navyDark[2]);
-  doc.roundedRect(margin, curY, contentWidth, 8.5, 3, 3, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(255, 255, 255);
-  doc.text('SIMULASI ANTARMUKA PENGGUNA: DASHBOARD EKSEKUTIF & PETA SPASIAL GIS (MODE TAMU)', margin + 5, curY + 5.8);
-
-  // 4 Top Metric Cards
-  const metricY = curY + 12;
-  const metricW = (contentWidth - 15) / 4;
-  const metrics = [
-    { label: 'TOTAL BIDANG TANAH', val: '142 Bidang', sub: 'Terdaftar di jalur aktif', c: brandPrimary },
-    { label: 'KELENGKAPAN BERKAS', val: '88.5 %', sub: '126 berkas memenuhi syarat', c: emerald },
-    { label: 'STATUS APPROVED (QC)', val: '115 Bidang', sub: 'Siap bayar kompensasi', c: emerald },
-    { label: 'MENUNGGU VERIFIKASI', val: '27 Bidang', sub: 'Dalam antrean validasi QC', c: brandAccent }
-  ];
-
-  metrics.forEach((m, idx) => {
-    const mx = margin + 3 + (idx * (metricW + 3));
-    doc.setFillColor(248, 250, 252);
-    doc.roundedRect(mx, metricY, metricW, 16, 1.5, 1.5, 'F');
-    doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(226, 232, 240);
     doc.setLineWidth(0.3);
-    doc.roundedRect(mx, metricY, metricW, 16, 1.5, 1.5, 'S');
+    doc.roundedRect(margin, y, contentWidth, boxH, 2, 2, 'FD');
 
-    // Left accent badge
-    doc.setFillColor(m.c[0], m.c[1], m.c[2]);
-    doc.rect(mx, metricY, 1.5, 16, 'F');
+    drawCallout(margin + 5.5, y + 5.5, num);
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(5.5);
-    doc.setTextColor(textMuted[0], textMuted[1], textMuted[2]);
-    doc.text(m.label, mx + 3.5, metricY + 4.5);
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9.5);
-    doc.setTextColor(textDark[0], textDark[1], textDark[2]);
-    doc.text(m.val, mx + 3.5, metricY + 10.5);
+    doc.setFontSize(8.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text(title, margin + 11, y + 5.5);
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(5.5);
-    doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-    doc.text(m.sub, mx + 3.5, metricY + 14.2);
-  });
+    doc.setFontSize(7.8);
+    doc.setTextColor(51, 65, 85);
+    doc.text(descLines, margin + 11, y + 9.8);
 
-  // GIS Map Canvas Mockup
-  const mapCanvasY = metricY + 20;
-  doc.setFillColor(241, 245, 249); // Soft map background
-  doc.roundedRect(margin + 3, mapCanvasY, contentWidth - 6, 52, 2, 2, 'F');
-  doc.setDrawColor(203, 213, 225);
-  doc.setLineWidth(0.4);
-  doc.roundedRect(margin + 3, mapCanvasY, contentWidth - 6, 52, 2, 2, 'S');
+    return y + boxH + 2.5;
+  };
 
-  // Simulated Road / River Grid
-  doc.setDrawColor(226, 232, 240);
-  doc.setLineWidth(0.3);
-  for (let gx = margin + 15; gx < margin + contentWidth - 10; gx += 25) {
-    doc.line(gx, mapCanvasY, gx, mapCanvasY + 52);
-  }
-  for (let gy = mapCanvasY + 10; gy < mapCanvasY + 50; gy += 15) {
-    doc.line(margin + 3, gy, margin + contentWidth - 3, gy);
-  }
+  /* ==========================================================================
+   * HALAMAN 1: SAMPUL & DAFTAR ISI BERGAMBAR
+   * ========================================================================== */
+  doc.setFillColor(15, 23, 42);
+  doc.rect(0, 0, pageWidth, 88, 'F');
 
-  // Simulated Transmission Line ROW (Double Gold Line)
-  doc.setDrawColor(217, 119, 6);
-  doc.setLineWidth(1.2);
-  doc.line(margin + 20, mapCanvasY + 35, margin + 75, mapCanvasY + 22);
-  doc.line(margin + 75, mapCanvasY + 22, margin + 135, mapCanvasY + 30);
+  doc.setFillColor(37, 99, 235);
+  doc.rect(0, 85, pageWidth, 3, 'F');
 
-  // Tower Circles & Labels
-  const mockTowers = [
-    { x: margin + 20, y: mapCanvasY + 35, label: 'T.01' },
-    { x: margin + 75, y: mapCanvasY + 22, label: 'T.02' },
-    { x: margin + 135, y: mapCanvasY + 30, label: 'T.03' }
-  ];
-  mockTowers.forEach(t => {
-    doc.setFillColor(navyDark[0], navyDark[1], navyDark[2]);
-    doc.circle(t.x, t.y, 2.5, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.5);
-    doc.setTextColor(navyBlue[0], navyBlue[1], navyBlue[2]);
-    doc.text(t.label, t.x - 3.5, t.y - 4);
-  });
-
-  // Simulated Land Polygons along ROW
-  doc.setFillColor(187, 247, 208); // Light green polygon
-  doc.roundedRect(margin + 32, mapCanvasY + 24, 28, 16, 1, 1, 'F');
-  doc.setDrawColor(22, 163, 74);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(margin + 32, mapCanvasY + 24, 28, 16, 1, 1, 'S');
+  // Badge Edisi
+  doc.setFillColor(16, 185, 129);
+  doc.roundedRect(margin, 16, 68, 7, 2, 2, 'F');
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(5.8);
-  doc.setTextColor(22, 101, 52);
-  doc.text('Bidang #041', margin + 34, mapCanvasY + 28);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(5);
-  doc.text('320 m2', margin + 34, mapCanvasY + 32);
-
-  // Active Clicked Polygon (Highlighted Amber)
-  doc.setFillColor(254, 243, 199);
-  doc.roundedRect(margin + 62, mapCanvasY + 16, 32, 20, 1, 1, 'F');
-  doc.setDrawColor(217, 119, 6);
-  doc.setLineWidth(0.8);
-  doc.roundedRect(margin + 62, mapCanvasY + 16, 32, 20, 1, 1, 'S');
-
-  // Floating Popup Card on Map for Bidang #042
-  const popX = margin + 98;
-  const popY = mapCanvasY + 8;
-  const popW = contentWidth - 105;
-  doc.setFillColor(255, 255, 255);
-  doc.roundedRect(popX, popY, popW, 36, 2, 2, 'F');
-  doc.setDrawColor(203, 213, 225);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(popX, popY, popW, 36, 2, 2, 'S');
-
-  doc.setFillColor(brandPrimary[0], brandPrimary[1], brandPrimary[2]);
-  doc.roundedRect(popX, popY, popW, 6, 2, 2, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
+  doc.setFontSize(7.5);
   doc.setTextColor(255, 255, 255);
-  doc.text('DETAIL BIDANG SPASIAL (KLIK POLIGON)', popX + 3.5, popY + 4.2);
+  doc.text('EDISI PENGGUNA BERGAMBAR v4.0', margin + 34, 20.8, { align: 'center' });
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.2);
-  doc.setTextColor(textDark[0], textDark[1], textDark[2]);
-  doc.text('Bidang #042 - H. Achmad Syafei', popX + 3.5, popY + 10.5);
+  doc.setFontSize(20);
+  doc.setTextColor(255, 255, 255);
+  doc.text('BUKU PANDUAN PENGGUNA', margin, 36);
+  doc.setFontSize(14);
+  doc.setTextColor(147, 197, 253);
+  doc.text('Dilengkapi Simulasi Layar & Petunjuk Klik Nomor (1, 2, 3)', margin, 44);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.2);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  doc.text('Desa: Sukamaju   |   Span: Tower 01 - 02', popX + 3.5, popY + 14.5);
-  doc.text('Luas Terdampak: 480 m2   |   Alas Hak: SHM No. 1024', popX + 3.5, popY + 18.5);
-  doc.text('Koordinat UTM 49S: X=324150, Y=9182340', popX + 3.5, popY + 22.5);
+  doc.setFontSize(8.8);
+  doc.setTextColor(203, 213, 225);
+  doc.text(
+    'Panduan praktis untuk Tim Lapangan, Operator, dan Admin dalam menggunakan seluruh menu',
+    margin,
+    54
+  );
+  doc.text(
+    'Sistem Informasi Inventarisasi Tanah, Bangunan & Tanaman (SIP VSS).',
+    margin,
+    59
+  );
 
-  // Google Maps button in popup
-  doc.setFillColor(14, 116, 144);
-  doc.roundedRect(popX + 3.5, popY + 25.5, 42, 6.5, 1, 1, 'F');
+  // Box Proyek
+  doc.setFillColor(30, 41, 59);
+  doc.setDrawColor(71, 85, 105);
+  doc.roundedRect(margin, 65, contentWidth, 15, 2, 2, 'FD');
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(5.8);
+  doc.setFontSize(8.5);
   doc.setTextColor(255, 255, 255);
-  doc.text('NAVIGASI GOOGLE MAPS', popX + 24.5, popY + 29.8, { align: 'center' });
+  doc.text(`PROYEK AKTIF: ${projectName}`, margin + 4, 71.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(148, 163, 184);
+  doc.text(`Kode Proyek: ${projectCode}   |   Dicetak Tanggal: ${printedDate}`, margin + 4, 76.8);
 
-  addHeaderFooter(4, 'Bagian 4: Panduan Pengguna Tamu, Peta Spasial & Nominatif');
+  let y = 96;
 
-  // =========================================================================
-  // PAGE 5: PANDUAN TIM QUALITY CONTROL (QC) & SANDINGAN REGULASI ESDM
-  // =========================================================================
-  doc.addPage();
-  curY = 17;
-
-  curY = drawSectionHeader(curY, '09', 'PANDUAN OPERASIONAL: TIM QUALITY CONTROL (QC / VALIDATOR)', 'Verifikasi fisik & yuridis berkas, checklist 7 dokumen wajib, dan penetapan status');
-
+  // Cara Membaca Buku Panduan Ini
+  doc.setFillColor(255, 241, 242);
+  doc.setDrawColor(253, 164, 175);
+  doc.roundedRect(margin, y, contentWidth, 18, 2.5, 2.5, 'FD');
+  drawCallout(margin + 7, y + 9, 1);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(159, 18, 57);
+  doc.text('CARA MEMBACA PANDUAN BERGAMBAR INI:', margin + 13, y + 7);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  const qcIntro = 
-    'Tim Quality Control (QC) berfungsi sebagai gerbang utama validasi yuridis dan kepatuhan administratif. ' +
-    'QC bertugas menguji kesesuaian antara identitas pemilik, bukti hak kepemilikan tanah, kesesuaian batas lokasi, ' +
-    'serta memberikan penetapan status resmi sebelum berkas dinyatakan layak bayar kompensasi.';
-  const splitQcIntro = doc.splitTextToSize(qcIntro, contentWidth);
-  doc.text(splitQcIntro, margin, curY);
+  doc.setTextColor(136, 19, 55);
+  doc.text(
+    'Setiap halaman menampilkan GAMBAR SIMULASI LAYAR APLIKASI. Perhatikan lingkaran merah bernomor (1, 2, 3)',
+    margin + 13,
+    y + 11.8
+  );
+  doc.text(
+    'pada gambar layar, lalu baca urutan langkah sesuai nomor tersebut di bawah gambarnya.',
+    margin + 13,
+    y + 15.8
+  );
 
-  curY += splitQcIntro.length * 3.8 + 4;
+  y += 24;
 
-  // 3 Status Decision Cards
-  const statusCards = [
-    {
-      status: 'APPROVED (DISETUJUI)',
-      badgeBg: [209, 250, 229],
-      badgeText: [6, 95, 70],
-      border: emerald,
-      crit: 'Seluruh 7 dokumen yuridis lengkap, data identitas KTP sinkron dengan Sertifikat/Letter C atau didukung Surat Beda Nama resmi Kades. Berkas dinyatakan SAH untuk diterbitkan Kwitansi & Berita Acara.'
-    },
-    {
-      status: 'PENDING (DITAHAN / PROSES)',
-      badgeBg: [254, 243, 199],
-      badgeText: [146, 64, 14],
-      border: brandAccent,
-      crit: 'Berkas belum lengkap (misal: Bukti Lunas PBB tahun berjalan belum dilampirkan atau menunggu surat keterangan waris). Bidang diberi tenggat waktu untuk dilengkapi oleh tim lapangan.'
-    },
-    {
-      status: 'REJECTED (DITOLAK / KOREKSI)',
-      badgeBg: [254, 226, 226],
-      badgeText: [153, 27, 27],
-      border: rose,
-      crit: 'Ditemukan sengketa batas tanah, tumpang tindih kepemilikan, perbedaan luas melebihi toleransi Penlok, atau sertifikat palsu/batal. Wajib disertai Catatan Koreksi detail agar diinvestigasi ulang.'
-    }
-  ];
+  // Daftar Isi Visual
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('DAFTAR ISI PANDUAN PENGGUNA (8 HALAMAN)', margin, y);
+  y += 4;
 
-  statusCards.forEach(sc => {
-    doc.setFillColor(248, 250, 252);
-    doc.roundedRect(margin, curY, contentWidth, 13, 1.5, 1.5, 'F');
-    doc.setDrawColor(sc.border[0], sc.border[1], sc.border[2]);
-    doc.setLineWidth(0.5);
-    doc.roundedRect(margin, curY, contentWidth, 13, 1.5, 1.5, 'S');
-
-    // Status badge
-    doc.setFillColor(sc.badgeBg[0], sc.badgeBg[1], sc.badgeBg[2]);
-    doc.roundedRect(margin + 3, curY + 3.2, 42, 6.5, 1.2, 1.2, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.8);
-    doc.setTextColor(sc.badgeText[0], sc.badgeText[1], sc.badgeText[2]);
-    doc.text(sc.status, margin + 24, curY + 7.5, { align: 'center' });
-
-    // Criteria
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.8);
-    doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-    const splitCrit = doc.splitTextToSize(sc.crit, contentWidth - 52);
-    doc.text(splitCrit, margin + 49, curY + 4.5);
-
-    curY += 15.5;
-  });
-
-  curY += 2;
-
-  // Section: Checklist 7 Dokumen Yuridis Wajib
-  curY = drawSectionHeader(curY, '10', 'CHECKLIST 7 DOKUMEN YURIDIS UTAMA WAJIB VERIFIKASI', 'Standar pemeriksaan dokumen kepemilikan sebelum pengajuan pembayaran');
-
-  const docCols = [
+  const tocList = [
     [
-      '1. Identitas Pribadi: Fotokopi e-KTP & Kartu Keluarga (KK) sah.',
-      '2. Bukti Kepemilikan: Sertifikat Hak Milik (SHM) / Letter C / Girik.',
-      '3. Pajak Daerah: Bukti Lunas SPPT PBB tahun berjalan.',
-      '4. SPPFT: Surat Pernyataan Penguasaan Fisik Tanah bermeterai.'
+      'Halaman 2',
+      'Langkah Awal: Cara Login, Pilih Proyek, & Hubungkan Google Drive',
+      'Pengenalan Sidebar Kiri & Peran Akun (Viewer, Operator, Admin)',
     ],
     [
-      '5. Surat Kades: Keterangan tidak sengketa & beda nama (jika ada).',
-      '6. Surat Kuasa / Keterangan Waris (khusus bidang warisan).',
-      '7. Berita Acara Inventarisasi: Ditandatangani pemilik & saksi.'
-    ]
+      'Halaman 3',
+      'Menu 1 & 1.1: Dashboard & Daftar Nominatif (Gabung, Pecah, Hapus)',
+      'Gambar letak tombol Cari, Cetak, Gabung Bidang, Pecah Bidang & Hapus Bidang (n-1)',
+    ],
+    [
+      'Halaman 4',
+      'Menu 1.2 & 1.3: Peta Spasial (GIS) & Cetak Peta Bidang Tanah',
+      'Gambar klik poligon, Rute Google Maps, Split-View Peta & Slider Rotasi Kompas 0-360°',
+    ],
+    [
+      'Halaman 5',
+      'Menu 1.4 & 1.5: Resume Kegiatan Desa (Wajib 4 Foto) & Surat Instansi',
+      'Gambar form Resume Desa 4 foto dokumentasi & arsip otomatis folder Surat Instansi',
+    ],
+    [
+      'Halaman 6',
+      'Menu 2 (Bagian 1): Formulir Input Lahan 5 Tab & Simpan Cepat (Ctrl+S)',
+      'Gambar navigasi 5 Tab Input Lahan (Identitas, Bangunan, Tanaman, Berkas, Ringkasan)',
+    ],
+    [
+      'Halaman 7',
+      'Menu 2 (Bagian 2): Ambil 7 Tanda Tangan & Cap Desa Resmi dari HP',
+      'Gambar layar 7 kartu Tanda Tangan & Cap Desa via Kamera/Galeri HP untuk Form Inventarisasi',
+    ],
+    [
+      'Halaman 8',
+      'Menu 3, 3.1, 3.2, 4 & 5: Verifikasi QC, Sanding Data & Update Peta QGIS',
+      'Gambar panel Approve/Reject QC, Sanding Peta/PDF ESDM, dan aturan 3 file GeoJSON',
+    ],
   ];
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.2);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-
-  let checkY = curY;
-  docCols[0].forEach(d => {
-    doc.text(d, margin + 2, checkY);
-    checkY += 4.5;
-  });
-
-  checkY = curY;
-  docCols[1].forEach(d => {
-    doc.text(d, margin + (contentWidth / 2) + 2, checkY);
-    checkY += 4.5;
-  });
-
-  curY += 23;
-
-  // Visual Mockup of QC Module & Decision Panel
-  doc.setFillColor(255, 255, 255);
-  doc.roundedRect(margin, curY, contentWidth, 75, 3, 3, 'F');
-  doc.setDrawColor(203, 213, 225);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(margin, curY, contentWidth, 75, 3, 3, 'S');
-
-  // Title Bar of QC window
-  doc.setFillColor(navyDark[0], navyDark[1], navyDark[2]);
-  doc.roundedRect(margin, curY, contentWidth, 8, 3, 3, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.2);
-  doc.setTextColor(255, 255, 255);
-  doc.text('SIMULASI ANTARMUKA: MODUL QUALITY CONTROL & VERIFIKASI BERKAS YURIDIS', margin + 4, curY + 5.5);
-
-  const qcPanelY = curY + 11;
-  const qcListW = 66;
-  const qcDetailW = contentWidth - qcListW - 9;
-
-  // Left List Mockup
-  doc.setFillColor(248, 250, 252);
-  doc.roundedRect(margin + 3, qcPanelY, qcListW, 58, 1.5, 1.5, 'F');
-  doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-  doc.roundedRect(margin + 3, qcPanelY, qcListW, 58, 1.5, 1.5, 'S');
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(textDark[0], textDark[1], textDark[2]);
-  doc.text('ANTREAN VALIDASI BIDANG', margin + 6, qcPanelY + 5);
-
-  const mockQcList = [
-    { no: '042', name: 'H. Achmad Syafei', st: 'APPROVED', c: emerald },
-    { no: '043', name: 'Siti Aminah', st: 'PENDING', c: brandAccent },
-    { no: '044', name: 'Kuswanto (Sengketa)', st: 'REJECTED', c: rose }
-  ];
-
-  let qRowY = qcPanelY + 8;
-  mockQcList.forEach(item => {
-    doc.setFillColor(255, 255, 255);
-    doc.roundedRect(margin + 5, qRowY, qcListW - 4, 14, 1, 1, 'F');
-    doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-    doc.roundedRect(margin + 5, qRowY, qcListW - 4, 14, 1, 1, 'S');
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6);
-    doc.setTextColor(textDark[0], textDark[1], textDark[2]);
-    doc.text(`Bidang #${item.no} - ${item.name}`, margin + 7, qRowY + 5);
-
-    // Pill
-    doc.setFillColor(item.c[0], item.c[1], item.c[2]);
-    doc.roundedRect(margin + 7, qRowY + 7.5, 24, 4, 0.8, 0.8, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(5.2);
-    doc.setTextColor(255, 255, 255);
-    doc.text(item.st, margin + 19, qRowY + 10.3, { align: 'center' });
-
-    qRowY += 16;
-  });
-
-  // Right Detail Panel Mockup
-  const qDetailX = margin + qcListW + 6;
-  doc.setFillColor(248, 250, 252);
-  doc.roundedRect(qDetailX, qcPanelY, qcDetailW, 58, 1.5, 1.5, 'F');
-  doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-  doc.roundedRect(qDetailX, qcPanelY, qcDetailW, 58, 1.5, 1.5, 'S');
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.8);
-  doc.setTextColor(textDark[0], textDark[1], textDark[2]);
-  doc.text('PANEL VALIDASI DOKUMEN: BIDANG #042', qDetailX + 4, qcPanelY + 5);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  doc.text('v Scan Dokumen e-KTP & KK: LENGKAP & TERVERIFIKASI', qDetailX + 4, qcPanelY + 10.5);
-  doc.text('v Sertifikat Hak Milik (SHM No. 1024): TERVALIDASI BPN', qDetailX + 4, qcPanelY + 15);
-  doc.text('v Bukti Setor Lunas SPPT PBB 2026: TERLAMPIR LUNAS', qDetailX + 4, qcPanelY + 19.5);
-
-  // Correction Notes Box
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(5.8);
-  doc.text('CATATAN PEMERIKSAAN QC:', qDetailX + 4, qcPanelY + 25);
-  doc.setFillColor(255, 255, 255);
-  doc.roundedRect(qDetailX + 4, qcPanelY + 27, qcDetailW - 8, 14, 1, 1, 'FD');
-  doc.setFont('helvetica', 'normal');
-  doc.text('Data fisik dan yuridis klop. Lanjut ke proses penerbitan Berita Acara & Kwitansi.', qDetailX + 6, qcPanelY + 34);
-
-  // Action Buttons
-  doc.setFillColor(emerald[0], emerald[1], emerald[2]);
-  doc.roundedRect(qDetailX + 4, qcPanelY + 46, 30, 7, 1, 1, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(5.8);
-  doc.setTextColor(255, 255, 255);
-  doc.text('SETUJUI (APPROVED)', qDetailX + 19, qcPanelY + 50.5, { align: 'center' });
-
-  doc.setFillColor(brandAccent[0], brandAccent[1], brandAccent[2]);
-  doc.roundedRect(qDetailX + 37, qcPanelY + 46, 30, 7, 1, 1, 'F');
-  doc.text('TAHAN (PENDING)', qDetailX + 52, qcPanelY + 50.5, { align: 'center' });
-
-  doc.setFillColor(rose[0], rose[1], rose[2]);
-  doc.roundedRect(qDetailX + 70, qcPanelY + 46, 30, 7, 1, 1, 'F');
-  doc.text('TOLAK (REJECTED)', qDetailX + 85, qcPanelY + 50.5, { align: 'center' });
-
-  addHeaderFooter(5, 'Bagian 5: Panduan Tim Quality Control (QC / Validator)');
-
-  // =========================================================================
-  // PAGE 6: DOKUMEN FISIK, KWITANSI & PANDUAN PEMECAHAN MASALAH
-  // =========================================================================
-  doc.addPage();
-  curY = 17;
-
-  curY = drawSectionHeader(curY, '11', 'PENGELOLAAN BERKAS, KWITANSI & PANDUAN PEMECAHAN MASALAH', 'Penerbitan dokumen resmi, integrasi Google Drive, serta solusi praktis kendala operasional');
-
-  // Section: Cetak Berkas & Kwitansi
-  const pColW = (contentWidth - 6) / 2;
-
-  // Box 1: Cetak Berkas
-  doc.setFillColor(248, 250, 252);
-  doc.roundedRect(margin, curY, pColW, 36, 2, 2, 'F');
-  doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-  doc.setLineWidth(0.4);
-  doc.roundedRect(margin, curY, pColW, 36, 2, 2, 'S');
-
-  doc.setFillColor(brandPrimary[0], brandPrimary[1], brandPrimary[2]);
-  doc.roundedRect(margin + 2.5, curY + 2.5, 38, 5, 1, 1, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(255, 255, 255);
-  doc.text('PENCETAKAN FORMULIR & KWITANSI', margin + 21.5, curY + 6, { align: 'center' });
-
-  const printPoints = [
-    '• Formulir Inventarisasi PDF: Akses Tab 5 Form Input, klik "Cetak Formulir Inventarisasi". Dokumen otomatis terisi data bidang, tanaman & tanda tangan.',
-    '• Kwitansi Kompensasi Sah: Masuk ke Berkas Fisik / QC pada bidang APPROVED. Masukkan nomor kwitansi & cetak tanda bukti penerimaan.'
-  ];
-  let ptY = curY + 11.5;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.8);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  printPoints.forEach(pt => {
-    const splitPt = doc.splitTextToSize(pt, pColW - 6);
-    doc.text(splitPt, margin + 3.5, ptY);
-    ptY += splitPt.length * 3.4 + 2;
-  });
-
-  // Box 2: Google Drive Repository
-  const pRightX = margin + pColW + 6;
-  doc.setFillColor(248, 250, 252);
-  doc.roundedRect(pRightX, curY, pColW, 36, 2, 2, 'F');
-  doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-  doc.setLineWidth(0.4);
-  doc.roundedRect(pRightX, curY, pColW, 36, 2, 2, 'S');
-
-  doc.setFillColor(navyBlue[0], navyBlue[1], navyBlue[2]);
-  doc.roundedRect(pRightX + 2.5, curY + 2.5, 38, 5, 1, 1, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(255, 255, 255);
-  doc.text('STRUKTUR CLOUD GOOGLE DRIVE', pRightX + 21.5, curY + 6, { align: 'center' });
-
-  const drivePoints = [
-    '• Otomatisasi Folder: Sistem mengelompokkan dokumen ke folder Desa dan Nomor Bidang (contoh: SUKAMAJU/BIDANG_042_ACHMAD_SYAFEI).',
-    '• Format File Didukung: Scan PDF dokumen resmi, foto JPG/PNG (foto patok batas, kondisi tegakan, dan KTP).',
-    '• Pratinjau Cepat: Arsip dapat ditinjau langsung di aplikasi.'
-  ];
-  ptY = curY + 11.5;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.8);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  drivePoints.forEach(dp => {
-    const splitDp = doc.splitTextToSize(dp, pColW - 6);
-    doc.text(splitDp, pRightX + 3.5, ptY);
-    ptY += splitDp.length * 3.4 + 2;
-  });
-
-  curY += 41;
-
-  // Troubleshooting Section
-  curY = drawSectionHeader(curY, '12', 'PANDUAN PEMECAHAN MASALAH (TROUBLESHOOTING & FAQ)', 'Solusi cepat terhadap kendala jaringan, sinkronisasi token, dan validasi data');
-
-  const faqs = [
-    {
-      q: 'Koneksi Google Sheets / Google Drive Terputus (Token Otorisasi Expired)',
-      sol: 'Klik tombol status "Live Sheets" di bilah atas aplikasi, lalu pilih "Otorisasi Ulang Google". Pastikan akun Google yang digunakan memiliki izin editor pada spreadsheet dan folder induk Google Drive proyek.'
-    },
-    {
-      q: 'Data Bidang Baru Tidak Muncul / Poligon Tidak Berwarna di Peta GIS Spasial',
-      sol: 'Pastikan penulisan Desa, Span Tower (contoh: "01-02"), dan Nomor Bidang pada Form Input persis sama dengan atribut file GeoJSON. Spasi ganda atau perbedaan huruf kapital dapat menyebabkan peta tidak mengaitkan data.'
-    },
-    {
-      q: 'Pintasan Simpan Cepat (Ctrl+S) Tidak Menyimpan Formulir',
-      sol: 'Pastikan kursor tidak aktif di dalam bilah alamat URL peramban. Periksa kolom bertanda bintang merah (*) seperti DESA, NO BIDANG, NIK, dan SPAN apakah sudah terisi dengan format benar.'
-    },
-    {
-      q: 'Kondisi Jaringan Lapangan Lemah atau Terputus Sementara (Offline Mode)',
-      sol: 'Aplikasi dilengkapi fitur offline cache lokal. Petugas dapat terus melanjutkan pengetikan data di lapangan. Begitu perangkat kembali mendapatkan sinyal internet, klik tombol "Sync" di bilah atas untuk menyinkronkan data ke cloud.'
-    }
-  ];
-
-  faqs.forEach(f => {
+  tocList.forEach(([hal, judul, sub]) => {
     doc.setFillColor(248, 250, 252);
-    doc.roundedRect(margin, curY, contentWidth, 16.5, 1.5, 1.5, 'F');
-    doc.setDrawColor(cardBorder[0], cardBorder[1], cardBorder[2]);
-    doc.setLineWidth(0.3);
-    doc.roundedRect(margin, curY, contentWidth, 16.5, 1.5, 1.5, 'S');
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(margin, y, contentWidth, 16, 2, 2, 'FD');
+
+    doc.setFillColor(37, 99, 235);
+    doc.roundedRect(margin + 3, y + 3, 22, 10, 1.5, 1.5, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(255, 255, 255);
+    doc.text(hal, margin + 14, y + 9.2, { align: 'center' });
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.2);
-    doc.setTextColor(textDark[0], textDark[1], textDark[2]);
-    doc.text(`KENDALA: ${f.q}`, margin + 3.5, curY + 4.5);
+    doc.setFontSize(8.8);
+    doc.setTextColor(15, 23, 42);
+    doc.text(judul, margin + 28, y + 7);
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.8);
-    doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-    const splitSol = doc.splitTextToSize(`SOLUSI: ${f.sol}`, contentWidth - 7);
-    doc.text(splitSol, margin + 3.5, curY + 8.5);
+    doc.setFontSize(7.6);
+    doc.setTextColor(100, 116, 139);
+    doc.text(sub, margin + 28, y + 12.2);
 
-    curY += 19;
+    y += 18.5;
   });
 
-  curY += 2;
+  drawPageChrome(1, 'Sampul & Daftar Isi');
 
-  // Help Desk / Support Footer Card
-  doc.setFillColor(241, 245, 249);
-  doc.roundedRect(margin, curY, contentWidth, 21, 2, 2, 'F');
-  doc.setDrawColor(brandPrimary[0], brandPrimary[1], brandPrimary[2]);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(margin, curY, contentWidth, 21, 2, 2, 'S');
+  /* ==========================================================================
+   * HALAMAN 2: CARA LOGIN, SIDEBAR KIRI, & HUBUNGKAN GOOGLE
+   * ========================================================================== */
+  doc.addPage();
+  drawPageChrome(2, 'Bab 1 — Langkah Awal & Navigasi Sidebar');
+  y = 18;
+  y = drawSectionBanner(
+    y,
+    'Bab 1',
+    'Cara Masuk (Login) & Mengenal Tombol di Sidebar Kiri',
+    'Langkah pertama yang wajib dilakukan sebelum melihat peta atau menginput data lahan'
+  );
 
-  // Left accent
-  doc.setFillColor(brandPrimary[0], brandPrimary[1], brandPrimary[2]);
-  doc.rect(margin, curY, 2, 21, 'F');
+  // VISUAL SCREENSHOT: SIDEBAR & LAYAR UTAMA
+  drawScreenWindow(y, 78, 'Sidebar Navigasi Kiri & Tombol Koneksi Google', 'Tampilan Awal Aplikasi');
 
+  // Left Mock Sidebar inside screen
+  const sbX = margin + 4;
+  const sbY = y + 11;
+  doc.setFillColor(15, 23, 42);
+  doc.roundedRect(sbX, sbY, 72, 63, 2, 2, 'F');
+
+  // Project Selector Box
+  doc.setFillColor(30, 41, 59);
+  doc.setDrawColor(71, 85, 105);
+  doc.roundedRect(sbX + 3, sbY + 3, 66, 11, 1.5, 1.5, 'FD');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6);
+  doc.setTextColor(148, 163, 184);
+  doc.text('PROYEK AKTIF SAAT INI:', sbX + 5, sbY + 6.8);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.2);
+  doc.setTextColor(252, 211, 77);
+  doc.text('SUTET 500 kV / SUTT 150 kV  [v]', sbX + 5, sbY + 11.5);
+  drawCallout(sbX + 64, sbY + 8.5, 1);
+
+  // Menu List
+  const menuMocks = [
+    '1. Dashboard Utama',
+    '1.1. Daftar Nominatif',
+    '1.2. Peta Spasial (GIS)',
+    '1.3. Peta Bidang Tanah',
+    '2. Input & Edit Lahan',
+  ];
+  menuMocks.forEach((m, idx) => {
+    const my = sbY + 16.5 + idx * 5.6;
+    doc.setFillColor(idx === 0 ? 37 : 30, idx === 0 ? 99 : 41, idx === 0 ? 235 : 59);
+    doc.roundedRect(sbX + 3, my, 66, 4.8, 1, 1, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(255, 255, 255);
+    doc.text(m, sbX + 5, my + 3.3);
+  });
+  drawCallout(sbX + 64, sbY + 25, 2);
+
+  // Connect Google Button
+  doc.setFillColor(5, 150, 105);
+  doc.roundedRect(sbX + 3, sbY + 46, 66, 7, 1.5, 1.5, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.8);
+  doc.setTextColor(255, 255, 255);
+  doc.text('Hubungkan Google Drive & Sheets', sbX + 6, sbY + 50.5);
+  drawCallout(sbX + 64, sbY + 49.5, 3);
+
+  // Sync Button
+  doc.setFillColor(51, 65, 85);
+  doc.roundedRect(sbX + 3, sbY + 54.5, 66, 6.5, 1.5, 1.5, 'F');
+  doc.setTextColor(226, 232, 240);
+  doc.text('Sinkronisasi Data Master', sbX + 6, sbY + 58.8);
+  drawCallout(sbX + 64, sbY + 57.8, 4);
+
+  // Right Dashboard Preview inside screen
+  const dbX = sbX + 76;
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(203, 213, 225);
+  doc.roundedRect(dbX, sbY, contentWidth - 84, 63, 2, 2, 'FD');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
-  doc.setTextColor(textDark[0], textDark[1], textDark[2]);
-  doc.text('PUSAT BANTUAN OPERASIONAL & LAYANAN DUKUNGAN TEKNIS', margin + 6, curY + 6);
+  doc.setTextColor(15, 23, 42);
+  doc.text('RINGKASAN DASHBOARD PROYEK', dbX + 4, sbY + 7);
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.2);
-  doc.setTextColor(textBody[0], textBody[1], textBody[2]);
-  doc.text('Apabila tim lapangan atau verifikator menemui kendala hak akses, penambahan span jalur baru, atau audit data:', margin + 6, curY + 11);
-  
+  // Mini KPI Cards
+  const kpis = [
+    ['Total Bidang', '245 Bidang'],
+    ['Sudah Terinput', '198 Bidang'],
+    ['Terverifikasi QC', '164 Bidang'],
+  ];
+  kpis.forEach(([lbl, val], idx) => {
+    const kx = dbX + 4 + idx * 30.5;
+    doc.setFillColor(241, 245, 249);
+    doc.roundedRect(kx, sbY + 11, 28.5, 16, 1.5, 1.5, 'F');
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(100, 116, 139);
+    doc.text(lbl, kx + 2, sbY + 16);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(37, 99, 235);
+    doc.text(val, kx + 2, sbY + 23);
+  });
+
+  doc.setFillColor(239, 246, 255);
+  doc.roundedRect(dbX + 4, sbY + 31, contentWidth - 92, 28, 1.5, 1.5, 'F');
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(navyBlue[0], navyBlue[1], navyBlue[2]);
-  doc.text('WhatsApp Admin Pengembang: +62 812-2508-5742     |     Email Dukungan: agungpambudi763@gmail.com', margin + 6, curY + 16);
+  doc.setFontSize(7);
+  doc.setTextColor(30, 64, 175);
+  doc.text('Grafik Progres per Desa & Span Tower + Kelengkapan 4 Berkas Digital', dbX + 8, sbY + 46);
 
-  addHeaderFooter(6, 'Bagian 6: Dokumen Fisik, Kwitansi & Pemecahan Masalah');
+  y += 83;
 
-  // Generate & Download PDF
-  const filename = `Buku_Panduan_Pengguna_SIP_VSS_${options.projectName ? options.projectName.replace(/\s+/g, '_') : 'Jalur_Transmisi'}.pdf`;
-  doc.save(filename);
+  // Steps Explanation
+  y = drawStepRow(
+    y,
+    1,
+    'Pilih Jalur Proyek di Pojok Kiri Atas',
+    'Klik kotak Pilihan Proyek di bagian paling atas menu kiri. Pastikan Anda memilih jalur SUTT/SUTET yang sesuai dengan lokasi kerja Anda sebelum mulai bekerja.'
+  );
+  y = drawStepRow(
+    y,
+    2,
+    'Daftar Menu Kerja (Urut Nomor 1 sampai 5)',
+    'Klik nama menu di sidebar kiri untuk berpindah halaman: mulai dari Daftar Nominatif (1.1), Peta Spasial GIS (1.2), Peta Bidang Tanah (1.3), hingga Input & Edit Lahan (Menu 2).'
+  );
+  y = drawStepRow(
+    y,
+    3,
+    'WAJIB: Klik Tombol Hijau "Hubungkan Google Drive & Sheets"',
+    'Saat Anda ingin menyimpan data warga, memotret tanda tangan dari HP, mengunggah foto KTP/lokasi, atau melakukan Gabung/Pecah/Hapus bidang, klik tombol ini sekali dan pilih akun Google Anda.'
+  );
+  y = drawStepRow(
+    y,
+    4,
+    'Klik "Sinkronisasi Data Master" untuk Menarik Data Terbaru',
+    'Jika rekan kerja Anda baru saja menginput data dari HP atau laptop lain, klik tombol ini agar daftar bidang di layar Anda langsung ikut diperbarui.'
+  );
+
+  /* ==========================================================================
+   * HALAMAN 3: MENU 1.1 DAFTAR NOMINATIF (GABUNG, PECAH, HAPUS BIDANG)
+   * ========================================================================== */
+  doc.addPage();
+  drawPageChrome(3, 'Bab 2 — Menu 1.1 Daftar Nominatif');
+  y = 18;
+  y = drawSectionBanner(
+    y,
+    'Menu 1.1',
+    'Cara Menggunakan Daftar Nominatif (Cari, Cetak, Gabung, Pecah & Hapus)',
+    'Halaman utama untuk mencari data warga, mencetak tabel resmi, dan memodifikasi nomor bidang'
+  );
+
+  // VISUAL SCREENSHOT: DAFTAR NOMINATIF
+  drawScreenWindow(y, 74, 'Menu 1.1 — Daftar Nominatif & Toolbar Aksi Bidang', 'Tabel Data Master');
+
+  const dnY = y + 11;
+  // Search & Filter Bar
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(203, 213, 225);
+  doc.roundedRect(margin + 4, dnY, 68, 9, 1.5, 1.5, 'FD');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.8);
+  doc.setTextColor(100, 116, 139);
+  doc.text('Cari Nama / No. Bidang / Desa...', margin + 7, dnY + 5.6);
+  drawCallout(margin + 67, dnY + 4.5, 1);
+
+  // Action Buttons: Gabung, Pecah, Hapus, Cetak
+  // Gabung
+  doc.setFillColor(79, 70, 229);
+  doc.roundedRect(margin + 75, dnY, 25, 9, 1.5, 1.5, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.3);
+  doc.setTextColor(255, 255, 255);
+  doc.text('Gabung', margin + 84, dnY + 5.6, { align: 'center' });
+  drawCallout(margin + 96.5, dnY + 4.5, 2);
+
+  // Pecah
+  doc.setFillColor(245, 158, 11);
+  doc.roundedRect(margin + 102, dnY, 25, 9, 1.5, 1.5, 'F');
+  doc.text('Pecah', margin + 111, dnY + 5.6, { align: 'center' });
+  drawCallout(margin + 123.5, dnY + 4.5, 3);
+
+  // Hapus
+  doc.setFillColor(225, 29, 72);
+  doc.roundedRect(margin + 129, dnY, 25, 9, 1.5, 1.5, 'F');
+  doc.text('Hapus', margin + 138, dnY + 5.6, { align: 'center' });
+  drawCallout(margin + 150.5, dnY + 4.5, 4);
+
+  // Cetak
+  doc.setFillColor(5, 150, 105);
+  doc.roundedRect(margin + 156, dnY, 22, 9, 1.5, 1.5, 'F');
+  doc.text('Cetak', margin + 164, dnY + 5.6, { align: 'center' });
+  drawCallout(margin + 174.5, dnY + 4.5, 5);
+
+  // Table Header
+  const tbY = dnY + 13;
+  doc.setFillColor(30, 41, 59);
+  doc.rect(margin + 4, tbY, contentWidth - 8, 8, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.8);
+  doc.setTextColor(255, 255, 255);
+  doc.text('No. Bidang', margin + 7, tbY + 5.2);
+  doc.text('Span Tower', margin + 28, tbY + 5.2);
+  doc.text('Nama Pemilik Lahan', margin + 55, tbY + 5.2);
+  doc.text('Desa', margin + 102, tbY + 5.2);
+  doc.text('Luas (m2)', margin + 128, tbY + 5.2);
+  doc.text('Tombol Aksi Baris', margin + 150, tbY + 5.2);
+
+  // Table Rows
+  const sampleRows = [
+    ['011', 'T.01 - T.02', 'SUHERMAN BIN H. BASRI', 'SUKAMAJU', '320,00'],
+    ['012', 'T.01 - T.02', 'H. AHMAD SUBANDI', 'SUKAMAJU', '450,00'],
+    ['013', 'T.01 - T.02', 'WAWAN SETIAWAN', 'SUKAMAJU', '280,00'],
+  ];
+  sampleRows.forEach((r, idx) => {
+    const ry = tbY + 8 + idx * 11;
+    doc.setFillColor(idx % 2 === 0 ? 255 : 248, idx % 2 === 0 ? 255 : 250, idx % 2 === 0 ? 255 : 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.rect(margin + 4, ry, contentWidth - 8, 11, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(29, 78, 216);
+    doc.text(r[0], margin + 7, ry + 6.8);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(51, 65, 85);
+    doc.text(r[1], margin + 28, ry + 6.8);
+    doc.setFont('helvetica', 'bold');
+    doc.text(r[2], margin + 55, ry + 6.8);
+    doc.setFont('helvetica', 'normal');
+    doc.text(r[3], margin + 102, ry + 6.8);
+    doc.text(r[4], margin + 128, ry + 6.8);
+
+    // Edit & Lihat Peta mini buttons
+    doc.setFillColor(219, 234, 254);
+    doc.roundedRect(margin + 148, ry + 2.5, 11, 6, 1, 1, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6);
+    doc.setTextColor(29, 78, 216);
+    doc.text('Edit', margin + 153.5, ry + 6.5, { align: 'center' });
+
+    doc.setFillColor(209, 250, 229);
+    doc.roundedRect(margin + 160.5, ry + 2.5, 14, 6, 1, 1, 'F');
+    doc.setTextColor(4, 120, 87);
+    doc.text('Peta', margin + 167.5, ry + 6.5, { align: 'center' });
+  });
+  drawCallout(margin + 175, tbY + 24, 6);
+
+  y += 79;
+
+  y = drawStepRow(
+    y,
+    1,
+    'Kotak Pencarian & Filter Span / Desa',
+    'Ketik nama warga atau nomor bidang (contoh: 012) untuk mencari cepat, atau gunakan filter Span Tower dan Desa di sebelahnya.'
+  );
+  y = drawStepRow(
+    y,
+    2,
+    'Tombol "Gabung Bidang" (Menyatukan Beberapa Bidang)',
+    'Klik tombol ini jika 2 atau lebih bidang tanah dimiliki orang yang sama dan ingin disatukan. Pilih 1 Bidang Induk, centang bidang lain yang akan digabung, lalu klik Proses. Luas tanah, jumlah pohon, dan bangunan otomatis dijumlahkan ke Bidang Induk dan tersimpan ke Google Sheets.'
+  );
+  y = drawStepRow(
+    y,
+    3,
+    'Tombol "Pecah Bidang" (Membagi 1 Bidang Menjadi 012A, 012B, dst.)',
+    'Klik jika 1 bidang tanah terbagi menjadi beberapa pemilik/ahli waris. Pilih bidang asal, masukkan jumlah pecahan, lalu bagi luas m2 untuk masing-masing pecahan.'
+  );
+  y = drawStepRow(
+    y,
+    4,
+    'Tombol "Hapus Bidang" (Otomatis Menggeser Nomor Urut n-1)',
+    'Klik untuk menghapus bidang yang batal/ganda. Nomor bidang urut setelahnya di Span yang sama akan otomatis bergeser mundur 1 angka (misal: No. 015 dihapus -> No. 016 otomatis turun menjadi 015) dengan tetap menjaga format nol di depan.'
+  );
+  y = drawStepRow(
+    y,
+    5,
+    'Tombol "Cetak / Excel" & (6) Tombol "Edit / Peta" di Setiap Baris',
+    'Klik Cetak/Excel (5) untuk mengunduh tabel resmi ber-KOP atau file Excel. Klik tombol Edit atau Peta (6) di sebelah kanan baris warga untuk langsung mengedit formulirnya atau melompat ke titik petanya.'
+  );
+
+  /* ==========================================================================
+   * HALAMAN 4: MENU 1.2 (PETA GIS) & MENU 1.3 (PETA BIDANG TANAH)
+   * ========================================================================== */
+  doc.addPage();
+  drawPageChrome(4, 'Bab 3 — Menu 1.2 Peta Spasial GIS & Menu 1.3 Peta Bidang Tanah');
+  y = 18;
+  y = drawSectionBanner(
+    y,
+    'Menu 1.2 & 1.3',
+    'Cara Memakai Peta Spasial (GIS) & Mencetak Peta Bidang Tanah',
+    'Navigasi poligon di lapangan serta pencetakan Peta Bidang Tanah per Span & Desa'
+  );
+
+  // VISUAL SCREENSHOT: MENU 1.2 & 1.3
+  drawScreenWindow(
+    y,
+    76,
+    'Atas: Menu 1.2 Peta GIS Interaktif  |  Bawah: Menu 1.3 Peta Bidang Tanah Siap Cetak',
+    '2 Mode Peta Spasial'
+  );
+
+  const mpY = y + 11;
+  // Top Half: Menu 1.2 GIS Map
+  doc.setFillColor(15, 23, 42);
+  doc.roundedRect(margin + 4, mpY, contentWidth - 8, 28, 2, 2, 'F');
+
+  // Layer Switch
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(margin + 7, mpY + 3, 62, 6, 1, 1, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6);
+  doc.setTextColor(15, 23, 42);
+  doc.text('[v] Bidang   [v] Jalur ROW   [v] Tower', margin + 9, mpY + 7);
+  drawCallout(margin + 72, mpY + 6, 1);
+
+  // Polygons in center
+  doc.setFillColor(16, 185, 129);
+  doc.setDrawColor(167, 243, 208);
+  doc.rect(margin + 22, mpY + 12, 26, 12, 'FD');
+  doc.setTextColor(255, 255, 255);
+  doc.text('011 - SUHERMAN', margin + 35, mpY + 19, { align: 'center' });
+
+  doc.setFillColor(37, 99, 235);
+  doc.setDrawColor(253, 224, 71);
+  doc.rect(margin + 52, mpY + 11, 30, 14, 'FD');
+  doc.text('012 - H. AHMAD', margin + 67, mpY + 19, { align: 'center' });
+  drawCallout(margin + 83, mpY + 13, 2);
+
+  // Popup Card on Right of GIS Map
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(margin + 96, mpY + 4, 78, 20, 1.5, 1.5, 'F');
+  doc.setTextColor(15, 23, 42);
+  doc.setFontSize(6.5);
+  doc.text('BIDANG 012 • H. AHMAD SUBANDI (450 m2)', margin + 99, mpY + 9.5);
+  doc.setFillColor(5, 150, 105);
+  doc.roundedRect(margin + 99, mpY + 13, 28, 7, 1, 1, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.text('Rute Google Maps', margin + 113, mpY + 17.5, { align: 'center' });
+  doc.setFillColor(37, 99, 235);
+  doc.roundedRect(margin + 130, mpY + 13, 26, 7, 1, 1, 'F');
+  doc.text('Lihat Berkas', margin + 143, mpY + 17.5, { align: 'center' });
+  drawCallout(margin + 164, mpY + 16.5, 3);
+
+  // Bottom Half: Menu 1.3 Peta Bidang Tanah Split-View
+  const pbY = mpY + 32;
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(203, 213, 225);
+  doc.roundedRect(margin + 4, pbY, contentWidth - 8, 29, 2, 2, 'FD');
+
+  // Top Controls of 1.3
+  doc.setFillColor(241, 245, 249);
+  doc.roundedRect(margin + 7, pbY + 2.5, 52, 6, 1, 1, 'F');
+  doc.setTextColor(15, 23, 42);
+  doc.setFontSize(6);
+  doc.text('Span: T.01-T.02 | Desa: SUKAMAJU', margin + 9, pbY + 6.5);
+  drawCallout(margin + 62, pbY + 5.5, 4);
+
+  doc.setFillColor(254, 243, 199);
+  doc.roundedRect(margin + 70, pbY + 2.5, 54, 6, 1, 1, 'F');
+  doc.setTextColor(146, 64, 14);
+  doc.text('Rotasi Kompas: 0° ----(o)---- 360°', margin + 73, pbY + 6.5);
+  drawCallout(margin + 127, pbY + 5.5, 5);
+
+  doc.setFillColor(37, 99, 235);
+  doc.roundedRect(margin + 135, pbY + 2.5, 38, 6, 1, 1, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.text('Cetak PDF Peta Bidang', margin + 154, pbY + 6.5, { align: 'center' });
+  drawCallout(margin + 174, pbY + 5.5, 6);
+
+  // 3 Split Panels
+  const pLabels = [
+    '1. Peta Kartografi Teknis',
+    '2. Citra Satelit + Poligon',
+    '3. Tabel Nominatif & Kompas',
+  ];
+  pLabels.forEach((pl, idx) => {
+    const px = margin + 7 + idx * 56.5;
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(203, 213, 225);
+    doc.roundedRect(px, pbY + 11, 53.5, 15, 1.5, 1.5, 'FD');
+    doc.setTextColor(71, 85, 105);
+    doc.setFontSize(6.2);
+    doc.text(pl, px + 26.7, pbY + 19.5, { align: 'center' });
+  });
+
+  y += 81;
+
+  y = drawStepRow(
+    y,
+    1,
+    'Menu 1.2 — Pilih Layer Peta (Bidang Tanah, Jalur ROW, Titik Tower)',
+    'Centang layer yang ingin Anda lihat di layar dan pilih jenis peta dasar (Satelit atau Peta Jalan).'
+  );
+  y = drawStepRow(
+    y,
+    2,
+    'Menu 1.2 — Klik Poligon Bidang Tanah di Peta',
+    'Nomor bidang dan nama warga tampil tepat di tengah poligon tanah. Klik poligon mana saja untuk membuka kartu rincian pemiliknya.'
+  );
+  y = drawStepRow(
+    y,
+    3,
+    'Menu 1.2 — Klik "Rute Google Maps" atau "Lihat Berkas"',
+    'Dari kartu yang muncul di peta, klik Rute Google Maps untuk memandu arah perjalanan ke lokasi bidang, atau klik Lihat Berkas untuk membuka KTP dan foto lahan.'
+  );
+  y = drawStepRow(
+    y,
+    4,
+    'Menu 1.3 — Pilih Span Tower & Desa yang Ingin Dicetak',
+    'Pada Menu 1.3 Peta Bidang Tanah, pilih Span Tower dan Desa. Layar otomatis menampilkan Peta Kartografi, Peta Satelit, dan Tabel Nominatif khusus Span & Desa tersebut.'
+  );
+  y = drawStepRow(
+    y,
+    5,
+    'Menu 1.3 — Putar Kemiringan Jalur dengan Slider Rotasi (0° s/d 360°) & (6) Cetak PDF',
+    'Geser slider Rotasi (5) agar koridor jalur yang miring menjadi lurus mendatar mengikuti kertas cetak (arah panah Utara kompas otomatis ikut berputar). Lalu klik Cetak PDF Peta Bidang (6).'
+  );
+
+  /* ==========================================================================
+   * HALAMAN 5: MENU 1.4 (RESUME PROJECT) & MENU 1.5 (SURAT INSTANSI)
+   * ========================================================================== */
+  doc.addPage();
+  drawPageChrome(5, 'Bab 4 — Menu 1.4 Resume Project & Menu 1.5 Surat Instansi');
+  y = 18;
+  y = drawSectionBanner(
+    y,
+    'Menu 1.4 & 1.5',
+    'Cara Mengisi Resume Kegiatan Desa (Wajib 4 Foto) & Surat Instansi',
+    'Pelaporan tahapan kegiatan per Desa dan pengarsipan surat lintas instansi otomatis ke Google Drive'
+  );
+
+  // VISUAL SCREENSHOT: RESUME PROJECT 4 FOTO
+  drawScreenWindow(
+    y,
+    74,
+    'Menu 1.4 — Form Kegiatan Desa (Wajib Minimal 4 Foto Dokumentasi)',
+    'Auto-Folder Google Drive'
+  );
+
+  const rpY = y + 11;
+  // Form Fields
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(203, 213, 225);
+  doc.roundedRect(margin + 4, rpY, 84, 12, 1.5, 1.5, 'FD');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6);
+  doc.setTextColor(100, 116, 139);
+  doc.text('NAMA DESA / KELURAHAN:', margin + 7, rpY + 4.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('DESA SUKAMAJU', margin + 7, rpY + 9.5);
+  drawCallout(margin + 82, rpY + 6, 1);
+
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(margin + 92, rpY, 86, 12, 1.5, 1.5, 'FD');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6);
+  doc.setTextColor(100, 116, 139);
+  doc.text('TAHAPAN KEGIATAN DESA:', margin + 95, rpY + 4.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Sosialisasi & Penyuluhan Warga  [v]', margin + 95, rpY + 9.5);
+  drawCallout(margin + 172, rpY + 6, 2);
+
+  // 4 Photo Grid Box
+  const phY = rpY + 15;
+  doc.setFillColor(255, 251, 235);
+  doc.setDrawColor(252, 211, 77);
+  doc.roundedRect(margin + 4, phY, contentWidth - 8, 30, 2, 2, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.2);
+  doc.setTextColor(146, 64, 14);
+  doc.text('UNGGAH FOTO DOKUMENTASI KEGIATAN (WAJIB MINIMAL 4 FOTO):', margin + 8, phY + 6);
+  drawCallout(margin + 104, phY + 4.8, 3);
+
+  for (let i = 0; i < 4; i++) {
+    const px = margin + 8 + i * 42;
+    doc.setFillColor(236, 253, 245);
+    doc.setDrawColor(110, 231, 183);
+    doc.roundedRect(px, phY + 9, 39, 17, 1.5, 1.5, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.8);
+    doc.setTextColor(4, 120, 87);
+    doc.text(`[v] Foto Kegiatan #${i + 1}`, px + 19.5, phY + 18.5, { align: 'center' });
+  }
+
+  // Save Bar
+  const svY = phY + 33;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.8);
+  doc.setTextColor(71, 85, 105);
+  doc.text(
+    'Otomatis membuat folder di Google Drive:  / DESA SUKAMAJU / Sosialisasi & Penyuluhan Warga /',
+    margin + 6,
+    svY + 5.5
+  );
+  doc.setFillColor(37, 99, 235);
+  doc.roundedRect(margin + 132, svY, 46, 9, 1.5, 1.5, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7);
+  doc.setTextColor(255, 255, 255);
+  doc.text('Simpan Resume Desa', margin + 155, svY + 5.8, { align: 'center' });
+  drawCallout(margin + 174, svY + 4.5, 4);
+
+  y += 79;
+
+  y = drawStepRow(
+    y,
+    1,
+    'Menu 1.4 — Pilih atau Ketik Nama Desa',
+    'Buka Menu 1.4 Resume Project, lalu pilih Desa yang sedang dilaksanakan kegiatan. Aplikasi otomatis menyiapkan folder Google Drive dengan nama Desa tersebut.'
+  );
+  y = drawStepRow(
+    y,
+    2,
+    'Menu 1.4 — Pilih Tahapan Kegiatan (Sosialisasi, Inventarisasi, Musyawarah, dll.)',
+    'Pilih jenis tahapan kegiatan, tanggal pelaksanaan, serta statusnya (Belum Mulai, Sedang Berjalan, atau Selesai).'
+  );
+  y = drawStepRow(
+    y,
+    3,
+    'Menu 1.4 — Unggah Minimal 4 Foto Dokumentasi Kegiatan & Berita Acara',
+    'Anda wajib memilih minimal 4 foto dokumentasi kegiatan lapangan (bisa lebih dari 4 foto) agar tombol simpan dapat memproses laporan kegiatan desa tersebut.'
+  );
+  y = drawStepRow(
+    y,
+    4,
+    'Klik "Simpan Resume Desa" & Cara Pakai Menu 1.5 (Surat Instansi)',
+    'Klik Simpan (4) untuk mengunggah seluruh foto ke sub-folder <Nama Desa>/<Nama Kegiatan>. Untuk mengarsipkan surat keluar/masuk (Pemda, BPN, Kehutanan, Desa), buka Menu 1.5 Surat Instansi -> isi Nomor Surat & Nama Instansi -> upload file surat. File otomatis masuk ke folder <Nama Instansi>.'
+  );
+
+  /* ==========================================================================
+   * HALAMAN 6: MENU 2 (BAGIAN 1) — FORMULIR INPUT 5 TAB & STRUKTUR FOLDER
+   * ========================================================================== */
+  doc.addPage();
+  drawPageChrome(6, 'Bab 5 (Bagian 1) — Menu 2 Input & Edit Lahan (5 Tab)');
+  y = 18;
+  y = drawSectionBanner(
+    y,
+    'Menu 2 (Bagian 1)',
+    'Cara Mengisi Formulir Input & Edit Lahan (5 Tab Berurutan)',
+    'Panduan pengisian identitas pemilik, bangunan, tanaman, berkas digital, dan simpan cepat Ctrl+S'
+  );
+
+  // VISUAL SCREENSHOT: 5 TABS FORM INPUT
+  drawScreenWindow(
+    y,
+    72,
+    'Menu 2 — Formulir Input & Edit Lahan (5 Tab + Pintasan Keyboard Ctrl + S)',
+    'Auto-Uppercase'
+  );
+
+  const fiY = y + 11;
+  const tabNames = [
+    ['1. Identitas & Lokasi', true],
+    ['2. Bangunan', false],
+    ['3. Tanaman', false],
+    ['4. Berkas & TTD HP', false],
+    ['5. Ringkasan', false],
+  ] as const;
+
+  tabNames.forEach(([tName, active], idx) => {
+    const tx = margin + 4 + idx * 35;
+    doc.setFillColor(active ? 37 : 226, active ? 99 : 232, active ? 235 : 240);
+    doc.roundedRect(tx, fiY, 33.5, 8.5, 1.5, 1.5, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.2);
+    doc.setTextColor(active ? 255 : 51, active ? 255 : 65, active ? 255 : 85);
+    doc.text(tName, tx + 16.7, fiY + 5.3, { align: 'center' });
+    drawCallout(tx + 30.5, fiY + 2, idx + 1);
+  });
+
+  // Mock Fields inside Tab 1
+  const mfY = fiY + 12;
+  const mockFields = [
+    ['NO. BIDANG', '012'],
+    ['SPAN TOWER', 'T.01 - T.02'],
+    ['DESA / KELURAHAN', 'SUKAMAJU'],
+    ['NAMA PEMILIK LAHAN', 'H. AHMAD SUBANDI'],
+    ['ALAS HAK & LUAS (m2)', 'SHM No. 412  •  450,00 m2'],
+    ['SAKSI 1, SAKSI 2 & KADES', 'BUDI (Saksi 1), DEDI (Saksi 2), H. KARMA (Kades)'],
+  ];
+  mockFields.forEach(([lbl, val], idx) => {
+    const col = idx % 2;
+    const row = Math.floor(idx / 2);
+    const fx = margin + 4 + col * 88;
+    const fy = mfY + row * 14.5;
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(203, 213, 225);
+    doc.roundedRect(fx, fy, 86, 12, 1.5, 1.5, 'FD');
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(5.8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(lbl, fx + 3, fy + 4.3);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(15, 23, 42);
+    doc.text(val, fx + 3, fy + 9.5);
+  });
+
+  y += 77;
+
+  y = drawStepRow(
+    y,
+    1,
+    'Tab 1 (Identitas & Lokasi) — Isi Data Pemilik, Saksi & Kepala Desa',
+    'Ketik No. Bidang, Span Tower, Desa, Nama Pemilik, NIK, Alas Hak, Luas m2, serta Nama Saksi 1, Saksi 2, Tim Pelaksana 1 & 2, dan Kepala Desa. Seluruh huruf otomatis diubah menjadi HURUF KAPITAL rapi.'
+  );
+  y = drawStepRow(
+    y,
+    2,
+    'Tab 2 (Bangunan & Benda Lain) — Tambah Item Bangunan Terdampak',
+    'Klik tombol "+ Tambah Bangunan" jika terdapat bangunan rumah, teras, pagar, pondasi, atau sumur di bawah jalur transmisi.'
+  );
+  y = drawStepRow(
+    y,
+    3,
+    'Tab 3 (Tanaman) — Input Jumlah Pohon Kecil, Sedang & Besar',
+    'Klik "+ Tambah Tanaman", ketik nama pohon/tanaman produktif, lalu isi jumlah batangnya pada kolom ukuran Kecil, Sedang, dan Besar.'
+  );
+  y = drawStepRow(
+    y,
+    4,
+    'Tab 4 (Berkas Digital & TTD HP) — Otomatis Masuk ke 4 Sub-Folder Google Drive',
+    'Unggah file scan/foto pada 4 kategori berkas (1. Form Inventarisasi, 2. Identitas & Alas Hak, 3. Foto Lapangan, 4. Berita Acara). Aplikasi otomatis membuatkan ke-4 sub-folder tersebut di dalam folder bidang warga!'
+  );
+  y = drawStepRow(
+    y,
+    5,
+    'Tab 5 (Ringkasan & Simpan) — Bisa Tekan Tombol Keyboard Ctrl + S Kapan Saja',
+    'Periksa kembali rangkuman data warga lalu klik Simpan Data Lahan (atau tekan Ctrl + S di keyboard untuk menyimpan cepat dari tab mana saja).'
+  );
+
+  /* ==========================================================================
+   * HALAMAN 7: MENU 2 (BAGIAN 2) — TANDA TANGAN & CAP DESA RESMI DARI HP
+   * ========================================================================== */
+  doc.addPage();
+  drawPageChrome(7, 'Bab 5 (Bagian 2) — 7 Tanda Tangan & Cap Desa Resmi via HP');
+  y = 18;
+  y = drawSectionBanner(
+    y,
+    'Menu 2 (Bagian 2)',
+    'Cara Mengambil 7 Tanda Tangan & Cap Desa Resmi Langsung dari HP',
+    'Fitur pengesahan Form Inventarisasi: memotret tanda tangan fisik & stempel desa di lapangan'
+  );
+
+  // VISUAL SCREENSHOT: PERSIS SEPERTI GAMBAR SCREENSHOT USER (7 PENGESAHAN FORM INVENTARISASI)
+  drawScreenWindow(
+    y,
+    92,
+    'Tanda Tangan & Cap Desa Resmi (7 Pengesahan Form Inventarisasi)',
+    'Kamera / Galeri HP'
+  );
+
+  const sgY = y + 11;
+  // Header inside mockup
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Tanda Tangan & Cap Desa Resmi (7 Pengesahan Form Inventarisasi)', margin + 6, sgY + 4);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.2);
+  doc.setTextColor(100, 116, 139);
+  doc.text(
+    'Ambil foto tanda tangan fisik secara langsung dari kamera HP atau unggah gambar dari penyimpanan perangkat.',
+    margin + 6,
+    sgY + 8
+  );
+
+  // Pill Kamera / Galeri HP
+  doc.setFillColor(254, 243, 199);
+  doc.setDrawColor(252, 211, 77);
+  doc.roundedRect(pageWidth - margin - 34, sgY + 1, 29, 6, 2, 2, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(5.8);
+  doc.setTextColor(180, 83, 9);
+  doc.text('Kamera / Galeri HP', pageWidth - margin - 19.5, sgY + 4.8, { align: 'center' });
+
+  // Draw 6 Signature Cards (2 rows x 3 cols) + Cap Desa indicator
+  const sigCards = [
+    ['TANDA TANGAN PEMILIK LAHAN', 'H. AHMAD SUBANDI', 'Sudah Ada'],
+    ['TANDA TANGAN SAKSI 1', 'BUDI SANTOSO', 'Belum Ada'],
+    ['TANDA TANGAN SAKSI 2', 'DEDI KURNIAWAN', 'Belum Ada'],
+    ['TANDA TANGAN TIM PELAKSANA 1', 'IRFAN HAKIM', 'Belum Ada'],
+    ['TANDA TANGAN TIM PELAKSANA 2', 'RENDI PRATAMA', 'Belum Ada'],
+    ['CAP / STEMPEL RESMI & KADES', 'Pemerintah Desa Sukamaju', 'Stempel Desa'],
+  ];
+
+  sigCards.forEach(([cTitle, cSub, cBadge], idx) => {
+    const col = idx % 3;
+    const row = Math.floor(idx / 3);
+    const cx = margin + 5 + col * 58;
+    const cy = sgY + 11 + row * 33;
+
+    const isCap = idx === 5;
+    doc.setFillColor(isCap ? 250 : 255, isCap ? 245 : 255, isCap ? 255 : 255);
+    doc.setDrawColor(isCap ? 216 : 203, isCap ? 180 : 213, isCap ? 254 : 225);
+    doc.roundedRect(cx, cy, 55, 30, 2, 2, 'FD');
+
+    // Title & status badge
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(5.5);
+    doc.setTextColor(30, 41, 59);
+    doc.text(cTitle, cx + 2.5, cy + 4.5);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(5.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(cSub, cx + 2.5, cy + 8.3);
+
+    // Dashed Upload Box
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(203, 213, 225);
+    doc.roundedRect(cx + 2.5, cy + 10, 50, 11, 1.5, 1.5, 'FD');
+    doc.setFontSize(5.5);
+    doc.setTextColor(148, 163, 184);
+    doc.text('Klik untuk Ambil dari HP', cx + 27.5, cy + 16.5, { align: 'center' });
+
+    // Orange Button "Ambil dari HP"
+    doc.setFillColor(245, 158, 11); // amber-500 orange button matching screenshot
+    doc.roundedRect(cx + 2.5, cy + 22.5, 50, 5.5, 1.2, 1.2, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6);
+    doc.setTextColor(255, 255, 255);
+    doc.text('Ambil dari HP', cx + 27.5, cy + 26.2, { align: 'center' });
+
+    if (idx === 0) drawCallout(cx + 51, cy + 7, 1);
+    if (idx === 1) drawCallout(cx + 51, cy + 25, 2);
+    if (idx === 5) drawCallout(cx + 51, cy + 15, 3);
+  });
+
+  y += 97;
+
+  y = drawStepRow(
+    y,
+    1,
+    'Kenapa Tertulis "Nama Pemilik / Saksi Belum Diisi"?',
+    'Nama pada ke-6 kartu tanda tangan diambil otomatis dari isian teks di Tab 1. Pastikan Anda sudah mengetik Nama Pemilik, Nama Saksi 1 & 2, Nama Tim Pelaksana 1 & 2, dan Nama Kepala Desa agar namanya muncul otomatis di kartu ini.'
+  );
+  y = drawStepRow(
+    y,
+    2,
+    'Cara Pakai Tombol Oranye "Ambil dari HP"',
+    'Klik tombol oranye "Ambil dari HP" (atau kotak garis putus-putus di atasnya). Jika Anda membuka aplikasi lewat HP di lapangan, kamera HP bisa langsung memotret tanda tangan warga di atas kertas putih, atau memilih foto dari Galeri.'
+  );
+  y = drawStepRow(
+    y,
+    3,
+    'Kartu Ke-7: Cap / Stempel Resmi Desa & Hasil Cetak PDF',
+    'Gunakan kotak paling akhir (ungu) untuk memotret atau mengunggah Stempel/Cap Resmi Pemerintah Desa. Ketujuh foto pengesahan ini akan otomatis menempel rapi di bagian bawah saat Anda mencetak Form Inventarisasi PDF!'
+  );
+
+  /* ==========================================================================
+   * HALAMAN 8: MENU 3, 3.1, 3.2, 4, 5 & UPDATE PETA DARI QGIS DESKTOP
+   * ========================================================================== */
+  doc.addPage();
+  drawPageChrome(8, 'Bab 6 & 7 — Verifikasi QC, Sanding Data & Update Peta QGIS');
+  y = 18;
+  y = drawSectionBanner(
+    y,
+    'Menu 3, 4 & 5',
+    'Verifikasi QC, Sanding Peta/ESDM & Cara Update Peta lewat QGIS',
+    'Pemeriksaan kualitas data, audit selisih otomatis, dan sinkronisasi 3 file GeoJSON di Google Drive'
+  );
+
+  // VISUAL SCREENSHOT: QC + SANDING + FOLDER GEOJSON
+  drawScreenWindow(
+    y,
+    68,
+    'Kiri: Menu 3 QC & Sanding Data  |  Kanan: Menu 5 Folder Peta GeoJSON & QGIS',
+    'Kontrol Mutu & Peta'
+  );
+
+  const qY = y + 11;
+  // Left Box: QC & Sanding
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(203, 213, 225);
+  doc.roundedRect(margin + 4, qY, 85, 53, 2, 2, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7);
+  doc.setTextColor(15, 23, 42);
+  doc.text('MENU 3 — VERIFIKASI & QC', margin + 7, qY + 6);
+  drawCallout(margin + 83, qY + 5, 1);
+
+  doc.setFillColor(5, 150, 105);
+  doc.roundedRect(margin + 7, qY + 9, 36, 7, 1, 1, 'F');
+  doc.setFontSize(6);
+  doc.setTextColor(255, 255, 255);
+  doc.text('Setujui (APPROVED)', margin + 25, qY + 13.5, { align: 'center' });
+
+  doc.setFillColor(225, 29, 72);
+  doc.roundedRect(margin + 46, qY + 9, 36, 7, 1, 1, 'F');
+  doc.text('Revisi (REJECTED)', margin + 64, qY + 13.5, { align: 'center' });
+
+  // Sanding 3.1 & 3.2
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7);
+  doc.setTextColor(15, 23, 42);
+  doc.text('MENU 3.1 & 3.2 — SANDING PETA & PDF ESDM', margin + 7, qY + 23);
+  drawCallout(margin + 83, qY + 22, 2);
+
+  doc.setFillColor(236, 253, 245);
+  doc.roundedRect(margin + 7, qY + 26, 78, 10, 1, 1, 'F');
+  doc.setFontSize(6);
+  doc.setTextColor(4, 120, 87);
+  doc.text('[MATCH] Bidang 012: Peta, Input & PDF ESDM Cocok', margin + 10, qY + 32);
+
+  doc.setFillColor(254, 243, 199);
+  doc.roundedRect(margin + 7, qY + 38, 78, 10, 1, 1, 'F');
+  doc.setTextColor(180, 83, 9);
+  doc.text('[SELISIH] Bidang 014: Ada di Peta, Belum Diinput', margin + 10, qY + 44);
+
+  // Right Box: Menu 5 & QGIS GeoJSON Folder
+  doc.setFillColor(15, 23, 42);
+  doc.roundedRect(margin + 93, qY, 85, 53, 2, 2, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7);
+  doc.setTextColor(252, 211, 77);
+  doc.text('MENU 5 — 1 FOLDER DRIVE PETA GEOJSON', margin + 97, qY + 6.5);
+  drawCallout(margin + 172, qY + 5.5, 3);
+
+  const gFiles = [
+    ['BIDANG_SUTET.geojson', 'Poligon Bidang Tanah'],
+    ['TOWER_SUTET.geojson', 'Titik Koordinat Tower'],
+    ['JALUR_SUTET.geojson', 'Garis Koridor ROW'],
+  ];
+  gFiles.forEach(([fn, fd], idx) => {
+    const gy = qY + 11 + idx * 13;
+    doc.setFillColor(30, 41, 59);
+    doc.setDrawColor(71, 85, 105);
+    doc.roundedRect(margin + 97, gy, 77, 10.5, 1.5, 1.5, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(52, 211, 153);
+    doc.text(fn, margin + 100, gy + 4.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(5.8);
+    doc.setTextColor(203, 213, 225);
+    doc.text(fd, margin + 100, gy + 8.5);
+  });
+  drawCallout(margin + 172, qY + 44, 4);
+
+  y += 73;
+
+  y = drawStepRow(
+    y,
+    1,
+    'Menu 3 (Verifikasi & QC) & Menu 4 (Log Aktivitas)',
+    'Admin memeriksa kelengkapan berkas warga di Menu 3: klik APPROVED jika sudah lengkap, atau tulis catatan perbaikan lalu klik REJECTED. Seluruh riwayat pengeditan dapat dipantau di Menu 4 Log Aktivitas.'
+  );
+  y = drawStepRow(
+    y,
+    2,
+    'Menu 3.1 (Sanding Peta vs Input) & Menu 3.2 (Sanding PDF ESDM vs Input)',
+    'Buka Menu 3.1 untuk mendeteksi bidang yang gambarnya sudah ada di peta tapi belum diinput. Buka Menu 3.2 lalu unggah file PDF Pengumuman ESDM untuk mencocokkan ejaan Nama & Luas m2 secara otomatis.'
+  );
+  y = drawStepRow(
+    y,
+    3,
+    'Menu 5 (Manajemen Proyek) & Komparasi Cache vs Master',
+    'Di Menu 5, Admin cukup menempelkan 1 ID Folder Google Drive Peta. Jika jumlah baris di aplikasi terasa berbeda dengan Google Sheets, buka menu Komparasi Cache vs Master di kiri bawah lalu klik Paksa Sinkronisasi.'
+  );
+  y = drawStepRow(
+    y,
+    4,
+    'Cara Mengedit Poligon Peta lewat Aplikasi QGIS Desktop',
+    '1) Edit batas poligon di QGIS Desktop -> 2) Klik kanan layer -> Export -> Save Features As -> pilih format GeoJSON dengan CRS EPSG:4326 (WGS 84) -> 3) Beri awalan nama BIDANG_, TOWER_, atau JALUR_ -> 4) Upload ke Folder Google Drive Peta lalu klik tombol Refresh Peta di aplikasi.'
+  );
+
+  // Simpan PDF
+  const safeCode = projectCode.replace(/[^a-zA-Z0-9_-]/g, '_');
+  doc.save(`Buku_Panduan_Pengguna_Bergambar_SIP_VSS_v4.0_${safeCode}.pdf`);
 }

@@ -6,6 +6,7 @@ import {
   ArrowRight, Zap, GitMerge, Scissors, CheckSquare, Square, ShieldAlert, Trash2, Briefcase
 } from 'lucide-react';
 import { type LandRecord, type ProjectConfig } from '../types';
+import * as XLSX from 'xlsx';
 import MergeParcelModal from './MergeParcelModal';
 import SplitParcelModal from './SplitParcelModal';
 import QuickParcelPickerModal from './QuickParcelPickerModal';
@@ -303,14 +304,310 @@ export default function DaftarNominatifPanel({
     };
   };
 
-  // Export to CSV
-  const handleExportCSV = () => {
-    if (!selectedDesa) {
-      alert('Silakan pilih Desa terlebih dahulu sebelum mengekspor data nominatif.');
+  // Helper: Pisahkan setiap baris data IDENTITAS PEMILIK agar 1 baris = 1 sel (tidak menumpuk di 1 sel)
+  const getIdentitasLines = (record: LandRecord): string[] => {
+    const rawItems = [
+      record.NAMA,
+      record.NIK,
+      record.TTL,
+      record.JENIS_KELAMIN,
+      record.ALAMAT_KTP_BARIS_1,
+      record.ALAMAT_KTP_BARIS_2,
+      record.ALAMAT_KTP_BARIS_3,
+      record.ALAMAT_KTP_BARIS_4,
+      record.PEKERJAAN
+    ];
+    const lines: string[] = [];
+    rawItems.forEach(item => {
+      if (!item) return;
+      String(item)
+        .split(/\r?\n/)
+        .map(s => s.trim())
+        .filter(s => s !== '' && s !== '-')
+        .forEach(s => lines.push(s));
+    });
+    return lines.length > 0 ? lines : ['-'];
+  };
+
+  // Helper: Pisahkan setiap baris data BUKTI PENGUASAAN / KEPEMILIKAN agar 1 baris = 1 sel
+  const getBuktiPenguasaanLines = (record: LandRecord): string[] => {
+    const luasHakRaw = (record.LUAS_YANG_ADA_PADA_ALAS_HAK || '').toString().trim();
+    const luasHakFormatted =
+      luasHakRaw && luasHakRaw !== '-' && luasHakRaw !== '0'
+        ? (/m²|m2/i.test(luasHakRaw) ? luasHakRaw : `${luasHakRaw} M²`)
+        : '';
+
+    const rawItems = [
+      record.JENIS_ALAS_HAK || 'LAINNYA',
+      record.NOMER_HAK,
+      record.NAMA_ALAS_HAK,
+      luasHakFormatted,
+      record.KETERANGAN_ALAS_HAK
+    ];
+    const lines: string[] = [];
+    rawItems.forEach(item => {
+      if (!item) return;
+      String(item)
+        .split(/\r?\n/)
+        .map(s => s.trim())
+        .filter(s => s !== '' && s !== '-')
+        .forEach(s => lines.push(s));
+    });
+    return lines.length > 0 ? lines : ['-'];
+  };
+
+  // Helper: Dapatkan daftar record yang akan diekspor (sesuai Desa/Filter atau seluruh Desa jika belum memilih Desa)
+  const getRecordsForExport = (): LandRecord[] => {
+    if (selectedDesa) {
+      return filteredRecords;
+    }
+    return [...records].sort((a, b) => {
+      if (a.DESA !== b.DESA) return (a.DESA || '').localeCompare(b.DESA || '');
+      if (a.SPAN !== b.SPAN) return (a.SPAN || '').localeCompare(b.SPAN || '');
+      const numA = parseInt(a.NOBID || '0') || 0;
+      const numB = parseInt(b.NOBID || '0') || 0;
+      return numA - numB;
+    });
+  };
+
+  // Export ke Excel (.xlsx) dengan struktur persis Daftar Nominatif & tiap baris Identitas/Bukti dipisah per sel
+  const handleExportExcel = () => {
+    const targetRecords = getRecordsForExport();
+    if (targetRecords.length === 0) {
+      alert('Belum ada data nominatif yang dapat diekspor.');
       return;
     }
-    if (filteredRecords.length === 0) {
-      alert('Belum ada data nominatif yang sesuai filter.');
+
+    const exportDesaLabel =
+      !selectedDesa || selectedDesa === '__ALL__' ? 'SEMUA DESA' : selectedDesa;
+
+    // Bangun Array-of-Arrays (AOA) untuk Worksheet Excel
+    const aoa: (string | number)[][] = [];
+    const merges: XLSX.Range[] = [];
+
+    // Baris 0, 1, 2: KOP / Judul Daftar Nominatif (Merge kolom 0 s/d 23)
+    aoa.push(['DAFTAR NOMINATIF INVENTARISASI TANAH, BANGUNAN, DAN/ATAU TANAMAN', ...Array(23).fill('')]);
+    merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: 23 } });
+
+    aoa.push([(activeProjectName || '').toUpperCase(), ...Array(23).fill('')]);
+    merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: 23 } });
+
+    const locationSubtitle = `KABUPATEN: ${activeKabupaten}   |   KECAMATAN: ${activeKecamatan}   |   DESA: ${exportDesaLabel}${
+      selectedSpan ? `   |   SPAN: ${selectedSpan}` : ''
+    }`;
+    aoa.push([locationSubtitle, ...Array(23).fill('')]);
+    merges.push({ s: { r: 2, c: 0 }, e: { r: 2, c: 23 } });
+
+    // Baris 3: Baris kosong pemisah
+    aoa.push(Array(24).fill(''));
+
+    // Baris 4: HEADER BARIS 1 (Kelompok Utama persis Daftar Nominatif)
+    aoa.push([
+      'NO',
+      'SPAN',
+      'NO BIDANG',
+      'PIHAK YANG BERHAK ATAS TANAH',
+      'IDENTITAS PEMILIK',
+      'BUKTI PENGUASAAN / KEPEMILIKAN',
+      'TANAH',
+      '',
+      '',
+      'BANGUNAN',
+      '',
+      '',
+      'TANAMAN',
+      '',
+      '',
+      '',
+      '',
+      '',
+      'PERALIHAN HAK',
+      'PROGRES',
+      'KONFIRMASI BPN',
+      'UPLOAD TRABAS',
+      'KEKURANGAN BERKAS',
+      'KETERANGAN'
+    ]);
+
+    // Baris 5: HEADER BARIS 2 (Sub-Header Tanah, Bangunan, Tanaman)
+    aoa.push([
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      'PENUTUP LAHAN',
+      'STATUS',
+      'LUAS (M²)',
+      'LUAS (M²)',
+      'BENTUK',
+      'JENIS',
+      'JENIS TANAMAN',
+      'BELUM MGH.',
+      'SUDAH MGH.',
+      'KECIL',
+      'SEDANG',
+      'BESAR',
+      '',
+      '',
+      '',
+      '',
+      '',
+      ''
+    ]);
+
+    // Merge vertikal untuk kolom tunggal pada Header (Baris 4 s/d 5)
+    [0, 1, 2, 3, 4, 5, 18, 19, 20, 21, 22, 23].forEach(colIdx => {
+      merges.push({ s: { r: 4, c: colIdx }, e: { r: 5, c: colIdx } });
+    });
+    // Merge horizontal untuk grup TANAH (6..8), BANGUNAN (9..11), TANAMAN (12..17)
+    merges.push({ s: { r: 4, c: 6 }, e: { r: 4, c: 8 } });
+    merges.push({ s: { r: 4, c: 9 }, e: { r: 4, c: 11 } });
+    merges.push({ s: { r: 4, c: 12 }, e: { r: 4, c: 17 } });
+
+    let currentRowIndex = 6;
+
+    // Loop setiap bidang: 1 bidang dirender menjadi beberapa baris (subRowsCount)
+    targetRecords.forEach((r, idx) => {
+      const identitasLines = getIdentitasLines(r);
+      const buktiLines = getBuktiPenguasaanLines(r);
+      const activePlants = getActivePlants(r);
+      const activeBuildings = getActiveBuildings(r);
+      const plantsList = activePlants.length > 0 ? activePlants : null;
+      const buildingsList = activeBuildings.length > 0 ? activeBuildings : null;
+
+      const subRowsCount = Math.max(
+        1,
+        identitasLines.length,
+        buktiLines.length,
+        plantsList?.length || 0,
+        buildingsList?.length || 0
+      );
+
+      const startParcelRow = currentRowIndex;
+      const luasTanahNum = parseFloat((r.LUAS || '0').toString().replace(',', '.'));
+      const luasTanahVal: string | number = !isNaN(luasTanahNum) ? luasTanahNum : (r.LUAS || 0);
+
+      for (let sIdx = 0; sIdx < subRowsCount; sIdx++) {
+        const isFirstSub = sIdx === 0;
+        const currentPlant = plantsList ? plantsList[sIdx] : null;
+        const currentBuilding = buildingsList ? buildingsList[sIdx] : null;
+
+        const valBelum = currentPlant ? parseInt(currentPlant.belum_menghasilkan || '0') || 0 : 0;
+        const valSudah = currentPlant ? parseInt(currentPlant.sudah_menghasilkan || '0') || 0 : 0;
+        const valKecil = currentPlant ? parseInt(currentPlant.kecil || '0') || 0 : 0;
+        const valSedang = currentPlant ? parseInt(currentPlant.sedang || '0') || 0 : 0;
+        const valBesar = currentPlant ? parseInt(currentPlant.besar || '0') || 0 : 0;
+
+        const bLuasRaw = currentBuilding?.luas ? String(currentBuilding.luas).trim() : '';
+        const bLuasNum = bLuasRaw ? parseFloat(bLuasRaw.replace(',', '.')) : NaN;
+        const bLuasCell: string | number = bLuasRaw
+          ? (!isNaN(bLuasNum) ? bLuasNum : bLuasRaw)
+          : (isFirstSub && !buildingsList ? '-' : '');
+
+        aoa.push([
+          isFirstSub ? idx + 1 : '',
+          isFirstSub ? (r.SPAN || '-') : '',
+          isFirstSub ? (r.NOBID || '-') : '',
+          isFirstSub ? (r.STATUS_KEPEMILIKAN || 'PEMILIK DIKETAHUI') : '',
+          // IDENTITAS PEMILIK: Dipisah 1 item per baris sel (tidak menumpuk di 1 sel!)
+          identitasLines[sIdx] || '',
+          // BUKTI PENGUASAAN / KEPEMILIKAN: Dipisah 1 item per baris sel (tidak menumpuk di 1 sel!)
+          buktiLines[sIdx] || '',
+          isFirstSub ? (r.PENUTUP_LAHAN || '-') : '',
+          isFirstSub ? (r.STATUS_PENUTUP_LAHAN || r.STATUS_KEPEMILIKAN || 'TANAH MASYARAKAT') : '',
+          isFirstSub ? luasTanahVal : '',
+          // BANGUNAN: 1 item per baris
+          bLuasCell,
+          currentBuilding?.bentuk || (isFirstSub && !buildingsList ? '-' : ''),
+          currentBuilding?.jenis || (isFirstSub && !buildingsList ? '-' : ''),
+          // TANAMAN: 1 item per baris
+          currentPlant?.jenis || (isFirstSub && !plantsList ? '-' : ''),
+          currentPlant ? (valBelum > 0 ? valBelum : '-') : (isFirstSub && !plantsList ? '-' : ''),
+          currentPlant ? (valSudah > 0 ? valSudah : '-') : (isFirstSub && !plantsList ? '-' : ''),
+          currentPlant ? (valKecil > 0 ? valKecil : '-') : (isFirstSub && !plantsList ? '-' : ''),
+          currentPlant ? (valSedang > 0 ? valSedang : '-') : (isFirstSub && !plantsList ? '-' : ''),
+          currentPlant ? (valBesar > 0 ? valBesar : '-') : (isFirstSub && !plantsList ? '-' : ''),
+          isFirstSub ? (r.JENIS_PERALIHAN_HAK || 'SESUAI') : '',
+          isFirstSub ? (r.PROGRES_PEMBERKASAN || 'SELESAI') : '',
+          isFirstSub ? (r.KONFIRMASI_BPN || 'TIDAK') : '',
+          isFirstSub ? (r.PROGRES_UPLOAD_TRABAS || 'SUDAH') : '',
+          isFirstSub ? (r.KEKURANGAN_BERKAS || '-') : '',
+          isFirstSub ? (r.KETERANGAN || '-') : ''
+        ]);
+
+        currentRowIndex++;
+      }
+
+      // Merge vertikal hanya untuk kolom atribut tunggal per bidang (sedangkan Identitas, Bukti, Bangunan, Tanaman TIDAK di-merge agar 1 baris = 1 sel)
+      if (subRowsCount > 1) {
+        const endParcelRow = startParcelRow + subRowsCount - 1;
+        [0, 1, 2, 3, 6, 7, 8, 18, 19, 20, 21, 22, 23].forEach(colIdx => {
+          merges.push({
+            s: { r: startParcelRow, c: colIdx },
+            e: { r: endParcelRow, c: colIdx }
+          });
+        });
+      }
+    });
+
+    const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+    worksheet['!merges'] = merges;
+
+    // Atur lebar kolom agar rapi dan proporsional saat dibuka di Excel
+    worksheet['!cols'] = [
+      { wch: 6 },  // NO
+      { wch: 15 }, // SPAN
+      { wch: 11 }, // NO BIDANG
+      { wch: 24 }, // PIHAK YANG BERHAK ATAS TANAH
+      { wch: 34 }, // IDENTITAS PEMILIK (1 baris per sel)
+      { wch: 28 }, // BUKTI PENGUASAAN / KEPEMILIKAN (1 baris per sel)
+      { wch: 18 }, // TANAH: PENUTUP LAHAN
+      { wch: 20 }, // TANAH: STATUS
+      { wch: 13 }, // TANAH: LUAS (M²)
+      { wch: 13 }, // BANGUNAN: LUAS (M²)
+      { wch: 16 }, // BANGUNAN: BENTUK
+      { wch: 18 }, // BANGUNAN: JENIS
+      { wch: 22 }, // TANAMAN: JENIS TANAMAN
+      { wch: 12 }, // TANAMAN: BELUM MGH.
+      { wch: 12 }, // TANAMAN: SUDAH MGH.
+      { wch: 10 }, // TANAMAN: KECIL
+      { wch: 10 }, // TANAMAN: SEDANG
+      { wch: 10 }, // TANAMAN: BESAR
+      { wch: 16 }, // PERALIHAN HAK
+      { wch: 15 }, // PROGRES
+      { wch: 15 }, // KONFIRMASI BPN
+      { wch: 15 }, // UPLOAD TRABAS
+      { wch: 24 }, // KEKURANGAN BERKAS
+      { wch: 30 }  // KETERANGAN
+    ];
+
+    // Kunci tinggi setiap baris agar seragam (tidak ada baris yang meninggi sendiri)
+    worksheet['!rows'] = aoa.map((_, rIdx) => {
+      if (rIdx <= 2) return { hpt: 20 };
+      if (rIdx === 3) return { hpt: 10 };
+      if (rIdx === 4 || rIdx === 5) return { hpt: 22 };
+      return { hpt: 19 };
+    });
+
+    const workbook = XLSX.utils.book_new();
+    const safeSheetName = (exportDesaLabel || 'DAFTAR_NOMINATIF').slice(0, 31).replace(/[\\/?*[\]:]/g, '_');
+    XLSX.utils.book_append_sheet(workbook, worksheet, safeSheetName);
+
+    const downloadDesaName =
+      !selectedDesa || selectedDesa === '__ALL__'
+        ? 'Semua_Desa'
+        : selectedDesa.replace(/\s+/g, '_');
+    const fileName = `Daftar_Nominatif_${downloadDesaName}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
+  };
+
+  // Export to CSV (Mengikuti struktur per-baris yang sama dengan Daftar Nominatif)
+  const handleExportCSV = () => {
+    const targetRecords = getRecordsForExport();
+    if (targetRecords.length === 0) {
+      alert('Belum ada data nominatif yang dapat diekspor.');
       return;
     }
 
@@ -319,28 +616,20 @@ export default function DaftarNominatifPanel({
       'SPAN',
       'NO BIDANG',
       'PIHAK YANG BERHAK ATAS TANAH',
-      'NAMA',
-      'NIK',
-      'TTL',
-      'JENIS KELAMIN',
-      'ALAMAT KTP',
-      'PEKERJAAN',
-      'JENIS ALAS HAK',
-      'NOMER HAK',
-      'NAMA PADA ALAS HAK',
-      'LUAS ALAS HAK (M2)',
-      'PENUTUP LAHAN',
-      'STATUS TANAH',
-      'LUAS TANAH (M2)',
-      'LUAS BANGUNAN (M2)',
-      'BENTUK BANGUNAN',
-      'JENIS BANGUNAN',
-      'JENIS TANAMAN',
-      'TANAMAN PRODUKSI - BELUM MENGHASILKAN',
-      'TANAMAN PRODUKSI - SUDAH MENGHASILKAN',
-      'TANAMAN KERAS - KECIL',
-      'TANAMAN KERAS - SEDANG',
-      'TANAMAN KERAS - BESAR',
+      'IDENTITAS PEMILIK',
+      'BUKTI PENGUASAAN / KEPEMILIKAN',
+      'TANAH - PENUTUP LAHAN',
+      'TANAH - STATUS',
+      'TANAH - LUAS (M2)',
+      'BANGUNAN - LUAS (M2)',
+      'BANGUNAN - BENTUK',
+      'BANGUNAN - JENIS',
+      'TANAMAN - JENIS TANAMAN',
+      'TANAMAN - BELUM MGH.',
+      'TANAMAN - SUDAH MGH.',
+      'TANAMAN - KECIL',
+      'TANAMAN - SEDANG',
+      'TANAMAN - BESAR',
       'PERALIHAN HAK',
       'PROGRES',
       'KONFIRMASI BPN',
@@ -349,21 +638,23 @@ export default function DaftarNominatifPanel({
       'KETERANGAN'
     ];
 
-    const csvRows = [headers.join(',')];
+    const csvEscape = (val: string | number) => `"${String(val ?? '').replace(/"/g, '""')}"`;
+    const csvRows = [headers.map(csvEscape).join(',')];
 
-    filteredRecords.forEach((r, idx) => {
+    targetRecords.forEach((r, idx) => {
+      const identitasLines = getIdentitasLines(r);
+      const buktiLines = getBuktiPenguasaanLines(r);
       const activePlants = getActivePlants(r);
       const activeBuildings = getActiveBuildings(r);
       const plantsList = activePlants.length > 0 ? activePlants : null;
       const buildingsList = activeBuildings.length > 0 ? activeBuildings : null;
-      const subRowsCount = Math.max(1, plantsList?.length || 0, buildingsList?.length || 0);
-
-      const fullAlamat = [
-        r.ALAMAT_KTP_BARIS_1,
-        r.ALAMAT_KTP_BARIS_2,
-        r.ALAMAT_KTP_BARIS_3,
-        r.ALAMAT_KTP_BARIS_4
-      ].filter(Boolean).join(', ');
+      const subRowsCount = Math.max(
+        1,
+        identitasLines.length,
+        buktiLines.length,
+        plantsList?.length || 0,
+        buildingsList?.length || 0
+      );
 
       for (let sIdx = 0; sIdx < subRowsCount; sIdx++) {
         const isFirstSub = sIdx === 0;
@@ -378,39 +669,31 @@ export default function DaftarNominatifPanel({
 
         const row = [
           isFirstSub ? idx + 1 : '',
-          isFirstSub ? `"${r.SPAN || ''}"` : '""',
-          isFirstSub ? `"${r.NOBID || ''}"` : '""',
-          isFirstSub ? `"${r.STATUS_KEPEMILIKAN || 'PEMILIK DIKETAHUI'}"` : '""',
-          isFirstSub ? `"${r.NAMA || ''}"` : '""',
-          isFirstSub ? `"${r.NIK || ''}"` : '""',
-          isFirstSub ? `"${r.TTL || ''}"` : '""',
-          isFirstSub ? `"${r.JENIS_KELAMIN || ''}"` : '""',
-          isFirstSub ? `"${fullAlamat}"` : '""',
-          isFirstSub ? `"${r.PEKERJAAN || ''}"` : '""',
-          isFirstSub ? `"${r.JENIS_ALAS_HAK || ''}"` : '""',
-          isFirstSub ? `"${r.NOMER_HAK || ''}"` : '""',
-          isFirstSub ? `"${r.NAMA_ALAS_HAK || ''}"` : '""',
-          isFirstSub ? `"${r.LUAS_YANG_ADA_PADA_ALAS_HAK || ''}"` : '""',
-          isFirstSub ? `"${r.PENUTUP_LAHAN || ''}"` : '""',
-          isFirstSub ? `"${r.STATUS_PENUTUP_LAHAN || r.STATUS_KEPEMILIKAN || 'TANAH MASYARAKAT'}"` : '""',
-          isFirstSub ? (r.LUAS || '0') : '""',
-          `"${currentBuilding?.luas || ''}"`,
-          `"${currentBuilding?.bentuk || ''}"`,
-          `"${currentBuilding?.jenis || ''}"`,
-          `"${currentPlant?.jenis || ''}"`,
-          valBelum > 0 ? valBelum : '-',
-          valSudah > 0 ? valSudah : '-',
-          valKecil > 0 ? valKecil : '-',
-          valSedang > 0 ? valSedang : '-',
-          valBesar > 0 ? valBesar : '-',
-          isFirstSub ? `"${r.JENIS_PERALIHAN_HAK || 'SESUAI'}"` : '""',
-          isFirstSub ? `"${r.PROGRES_PEMBERKASAN || 'SELESAI'}"` : '""',
-          isFirstSub ? `"${r.KONFIRMASI_BPN || 'TIDAK'}"` : '""',
-          isFirstSub ? `"${r.PROGRES_UPLOAD_TRABAS || 'SUDAH'}"` : '""',
-          isFirstSub ? `"${r.KEKURANGAN_BERKAS || ''}"` : '""',
-          isFirstSub ? `"${r.KETERANGAN || ''}"` : '""'
+          isFirstSub ? (r.SPAN || '') : '',
+          isFirstSub ? (r.NOBID || '') : '',
+          isFirstSub ? (r.STATUS_KEPEMILIKAN || 'PEMILIK DIKETAHUI') : '',
+          identitasLines[sIdx] || '',
+          buktiLines[sIdx] || '',
+          isFirstSub ? (r.PENUTUP_LAHAN || '') : '',
+          isFirstSub ? (r.STATUS_PENUTUP_LAHAN || r.STATUS_KEPEMILIKAN || 'TANAH MASYARAKAT') : '',
+          isFirstSub ? (r.LUAS || '0') : '',
+          currentBuilding?.luas || (isFirstSub && !buildingsList ? '-' : ''),
+          currentBuilding?.bentuk || (isFirstSub && !buildingsList ? '-' : ''),
+          currentBuilding?.jenis || (isFirstSub && !buildingsList ? '-' : ''),
+          currentPlant?.jenis || (isFirstSub && !plantsList ? '-' : ''),
+          currentPlant ? (valBelum > 0 ? valBelum : '-') : (isFirstSub && !plantsList ? '-' : ''),
+          currentPlant ? (valSudah > 0 ? valSudah : '-') : (isFirstSub && !plantsList ? '-' : ''),
+          currentPlant ? (valKecil > 0 ? valKecil : '-') : (isFirstSub && !plantsList ? '-' : ''),
+          currentPlant ? (valSedang > 0 ? valSedang : '-') : (isFirstSub && !plantsList ? '-' : ''),
+          currentPlant ? (valBesar > 0 ? valBesar : '-') : (isFirstSub && !plantsList ? '-' : ''),
+          isFirstSub ? (r.JENIS_PERALIHAN_HAK || 'SESUAI') : '',
+          isFirstSub ? (r.PROGRES_PEMBERKASAN || 'SELESAI') : '',
+          isFirstSub ? (r.KONFIRMASI_BPN || 'TIDAK') : '',
+          isFirstSub ? (r.PROGRES_UPLOAD_TRABAS || 'SUDAH') : '',
+          isFirstSub ? (r.KEKURANGAN_BERKAS || '') : '',
+          isFirstSub ? (r.KETERANGAN || '') : ''
         ];
-        csvRows.push(row.join(','));
+        csvRows.push(row.map(csvEscape).join(','));
       }
     });
 
@@ -419,7 +702,8 @@ export default function DaftarNominatifPanel({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    const downloadDesaName = selectedDesa === '__ALL__' ? 'Semua_Desa' : (selectedDesa || 'Semua_Desa');
+    const downloadDesaName =
+      !selectedDesa || selectedDesa === '__ALL__' ? 'Semua_Desa' : selectedDesa;
     link.setAttribute('download', `Daftar_Nominatif_${downloadDesaName}_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
@@ -597,8 +881,17 @@ export default function DaftarNominatifPanel({
               Cetak / PDF
             </button>
             <button
+              onClick={handleExportExcel}
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-emerald-600/20 border border-emerald-400/30 flex items-center gap-2 cursor-pointer"
+              title="Download Daftar Nominatif dalam bentuk Excel (.xlsx) dengan pemisahan baris per sel"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-white" />
+              Download Excel (.xlsx)
+            </button>
+            <button
               onClick={handleExportCSV}
-              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-all shadow-md border border-white/10 flex items-center gap-2 cursor-pointer"
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition-all shadow-md border border-white/10 flex items-center gap-1.5 cursor-pointer"
+              title="Download format CSV"
             >
               <Download className="w-4 h-4 text-emerald-400" />
               CSV
@@ -974,23 +1267,26 @@ export default function DaftarNominatifPanel({
                 </tr>
               ) : (
                 filteredRecords.flatMap((r, idx) => {
+                  const identitasLines = getIdentitasLines(r);
+                  const buktiLines = getBuktiPenguasaanLines(r);
                   const activePlants = getActivePlants(r);
                   const activeBuildings = getActiveBuildings(r);
                   const plantsList = activePlants.length > 0 ? activePlants : null;
                   const buildingsList = activeBuildings.length > 0 ? activeBuildings : null;
-                  const subRowsCount = Math.max(1, plantsList?.length || 0, buildingsList?.length || 0);
-
-                  const fullAlamat = [
-                    r.ALAMAT_KTP_BARIS_1,
-                    r.ALAMAT_KTP_BARIS_2,
-                    r.ALAMAT_KTP_BARIS_3,
-                    r.ALAMAT_KTP_BARIS_4
-                  ].filter(Boolean).join('\n');
+                  const subRowsCount = Math.max(
+                    1,
+                    identitasLines.length,
+                    buktiLines.length,
+                    plantsList?.length || 0,
+                    buildingsList?.length || 0
+                  );
 
                   const subRows = [];
 
                   for (let sIdx = 0; sIdx < subRowsCount; sIdx++) {
                     const isFirstSub = sIdx === 0;
+                    const currentIdentitas = identitasLines[sIdx] || '';
+                    const currentBukti = buktiLines[sIdx] || '';
                     const currentPlant = plantsList ? plantsList[sIdx] : null;
                     const currentBuilding = buildingsList ? buildingsList[sIdx] : null;
                     const valBelum = currentPlant ? (parseInt(currentPlant.belum_menghasilkan || '0') || 0) : 0;
@@ -1010,7 +1306,7 @@ export default function DaftarNominatifPanel({
                         {isFirstSub && (
                           <>
                             {/* CHECKBOX PILIH UNTUK MUTASI (PECAH / GABUNG) */}
-                            <td rowSpan={subRowsCount} className="py-3 px-2 text-center border-r border-white/5 align-top no-print">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 text-center border-r border-white/5 align-top no-print">
                               <button
                                 type="button"
                                 onClick={() => toggleSelectRecord(r)}
@@ -1034,17 +1330,17 @@ export default function DaftarNominatifPanel({
                             </td>
 
                             {/* NO */}
-                            <td rowSpan={subRowsCount} className="py-3 px-2 text-center border-r border-white/5 font-mono text-slate-400 align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 text-center border-r border-white/5 font-mono text-slate-400 align-top">
                               {idx + 1}
                             </td>
 
                             {/* SPAN */}
-                            <td rowSpan={subRowsCount} className="py-3 px-2 border-r border-white/5 font-mono font-bold text-sky-300 text-center align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/5 font-mono font-bold text-sky-300 text-center align-top">
                               {r.SPAN || '-'}
                             </td>
 
                             {/* NO BIDANG DENGAN BADGE MUTASI */}
-                            <td rowSpan={subRowsCount} className="py-3 px-2 text-center border-r border-white/5 align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 text-center border-r border-white/5 align-top">
                               <div className="flex flex-col items-center gap-1">
                                 <span className="px-1.5 py-0.5 bg-slate-900 border border-white/10 rounded font-mono font-bold text-white">
                                   {r.NOBID || '-'}
@@ -1063,7 +1359,7 @@ export default function DaftarNominatifPanel({
                             </td>
 
                             {/* PIHAK YANG BERHAK ATAS TANAH */}
-                            <td rowSpan={subRowsCount} className="py-3 px-2 border-r border-white/5 font-bold text-slate-200 text-center text-[11px] align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/5 font-bold text-slate-200 text-center text-[11px] align-top">
                               <span className={`px-2 py-1 rounded text-[10px] font-mono block ${
                                 (r.STATUS_KEPEMILIKAN || '').includes('TKD') || (r.STATUS_KEPEMILIKAN || '').includes('PEMDES')
                                   ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
@@ -1072,73 +1368,43 @@ export default function DaftarNominatifPanel({
                                 {r.STATUS_KEPEMILIKAN || 'PEMILIK DIKETAHUI'}
                               </span>
                             </td>
+                          </>
+                        )}
 
-                            {/* IDENTITAS PEMILIK (Clean stacked values without labels) */}
-                            <td rowSpan={subRowsCount} className="py-3 px-3 border-r border-white/5 space-y-0.5 align-top">
-                              <div className="font-bold text-white text-xs uppercase leading-snug">
-                                {r.NAMA || '-'}
-                              </div>
-                              {r.NIK && (
-                                <div className="text-[11px] font-mono text-slate-300">
-                                  {r.NIK}
-                                </div>
-                              )}
-                              {r.TTL && (
-                                <div className="text-[11px] text-slate-300 uppercase">
-                                  {r.TTL}
-                                </div>
-                              )}
-                              {r.JENIS_KELAMIN && (
-                                <div className="text-[11px] text-slate-300 uppercase">
-                                  {r.JENIS_KELAMIN}
-                                </div>
-                              )}
-                              {fullAlamat && (
-                                <div className="text-[11px] text-slate-300 uppercase whitespace-pre-line leading-tight pt-0.5">
-                                  {fullAlamat}
-                                </div>
-                              )}
-                              {r.PEKERJAAN && (
-                                <div className="text-[11px] text-slate-300 uppercase font-medium pt-0.5">
-                                  {r.PEKERJAAN}
-                                </div>
-                              )}
-                            </td>
+                        {/* IDENTITAS PEMILIK: 1 Baris = 1 Data (Tidak menumpuk di 1 sel) */}
+                        <td className={`py-2 px-3 border-r border-white/5 align-middle uppercase ${
+                          sIdx === 0
+                            ? 'font-bold text-white text-xs'
+                            : 'text-[11px] text-slate-300 font-medium'
+                        }`}>
+                          {currentIdentitas}
+                        </td>
 
-                            {/* BUKTI PENGUASAAN / KEPEMILIKAN */}
-                            <td rowSpan={subRowsCount} className="py-3 px-3 border-r border-white/5 space-y-0.5 align-top">
-                              <span className="text-[10px] font-extrabold uppercase text-amber-400 block font-mono">
-                                {r.JENIS_ALAS_HAK || 'LAINNYA'}
-                              </span>
-                              {r.NOMER_HAK && (
-                                <div className="text-xs font-mono font-bold text-white">
-                                  {r.NOMER_HAK}
-                                </div>
-                              )}
-                              {r.NAMA_ALAS_HAK && (
-                                <div className="text-[10px] text-slate-300">
-                                  {r.NAMA_ALAS_HAK}
-                                </div>
-                              )}
-                              {r.LUAS_YANG_ADA_PADA_ALAS_HAK && (
-                                <div className="text-[10px] text-slate-400 font-mono">
-                                  {r.LUAS_YANG_ADA_PADA_ALAS_HAK} M²
-                                </div>
-                              )}
-                            </td>
+                        {/* BUKTI PENGUASAAN / KEPEMILIKAN: 1 Baris = 1 Data (Tidak menumpuk di 1 sel) */}
+                        <td className={`py-2 px-3 border-r border-white/5 align-middle ${
+                          sIdx === 0
+                            ? 'text-[10px] font-extrabold uppercase text-amber-400 font-mono'
+                            : sIdx === 1
+                            ? 'text-xs font-mono font-bold text-white'
+                            : 'text-[11px] text-slate-300 font-medium'
+                        }`}>
+                          {currentBukti}
+                        </td>
 
+                        {isFirstSub && (
+                          <>
                             {/* TANAH: PENUTUP LAHAN */}
-                            <td rowSpan={subRowsCount} className="py-3 px-2 border-r border-white/5 font-semibold text-slate-200 uppercase align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/5 font-semibold text-slate-200 uppercase align-top">
                               {r.PENUTUP_LAHAN || '-'}
                             </td>
 
                             {/* TANAH: STATUS */}
-                            <td rowSpan={subRowsCount} className="py-3 px-2 border-r border-white/5 font-mono text-[10px] text-slate-300 uppercase align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/5 font-mono text-[10px] text-slate-300 uppercase align-top">
                               {r.STATUS_PENUTUP_LAHAN || r.STATUS_KEPEMILIKAN || 'TANAH MASYARAKAT'}
                             </td>
 
                             {/* TANAH: LUAS (M2) */}
-                            <td rowSpan={subRowsCount} className="py-3 px-2 border-r border-white/5 font-mono font-black text-emerald-400 text-right align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/5 font-mono font-black text-emerald-400 text-right align-top">
                               {r.LUAS ? `${r.LUAS} M²` : '0 M²'}
                             </td>
                           </>
