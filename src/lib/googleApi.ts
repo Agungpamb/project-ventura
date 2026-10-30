@@ -1065,6 +1065,27 @@ export async function deleteSpreadsheetRow(
     const startIndex = rowNumber - 1; // 0-based inclusive
     const endIndex = rowNumber;       // 0-based exclusive
 
+    // Dynamically resolve the first sheet's sheetId (in case gid != 0)
+    let firstSheetId = 0;
+    try {
+      const metaRes = await fetchWithTimeout(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        },
+        8000
+      );
+      if (metaRes.ok) {
+        const metaData = await metaRes.json();
+        const foundId = metaData?.sheets?.[0]?.properties?.sheetId;
+        if (typeof foundId === 'number') {
+          firstSheetId = foundId;
+        }
+      }
+    } catch (metaErr) {
+      console.warn("Could not fetch sheetId metadata, defaulting to 0:", metaErr);
+    }
+
     const response = await fetchWithTimeout(
       `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
       {
@@ -1078,7 +1099,7 @@ export async function deleteSpreadsheetRow(
             {
               deleteDimension: {
                 range: {
-                  sheetId: 0,
+                  sheetId: firstSheetId,
                   dimension: 'ROWS',
                   startIndex,
                   endIndex
@@ -1100,6 +1121,87 @@ export async function deleteSpreadsheetRow(
     console.warn("deleteSpreadsheetRow error:", err);
     return false;
   }
+}
+
+/**
+ * Overwrites the entire Google Spreadsheet records table cleanly (used for structural mutations:
+ * Merge / Gabung Bidang, Split / Pecah Bidang, Delete / Hapus Bidang with n-1 re-indexing).
+ * Ensures all re-indexed NOBID/CODE values and row counts in Google Sheets match the application state.
+ */
+export async function overwriteSpreadsheetRecords(
+  accessToken: string,
+  spreadsheetId: string,
+  records: LandRecord[]
+): Promise<LandRecord[]> {
+  if (!accessToken || accessToken === 'GUEST_BYPASS' || !spreadsheetId || spreadsheetId === 'guest_bypass') {
+    throw new Error('Token Google OAuth atau ID Spreadsheet belum terhubung.');
+  }
+
+  const headers = getSheetHeaders();
+  const normalizedRecords: LandRecord[] = records.map((r, idx) => {
+    const cleanDesa = (r.DESA || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
+    const cleanSpan = (r.SPAN || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
+    const cleanNobid = (r.NOBID || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
+    const code = (r.CODE && r.CODE.trim())
+      ? r.CODE.trim()
+      : (cleanDesa && cleanSpan && cleanNobid ? `${cleanDesa}_${cleanSpan}_${cleanNobid}` : `BIDANG_${idx + 2}`);
+    const idUnik = (r.ID_UNIK && r.ID_UNIK.trim())
+      ? r.ID_UNIK.trim()
+      : `ID-${code.replace(/[\s-]/g, '_')}`;
+
+    return {
+      ...r,
+      CODE: code,
+      ID_UNIK: idUnik,
+      rowNumber: idx + 2,
+      _needsSheetSync: false
+    };
+  });
+
+  const rows = normalizedRecords.map(r => recordToRow(r));
+  const allValues = [headers, ...rows];
+
+  // 1. Write header + all current records starting at A1
+  const putRes = await fetchWithTimeout(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1?valueInputOption=USER_ENTERED`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        values: allValues
+      })
+    },
+    30000
+  );
+
+  if (!putRes.ok) {
+    const errText = await putRes.text();
+    throw new Error(`Gagal memperbarui tabel Google Spreadsheet: ${putRes.status} ${errText}`);
+  }
+
+  // 2. Clear any trailing rows below the new record count (critical when Merge or Delete reduces row count)
+  const firstTrailingRow = normalizedRecords.length + 2;
+  const lastTrailingRow = firstTrailingRow + 500;
+  try {
+    await fetchWithTimeout(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A${firstTrailingRow}:ZZ${lastTrailingRow}:clear`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      },
+      15000
+    );
+  } catch (clearErr) {
+    console.warn("Trailing rows clear warning:", clearErr);
+  }
+
+  return normalizedRecords;
 }
 
 // ----------------- RESUME PROYEK 1 WORKBOOK (GOOGLE SHEETS) -----------------

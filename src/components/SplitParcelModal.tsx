@@ -91,7 +91,7 @@ export default function SplitParcelModal({
 
   const handleRemovePart = (index: number) => {
     if (parts.length <= 2) {
-      alert('Pecah bidang minimal harus memiliki 2 bagian.');
+      setErrorMessage('Pecah bidang minimal harus memiliki 2 bagian.');
       return;
     }
     setParts(prev => prev.filter((_, i) => i !== index));
@@ -102,10 +102,11 @@ export default function SplitParcelModal({
       setIsSubmitting(true);
       setErrorMessage(null);
 
-      // Validate luas
+      // Validate luas (allow 0 m² for plant/building-only parcels, reject negative/NaN)
       for (let i = 0; i < parts.length; i++) {
-        if (!parts[i].luas || Number(parts[i].luas) <= 0) {
-          throw new Error(`Luas untuk bagian ${i + 1} harus lebih besar dari 0.`);
+        const val = Number(parts[i].luas ?? 0);
+        if (isNaN(val) || val < 0) {
+          throw new Error(`Luas untuk bagian ${i + 1} tidak boleh bernilai negatif.`);
         }
       }
 

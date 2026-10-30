@@ -1,31 +1,71 @@
 import { LandRecord, BuildingData, PlantData, createEmptyRecord } from '../types';
 
 /**
- * Parses NOBID into numeric parent number and optional letter suffix.
+ * Parses NOBID into numeric parent number, optional letter suffix, and digit padding width.
  * Examples:
- *   "3"   -> { num: 3, suffix: "" }
- *   "3A"  -> { num: 3, suffix: "A" }
- *   "14B" -> { num: 14, suffix: "B" }
+ *   "3"    -> { num: 3, suffix: "", padLength: 0 }
+ *   "003"  -> { num: 3, suffix: "", padLength: 3 }
+ *   "3A"   -> { num: 3, suffix: "A", padLength: 0 }
+ *   "014B" -> { num: 14, suffix: "B", padLength: 3 }
  */
-export function parseNobid(nobidStr: string): { num: number; suffix: string } {
+export function parseNobid(nobidStr: string): { num: number; suffix: string; padLength: number } {
   const clean = (nobidStr || '').trim();
   const match = clean.match(/^(\d+)([a-zA-Z]*)$/);
   if (match) {
+    const digits = match[1];
+    const padLength = digits.length > 1 && digits.startsWith('0') ? digits.length : 0;
     return {
-      num: parseInt(match[1], 10),
-      suffix: match[2].toUpperCase()
+      num: parseInt(digits, 10),
+      suffix: match[2].toUpperCase(),
+      padLength
     };
   }
-  const fallbackNum = parseInt(clean.replace(/\D/g, ''), 10) || 0;
+  const digitsOnly = clean.replace(/\D/g, '');
+  const padLength = digitsOnly.length > 1 && digitsOnly.startsWith('0') ? digitsOnly.length : 0;
+  const fallbackNum = parseInt(digitsOnly, 10) || 0;
   const fallbackSuffix = clean.replace(/[\d\s]/g, '').toUpperCase();
-  return { num: fallbackNum, suffix: fallbackSuffix };
+  return { num: fallbackNum, suffix: fallbackSuffix, padLength };
 }
 
 /**
- * Formats numeric parent and suffix back to NOBID string.
+ * Formats numeric parent and suffix back to NOBID string, preserving leading zero padding if used.
  */
-export function formatNobid(num: number, suffix: string = ''): string {
-  return `${num}${suffix.toUpperCase()}`;
+export function formatNobid(num: number, suffix: string = '', padLength: number = 0): string {
+  const numStr = padLength > 0 ? String(Math.max(0, num)).padStart(padLength, '0') : String(num);
+  return `${numStr}${suffix.toUpperCase()}`;
+}
+
+/**
+ * Reliable identity check between two LandRecord objects even if CODE or ID_UNIK was generated dynamically.
+ */
+export function isSameRecord(a: LandRecord, b: LandRecord): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+
+  const idA = (a.ID_UNIK || '').trim();
+  const idB = (b.ID_UNIK || '').trim();
+  if (idA && idB && idA === idB) return true;
+
+  const codeA = (a.CODE || '').trim().toUpperCase();
+  const codeB = (b.CODE || '').trim().toUpperCase();
+  if (codeA && codeB && codeA === codeB) return true;
+
+  if (a.rowNumber && b.rowNumber && a.rowNumber > 1 && a.rowNumber === b.rowNumber) {
+    return true;
+  }
+
+  const desaA = (a.DESA || '').trim().toUpperCase();
+  const desaB = (b.DESA || '').trim().toUpperCase();
+  const spanA = (a.SPAN || '').trim().toUpperCase();
+  const spanB = (b.SPAN || '').trim().toUpperCase();
+  const nobidA = (a.NOBID || '').trim().toUpperCase();
+  const nobidB = (b.NOBID || '').trim().toUpperCase();
+
+  if (desaA && spanA && nobidA && desaA === desaB && spanA === spanB && nobidA === nobidB) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -140,12 +180,13 @@ export function previewMergeParcels(
   const { recordA, recordB } = options;
   const pA = parseNobid(recordA.NOBID);
   const pB = parseNobid(recordB.NOBID);
+  const padLen = Math.max(pA.padLength, pB.padLength);
 
   const minNum = Math.min(pA.num, pB.num);
   const maxNum = Math.max(pA.num, pB.num);
 
-  const mergedNobid = String(minNum);
-  const removedNobid = String(maxNum);
+  const mergedNobid = formatNobid(minNum, '', padLen);
+  const removedNobid = formatNobid(maxNum, '', padLen);
 
   const luasA = parseFloat((recordA.LUAS || '0').replace(',', '.')) || 0;
   const luasB = parseFloat((recordB.LUAS || '0').replace(',', '.')) || 0;
@@ -163,8 +204,8 @@ export function previewMergeParcels(
   const previewList: MergePreviewItem[] = [];
 
   scopeRecords.forEach(r => {
-    const isA = r.CODE === recordA.CODE || r.ID_UNIK === recordA.ID_UNIK;
-    const isB = r.CODE === recordB.CODE || r.ID_UNIK === recordB.ID_UNIK;
+    const isA = isSameRecord(r, recordA);
+    const isB = isSameRecord(r, recordB);
 
     if (isA) {
       previewList.push({
@@ -192,11 +233,12 @@ export function previewMergeParcels(
       return;
     }
 
-    const { num, suffix } = parseNobid(r.NOBID);
+    const { num, suffix, padLength } = parseNobid(r.NOBID);
+    const effectivePad = padLength || padLen;
 
     if (num === maxNum && suffix) {
       // Sub-parcel attached to the removed number follows merged parent
-      const newNobid = formatNobid(minNum, suffix);
+      const newNobid = formatNobid(minNum, suffix, effectivePad);
       previewList.push({
         code: r.CODE,
         desa: r.DESA,
@@ -204,12 +246,12 @@ export function previewMergeParcels(
         oldNobid: r.NOBID,
         newNobid,
         status: 'SHIFTED_DOWN',
-        reason: `Sub-bidang mengikuti induk yang dilebur ke No. ${minNum}`
+        reason: `Sub-bidang mengikuti induk yang dilebur ke No. ${mergedNobid}`
       });
     } else if (num > maxNum) {
-      // Shift down by 1 (n+1 rule)
+      // Shift down by 1 (n-1 rule)
       const newNum = num - 1;
-      const newNobid = formatNobid(newNum, suffix);
+      const newNobid = formatNobid(newNum, suffix, effectivePad);
       previewList.push({
         code: r.CODE,
         desa: r.DESA,
@@ -217,7 +259,7 @@ export function previewMergeParcels(
         oldNobid: r.NOBID,
         newNobid,
         status: 'SHIFTED_DOWN',
-        reason: `Mundur 1 nomor karena Bidang ${maxNum} dilebur`
+        reason: `Mundur 1 nomor karena Bidang ${removedNobid} dilebur`
       });
     } else {
       previewList.push({
@@ -259,17 +301,17 @@ export function executeMergeParcels(
 
   const pA = parseNobid(recordA.NOBID);
   const pB = parseNobid(recordB.NOBID);
+  const padLen = Math.max(pA.padLength, pB.padLength);
   const minNum = Math.min(pA.num, pB.num);
   const maxNum = Math.max(pA.num, pB.num);
 
-  const mergedNobid = String(minNum);
+  const mergedNobid = formatNobid(minNum, '', padLen);
 
   const luasA = parseFloat((recordA.LUAS || '0').replace(',', '.')) || 0;
   const luasB = parseFloat((recordB.LUAS || '0').replace(',', '.')) || 0;
   const finalLuas = customLuas !== undefined ? customLuas : Math.round((luasA + luasB) * 100) / 100;
 
   const baseRecord = keepIdentityFrom === 'A' ? recordA : recordB;
-  const otherRecord = keepIdentityFrom === 'A' ? recordB : recordA;
 
   // 1. Build Merged Record
   const mergedRecord: LandRecord = {
@@ -277,7 +319,8 @@ export function executeMergeParcels(
     NOBID: mergedNobid,
     LUAS: String(finalLuas),
     buildings: autoJoinBuildings(recordA.buildings, recordB.buildings),
-    plants: autoSumPlants(recordA.plants, recordB.plants)
+    plants: autoSumPlants(recordA.plants, recordB.plants),
+    _lastModified: Date.now()
   };
 
   const mergeHist = `[Hasil Penggabungan Bidang ${recordA.NOBID} dan ${recordB.NOBID}${catatanMerge ? `: ${catatanMerge}` : ''}]`;
@@ -296,13 +339,17 @@ export function executeMergeParcels(
 
   // 2. Iterate all records: replace A with merged, remove B, shift > maxNum down by 1
   const updatedRecords: LandRecord[] = [];
+  let hasInsertedMerged = false;
 
   allRecords.forEach(r => {
-    const isA = r.CODE === recordA.CODE || (r.ID_UNIK && r.ID_UNIK === recordA.ID_UNIK);
-    const isB = r.CODE === recordB.CODE || (r.ID_UNIK && r.ID_UNIK === recordB.ID_UNIK);
+    const isA = isSameRecord(r, recordA);
+    const isB = isSameRecord(r, recordB);
 
     if (isA) {
-      updatedRecords.push(mergedRecord);
+      if (!hasInsertedMerged) {
+        updatedRecords.push(mergedRecord);
+        hasInsertedMerged = true;
+      }
       return;
     }
 
@@ -320,35 +367,42 @@ export function executeMergeParcels(
       return;
     }
 
-    const { num, suffix } = parseNobid(r.NOBID);
+    const { num, suffix, padLength } = parseNobid(r.NOBID);
+    const effectivePad = padLength || padLen;
 
     if (num === maxNum && suffix) {
       // Sub-parcel attached to the removed number moves to merged parent
-      const newNobid = formatNobid(minNum, suffix);
+      const newNobid = formatNobid(minNum, suffix, effectivePad);
       const newCode = `${cleanDesa}_${cleanSpan}_${newNobid}`;
       updatedRecords.push({
         ...r,
         NOBID: newNobid,
         CODE: newCode,
-        ID_UNIK: `ID-${newCode.replace(/[\s-]/g, '_')}`
+        ID_UNIK: `ID-${newCode.replace(/[\s-]/g, '_')}`,
+        _lastModified: Date.now()
       });
     } else if (num > maxNum) {
       // Shift down by 1
       const newNum = num - 1;
-      const newNobid = formatNobid(newNum, suffix);
+      const newNobid = formatNobid(newNum, suffix, effectivePad);
       const newCode = `${cleanDesa}_${cleanSpan}_${newNobid}`;
       updatedRecords.push({
         ...r,
         NOBID: newNobid,
         CODE: newCode,
-        ID_UNIK: `ID-${newCode.replace(/[\s-]/g, '_')}`
+        ID_UNIK: `ID-${newCode.replace(/[\s-]/g, '_')}`,
+        _lastModified: Date.now()
       });
     } else {
       updatedRecords.push(r);
     }
   });
 
-  const logSummary = `Penggabungan Bidang: No. ${recordA.NOBID} (${recordA.NAMA || '-'}) dan No. ${recordB.NOBID} (${recordB.NAMA || '-'}) menjadi No. ${mergedNobid} di Desa ${targetDesa} Span ${targetSpan}. Penomoran bidang di atasnya disesuaikan n+1.`;
+  if (!hasInsertedMerged) {
+    updatedRecords.push(mergedRecord);
+  }
+
+  const logSummary = `Penggabungan Bidang: No. ${recordA.NOBID} (${recordA.NAMA || '-'}) dan No. ${recordB.NOBID} (${recordB.NAMA || '-'}) menjadi No. ${mergedNobid} di Desa ${targetDesa} Span ${targetSpan}. Penomoran bidang di atasnya disesuaikan otomatis.`;
 
   return { updatedRecords, logSummary };
 }
@@ -383,6 +437,7 @@ export function previewSplitParcel(
 } {
   const pTarget = parseNobid(targetRecord.NOBID);
   const splitNum = pTarget.num; // e.g. 3
+  const padLen = pTarget.padLength;
   const insertedCount = Math.max(0, parts.length - 1); // e.g. 2 parts -> 1 inserted (+1 shift)
 
   const targetDesa = (targetRecord.DESA || '').trim().toUpperCase();
@@ -396,29 +451,31 @@ export function previewSplitParcel(
   const previewList: SplitPreviewItem[] = [];
 
   scopeRecords.forEach(r => {
-    const isTarget = r.CODE === targetRecord.CODE || (r.ID_UNIK && r.ID_UNIK === targetRecord.ID_UNIK);
+    const isTarget = isSameRecord(r, targetRecord);
 
     if (isTarget) {
+      const part1Nobid = formatNobid(splitNum, '', padLen);
       // Part 1 keeps splitNum
       previewList.push({
         code: r.CODE,
         desa: r.DESA,
         span: r.SPAN,
         oldNobid: r.NOBID,
-        newNobid: String(splitNum),
+        newNobid: part1Nobid,
         status: 'SPLIT_PART_1',
-        reason: `Bagian 1 hasil pemecahan (tetap No. ${splitNum})`
+        reason: `Bagian 1 hasil pemecahan (tetap No. ${part1Nobid})`
       });
 
       // New parts preview
       for (let i = 1; i < parts.length; i++) {
         const assignedNum = splitNum + i;
+        const assignedNobid = formatNobid(assignedNum, '', padLen);
         previewList.push({
           code: `NEW_PART_${i}`,
           desa: r.DESA,
           span: r.SPAN,
           oldNobid: '-',
-          newNobid: String(assignedNum),
+          newNobid: assignedNobid,
           status: 'SPLIT_NEW_PART',
           reason: `Bagian ${i + 1} baru hasil pemecahan`
         });
@@ -426,7 +483,8 @@ export function previewSplitParcel(
       return;
     }
 
-    const { num, suffix } = parseNobid(r.NOBID);
+    const { num, suffix, padLength } = parseNobid(r.NOBID);
+    const effectivePad = padLength || padLen;
 
     if (num <= splitNum) {
       previewList.push({
@@ -441,7 +499,7 @@ export function previewSplitParcel(
     } else {
       // num > splitNum: shift UP by insertedCount!
       const newNum = num + insertedCount;
-      const newNobid = formatNobid(newNum, suffix);
+      const newNobid = formatNobid(newNum, suffix, effectivePad);
       previewList.push({
         code: r.CODE,
         desa: r.DESA,
@@ -479,6 +537,7 @@ export function executeSplitParcel(
 
   const pTarget = parseNobid(targetRecord.NOBID);
   const splitNum = pTarget.num;
+  const padLen = pTarget.padLength;
   const insertedCount = parts.length - 1;
 
   const targetDesa = (targetRecord.DESA || '').trim().toUpperCase();
@@ -488,22 +547,26 @@ export function executeSplitParcel(
 
   // 1. Prepare Part 1 (updates targetRecord)
   const part1Input = parts[0];
+  const part1Nobid = formatNobid(splitNum, '', padLen);
   const part1Record: LandRecord = {
     ...targetRecord,
-    NOBID: String(splitNum),
-    LUAS: String(part1Input.luas),
+    NOBID: part1Nobid,
+    LUAS: String(part1Input.luas ?? 0),
+    NAMA: part1Input.nama || targetRecord.NAMA || '',
+    NIK: part1Input.nik !== undefined ? part1Input.nik : (targetRecord.NIK || ''),
     KETERANGAN: targetRecord.KETERANGAN 
       ? `${targetRecord.KETERANGAN}; [Bagian 1 pecahan Bidang ${targetRecord.NOBID}${part1Input.keterangan ? `: ${part1Input.keterangan}` : ''}]`
-      : `[Bagian 1 pecahan Bidang ${targetRecord.NOBID}${part1Input.keterangan ? `: ${part1Input.keterangan}` : ''}]`
+      : `[Bagian 1 pecahan Bidang ${targetRecord.NOBID}${part1Input.keterangan ? `: ${part1Input.keterangan}` : ''}]`,
+    _lastModified: Date.now()
   };
-  part1Record.CODE = `${cleanDesa}_${cleanSpan}_${splitNum}`;
+  part1Record.CODE = `${cleanDesa}_${cleanSpan}_${part1Nobid}`;
   part1Record.ID_UNIK = `ID-${part1Record.CODE.replace(/[\s-]/g, '_')}`;
 
   // 2. Prepare Additional Parts (New Records)
   const newPartRecords: LandRecord[] = [];
   for (let i = 1; i < parts.length; i++) {
     const assignedNum = splitNum + i;
-    const assignedNobid = String(assignedNum);
+    const assignedNobid = formatNobid(assignedNum, '', padLen);
     const pInput = parts[i];
 
     const newCode = `${cleanDesa}_${cleanSpan}_${assignedNobid}`;
@@ -514,11 +577,12 @@ export function executeSplitParcel(
       DESA: targetRecord.DESA,
       SPAN: targetRecord.SPAN,
       NOBID: assignedNobid,
-      LUAS: String(pInput.luas),
+      LUAS: String(pInput.luas ?? 0),
       NAMA: pInput.nama || '',
       NIK: pInput.nik || '',
       STATUS_KEPEMILIKAN: targetRecord.STATUS_KEPEMILIKAN || 'MILIK SENDIRI',
       PENUTUP_LAHAN: targetRecord.PENUTUP_LAHAN || 'PERKEBUNAN',
+      STATUS_PENUTUP_LAHAN: targetRecord.STATUS_PENUTUP_LAHAN || '',
       KECAMATAN: targetRecord.KECAMATAN || '',
       KABUPATEN: targetRecord.KABUPATEN || '',
       STATUS_DESA: targetRecord.STATUS_DESA || '',
@@ -530,7 +594,8 @@ export function executeSplitParcel(
       nama_tim_2: targetRecord.nama_tim_2 || '',
       TANGGAL_PELAKSANAAN: targetRecord.TANGGAL_PELAKSANAAN || '',
       QC_STATUS: 'PENDING',
-      KETERANGAN: `[Bagian ${i + 1} pecahan dari Bidang ${targetRecord.NOBID}${pInput.keterangan ? `: ${pInput.keterangan}` : ''}]`
+      KETERANGAN: `[Bagian ${i + 1} pecahan dari Bidang ${targetRecord.NOBID}${pInput.keterangan ? `: ${pInput.keterangan}` : ''}]`,
+      _lastModified: Date.now()
     };
 
     newPartRecords.push(newRec);
@@ -538,13 +603,17 @@ export function executeSplitParcel(
 
   // 3. Re-assemble all records
   const updatedRecords: LandRecord[] = [];
+  let hasInsertedSplit = false;
 
   allRecords.forEach(r => {
-    const isTarget = r.CODE === targetRecord.CODE || (r.ID_UNIK && r.ID_UNIK === targetRecord.ID_UNIK);
+    const isTarget = isSameRecord(r, targetRecord);
 
     if (isTarget) {
-      updatedRecords.push(part1Record);
-      newPartRecords.forEach(np => updatedRecords.push(np));
+      if (!hasInsertedSplit) {
+        updatedRecords.push(part1Record);
+        newPartRecords.forEach(np => updatedRecords.push(np));
+        hasInsertedSplit = true;
+      }
       return;
     }
 
@@ -556,7 +625,8 @@ export function executeSplitParcel(
       return;
     }
 
-    const { num, suffix } = parseNobid(r.NOBID);
+    const { num, suffix, padLength } = parseNobid(r.NOBID);
+    const effectivePad = padLength || padLen;
 
     if (num <= splitNum) {
       // Unchanged (including any sub-parcels of splitNum like 3A, 3B)
@@ -564,18 +634,24 @@ export function executeSplitParcel(
     } else {
       // Shift UP by insertedCount
       const newNum = num + insertedCount;
-      const newNobid = formatNobid(newNum, suffix);
+      const newNobid = formatNobid(newNum, suffix, effectivePad);
       const newCode = `${cleanDesa}_${cleanSpan}_${newNobid}`;
       updatedRecords.push({
         ...r,
         NOBID: newNobid,
         CODE: newCode,
-        ID_UNIK: `ID-${newCode.replace(/[\s-]/g, '_')}`
+        ID_UNIK: `ID-${newCode.replace(/[\s-]/g, '_')}`,
+        _lastModified: Date.now()
       });
     }
   });
 
-  const logSummary = `Pecah Bidang: No. ${targetRecord.NOBID} (${targetRecord.NAMA || '-'}) dipecah menjadi ${parts.length} bagian (No. ${splitNum} s.d. ${splitNum + insertedCount}) di Desa ${targetDesa} Span ${targetSpan}. Penomoran bidang di atasnya disesuaikan (+${insertedCount}).`;
+  if (!hasInsertedSplit) {
+    updatedRecords.push(part1Record);
+    newPartRecords.forEach(np => updatedRecords.push(np));
+  }
+
+  const logSummary = `Pecah Bidang: No. ${targetRecord.NOBID} (${targetRecord.NAMA || '-'}) dipecah menjadi ${parts.length} bagian (No. ${formatNobid(splitNum, '', padLen)} s.d. ${formatNobid(splitNum + insertedCount, '', padLen)}) di Desa ${targetDesa} Span ${targetSpan}. Penomoran bidang di atasnya disesuaikan (+${insertedCount}).`;
 
   return { updatedRecords, logSummary };
 }
@@ -603,25 +679,26 @@ export function previewDeleteParcel(
 } {
   const targetDesa = (targetRecord.DESA || '').trim().toUpperCase();
   const targetSpan = (targetRecord.SPAN || '').trim().toUpperCase();
-  const { num: targetNum } = parseNobid(targetRecord.NOBID);
+  const { num: targetNum, padLength: targetPad } = parseNobid(targetRecord.NOBID);
 
   const impactedParcels: { oldNobid: string; newNobid: string; nama: string; code: string }[] = [];
 
   if (adjustNextParcels) {
     allRecords.forEach(r => {
-      if (r.CODE === targetRecord.CODE || (r.ID_UNIK && r.ID_UNIK === targetRecord.ID_UNIK)) {
+      if (isSameRecord(r, targetRecord)) {
         return;
       }
       const rDesa = (r.DESA || '').trim().toUpperCase();
       const rSpan = (r.SPAN || '').trim().toUpperCase();
       if (rDesa !== targetDesa || rSpan !== targetSpan) return;
 
-      const { num, suffix } = parseNobid(r.NOBID);
+      const { num, suffix, padLength } = parseNobid(r.NOBID);
+      const effectivePad = padLength || targetPad;
       if (num > targetNum) {
         const newNum = num - 1;
         impactedParcels.push({
           oldNobid: r.NOBID,
-          newNobid: formatNobid(newNum, suffix),
+          newNobid: formatNobid(newNum, suffix, effectivePad),
           nama: r.NAMA || '(Tanpa Nama)',
           code: r.CODE
         });
@@ -654,16 +731,16 @@ export function executeDeleteParcel(
   const { targetRecord, adjustNextParcels = true } = options;
   const targetDesa = (targetRecord.DESA || '').trim().toUpperCase();
   const targetSpan = (targetRecord.SPAN || '').trim().toUpperCase();
-  const cleanDesa = targetDesa.replace(/[\s-]/g, '_');
-  const cleanSpan = targetSpan.replace(/[\s-]/g, '_');
-  const { num: targetNum } = parseNobid(targetRecord.NOBID);
+  const cleanDesa = targetDesa.replace(/[\s\/\\?%*:|"]/g, '_');
+  const cleanSpan = targetSpan.replace(/[\s\/\\?%*:|"]/g, '_');
+  const { num: targetNum, padLength: targetPad } = parseNobid(targetRecord.NOBID);
 
   const updatedRecords: LandRecord[] = [];
   let shiftedCount = 0;
 
   allRecords.forEach(r => {
     // Exclude the target record to delete it
-    if (r.CODE === targetRecord.CODE || (r.ID_UNIK && r.ID_UNIK === targetRecord.ID_UNIK)) {
+    if (isSameRecord(r, targetRecord)) {
       return;
     }
 
@@ -675,18 +752,20 @@ export function executeDeleteParcel(
       return;
     }
 
-    const { num, suffix } = parseNobid(r.NOBID);
+    const { num, suffix, padLength } = parseNobid(r.NOBID);
+    const effectivePad = padLength || targetPad;
 
     if (num > targetNum) {
       // Shift DOWN by 1
       const newNum = num - 1;
-      const newNobid = formatNobid(newNum, suffix);
+      const newNobid = formatNobid(newNum, suffix, effectivePad);
       const newCode = `${cleanDesa}_${cleanSpan}_${newNobid}`;
       updatedRecords.push({
         ...r,
         NOBID: newNobid,
         CODE: newCode,
-        ID_UNIK: `ID-${newCode.replace(/[\s-]/g, '_')}`
+        ID_UNIK: `ID-${newCode.replace(/[\s-]/g, '_')}`,
+        _lastModified: Date.now()
       });
       shiftedCount++;
     } else {

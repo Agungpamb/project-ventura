@@ -13,10 +13,13 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // records_cache collection (cached records of each project)
+    // records_cache collection (cached records of each project) and chunks subcollection
     match /records_cache/{projectId} {
       // Allow read and write for records cache to ensure offline/guest data persists
       allow read, write: if true;
+      match /chunks/{chunkId} {
+        allow read, write: if true;
+      }
     }
 
     // activity_logs collection
@@ -37,9 +40,12 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // geojson_layers collection
+    // geojson_layers collection and chunks subcollection
     match /geojson_layers/{layerId} {
       allow read, write: if true;
+      match /chunks/{chunkId} {
+        allow read, write: if true;
+      }
     }
 
     // village_resumes collection (Menu 1.4)

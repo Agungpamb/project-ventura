@@ -75,8 +75,10 @@ export default function QuickParcelPickerModal({
   const [parcelCodeA, setParcelCodeA] = useState<string>('');
   const [parcelCodeB, setParcelCodeB] = useState<string>('');
   const [targetSplitCode, setTargetSplitCode] = useState<string>('');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   React.useEffect(() => {
+    setErrorMsg(null);
     if (availableParcels.length > 0) {
       setParcelCodeA(availableParcels[0]?.CODE || '');
       setParcelCodeB(availableParcels[1]?.CODE || '');
@@ -91,13 +93,14 @@ export default function QuickParcelPickerModal({
   if (!isOpen) return null;
 
   const handleProceed = () => {
+    setErrorMsg(null);
     if (mode === 'MERGE') {
       if (!parcelCodeA || !parcelCodeB) {
-        alert('Silakan pilih kedua bidang yang ingin digabungkan.');
+        setErrorMsg('Silakan pilih kedua bidang yang ingin digabungkan.');
         return;
       }
       if (parcelCodeA === parcelCodeB) {
-        alert('Bidang yang digabungkan tidak boleh sama! Pilih 2 nomor bidang berbeda.');
+        setErrorMsg('Bidang yang digabungkan tidak boleh sama! Pilih 2 nomor bidang berbeda.');
         return;
       }
       const recA = availableParcels.find(r => r.CODE === parcelCodeA);
@@ -108,7 +111,7 @@ export default function QuickParcelPickerModal({
       }
     } else {
       if (!targetSplitCode) {
-        alert('Silakan pilih bidang yang ingin dipecah.');
+        setErrorMsg('Silakan pilih bidang yang ingin dipecah.');
         return;
       }
       const target = availableParcels.find(r => r.CODE === targetSplitCode);
@@ -153,6 +156,12 @@ export default function QuickParcelPickerModal({
 
         {/* Content */}
         <div className="p-6 space-y-4 text-xs text-slate-300">
+          {errorMsg && (
+            <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-center gap-2 text-rose-300 text-xs">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
           {/* Desa & Span Selectors */}
           <div className="grid grid-cols-2 gap-3">
             <div>

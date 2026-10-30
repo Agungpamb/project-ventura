@@ -2039,13 +2039,13 @@ export default function FormInput({
           onClose={() => setIsDeleteModalOpen(false)}
           targetRecord={selectedEditRecord}
           allRecords={records}
-          onConfirmDelete={async (updatedRecords, logMsg) => {
+          onConfirmDelete={async (_updatedRecords, _logMsg, adjustNextParcels) => {
             const target = selectedEditRecord;
+            if (onDeleteRecord) {
+              await onDeleteRecord(target, adjustNextParcels);
+            }
             setIsDeleteModalOpen(false);
             handleCancelEdit();
-            if (onDeleteRecord) {
-              await onDeleteRecord(target, true);
-            }
           }}
         />
       )}

@@ -1512,13 +1512,13 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
           onClose={() => setRecordToDelete(null)}
           targetRecord={recordToDelete}
           allRecords={records}
-          onConfirmDelete={async (updatedRecords, logMsg) => {
+          onConfirmDelete={async (_updatedRecords, _logMsg, adjustNextParcels) => {
             const target = recordToDelete;
+            if (onDeleteRecord) {
+              await onDeleteRecord(target, adjustNextParcels);
+            }
             setRecordToDelete(null);
             setSelectedRecord(null);
-            if (onDeleteRecord) {
-              await onDeleteRecord(target, true);
-            }
           }}
         />
       )}

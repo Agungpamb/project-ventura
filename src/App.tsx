@@ -1,17 +1,17 @@
-import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { 
   googleSignIn, logout, auth, setAccessToken, db
 } from './lib/firebase';
 import { doc, getDoc, setDoc, collection, addDoc, getDocs, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { 
-  findOrCreateSpreadsheet, fetchSpreadsheetRecords, saveRecordToSpreadsheet, setupProjectDriveStructure, findOrCreateFolder, fetchWithTimeout, registerTokenRefreshHandler, deleteSpreadsheetRow,
+  findOrCreateSpreadsheet, fetchSpreadsheetRecords, saveRecordToSpreadsheet, setupProjectDriveStructure, findOrCreateFolder, fetchWithTimeout, registerTokenRefreshHandler, deleteSpreadsheetRow, overwriteSpreadsheetRecords,
   createDedicatedResumeSpreadsheet,
   createDedicatedAgencyLetterSpreadsheet,
   fetchDriveGeoJSONFiles,
   extractDriveFolderId
 } from './lib/googleApi';
-import { executeDeleteParcel } from './lib/parcelManagement';
+import { executeDeleteParcel, isSameRecord } from './lib/parcelManagement';
 import {
   saveGeoJSONLayerToFirestore,
   loadGeoJSONLayerDoc,
@@ -614,19 +614,55 @@ export default function App() {
     };
   }, []);
 
+  // Track timestamp of our own local Firestore cache writes to prevent self-echo race conditions in onSnapshot
+  const lastLocalCacheWriteRef = useRef<number>(0);
+
   // Realtime Cloud Synchronization for Land Records (records_cache) across devices
   useEffect(() => {
     if (!activeProjectId) return;
     let unsub: (() => void) | null = null;
     try {
-      unsub = onSnapshot(doc(db, 'records_cache', activeProjectId), (docSnap) => {
+      unsub = onSnapshot(doc(db, 'records_cache', activeProjectId), async (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          if (data && Array.isArray(data.records) && data.records.length > 0) {
-            setRecords(data.records);
-            try {
-              localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(data.records));
-            } catch (e) {}
+          if (data) {
+            // Skip self-echo if we just wrote this exact snapshot locally within the last 2.5 seconds
+            if (data.lastUpdated && Math.abs(Date.now() - lastLocalCacheWriteRef.current) < 2500) {
+              return;
+            }
+
+            let loadedRecords: LandRecord[] = [];
+            if (data.chunked && data.totalChunks > 0) {
+              const chunkPromises = [];
+              for (let i = 0; i < data.totalChunks; i++) {
+                chunkPromises.push(
+                  getDoc(doc(db, 'records_cache', `${activeProjectId}__chunk_${i}`)).catch(() => null)
+                );
+              }
+              const chunkSnaps = await Promise.all(chunkPromises);
+              for (let i = 0; i < chunkSnaps.length; i++) {
+                const snap = chunkSnaps[i];
+                if (snap && snap.exists() && Array.isArray(snap.data()?.records)) {
+                  loadedRecords.push(...snap.data().records);
+                } else {
+                  try {
+                    const subSnap = await getDoc(doc(db, 'records_cache', activeProjectId, 'chunks', `chunk_${i}`));
+                    if (subSnap.exists() && Array.isArray(subSnap.data()?.records)) {
+                      loadedRecords.push(...subSnap.data().records);
+                    }
+                  } catch (e) {}
+                }
+              }
+            } else if (Array.isArray(data.records)) {
+              loadedRecords = data.records;
+            }
+
+            if (loadedRecords.length > 0 || data.totalRecords === 0) {
+              setRecords(loadedRecords);
+              try {
+                localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(loadedRecords));
+              } catch (e) {}
+            }
           }
         }
       }, (err) => {
@@ -1251,35 +1287,135 @@ export default function App() {
     };
   };
 
-  // Save records cache to Firestore so guests and operators can access and sync real data
-  const saveRecordsToFirestoreCache = async (projectId: string, list: LandRecord[]) => {
+  // Helper to sanitize any oversized binary/base64 from being stored in text-based Firestore cache
+  const sanitizeRecordForCloudCache = (record: LandRecord): LandRecord => {
+    const clean: any = { ...record };
+    for (const key of Object.keys(clean)) {
+      const val = clean[key];
+      if (val === undefined) {
+        clean[key] = '';
+      } else if (typeof val === 'string') {
+        // Strip data URLs (base64 images, PDFs, etc.) and oversized raw base64 strings
+        if (val.startsWith('data:') || (val.length > 1500 && !val.startsWith('http://') && !val.startsWith('https://'))) {
+          clean[key] = '';
+        }
+      }
+    }
+    return clean as LandRecord;
+  };
+
+  // Helper to read records from Firestore cloud cache (transparently supporting single or chunked docs)
+  const fetchRecordsFromFirestoreCache = async (
+    projectId: string
+  ): Promise<LandRecord[]> => {
+    if (!projectId) return [];
     try {
-      let recordsToSave = list.map(r => ({
-        ...r,
+      const cacheRef = doc(db, 'records_cache', projectId);
+      const cacheSnap = await getDoc(cacheRef);
+      if (!cacheSnap.exists()) return [];
+      const data = cacheSnap.data();
+      if (!data) return [];
+
+      if (data.chunked && data.totalChunks > 0) {
+        const chunkPromises = [];
+        for (let i = 0; i < data.totalChunks; i++) {
+          chunkPromises.push(
+            getDoc(doc(db, 'records_cache', `${projectId}__chunk_${i}`)).catch(() => null)
+          );
+        }
+        const chunkSnaps = await Promise.all(chunkPromises);
+        const combined: LandRecord[] = [];
+        for (let i = 0; i < chunkSnaps.length; i++) {
+          const snap = chunkSnaps[i];
+          if (snap && snap.exists() && Array.isArray(snap.data()?.records)) {
+            combined.push(...snap.data().records);
+          } else {
+            // Fallback to legacy subcollection if present
+            try {
+              const subSnap = await getDoc(doc(db, 'records_cache', projectId, 'chunks', `chunk_${i}`));
+              if (subSnap.exists() && Array.isArray(subSnap.data()?.records)) {
+                combined.push(...subSnap.data().records);
+              }
+            } catch (e) {}
+          }
+        }
+        return combined.length > 0 ? combined : (data.records || []);
+      }
+
+      if (Array.isArray(data.records)) {
+        return data.records;
+      }
+      return [];
+    } catch (e) {
+      console.warn("Gagal membaca records_cache dari Firestore:", e);
+      return [];
+    }
+  };
+
+  // Save records cache to Firestore so guests and operators can access and sync real data safely
+  const saveRecordsToFirestoreCache = async (
+    projectId: string,
+    list: LandRecord[],
+    hasPendingSheetMutation: boolean = false
+  ) => {
+    if (!projectId) return;
+    try {
+      lastLocalCacheWriteRef.current = Date.now();
+      const recordsToSave = list.map((r, idx) => ({
+        ...sanitizeRecordForCloudCache(r),
+        rowNumber: r.rowNumber && r.rowNumber > 1 ? r.rowNumber : idx + 2,
         ID_UNIK: r.ID_UNIK || `ID-${(r.CODE || 'REC').replace(/[\s-]/g, '_')}`
       }));
 
-      // Guard against Firestore 1MB document size limit (1,048,576 bytes)
-      // If large inline base64 signature strings are present, strip base64 to avoid total write rejection
+      // Calculate payload size
       const jsonLen = JSON.stringify(recordsToSave).length;
-      if (jsonLen > 800000) {
-        recordsToSave = recordsToSave.map(r => {
-          const stripped = { ...r };
-          const sigFields = ['TTD_SAKSI_1', 'TTD_SAKSI_2', 'TTD_TIM_1', 'TTD_TIM_2', 'TTD_KADES', 'CAP_DESA', 'TTD_PEMILIK'] as const;
-          sigFields.forEach(f => {
-            if (stripped[f] && stripped[f].startsWith('data:image') && stripped[f].length > 20000) {
-              stripped[f] = ''; // Drop giant base64 in cache array so parcel data persists
-            }
-          });
-          return stripped;
+      const MAX_SINGLE_DOC_SIZE = 500000; // 500KB safe threshold (Firestore limit is 1,048,576 bytes)
+
+      if (jsonLen <= MAX_SINGLE_DOC_SIZE) {
+        // Fits comfortably in a single document
+        await setDoc(doc(db, 'records_cache', projectId), {
+          records: recordsToSave,
+          chunked: false,
+          totalRecords: recordsToSave.length,
+          hasPendingSheetMutation,
+          lastUpdated: Date.now(),
+          updatedBy: operatorName || user?.email || 'operator'
+        });
+      } else {
+        // Dataset is large: chunk into top-level records_cache/{projectId}__chunk_{i} documents
+        // (permitted by match /records_cache/{projectId} rules) AND write chunks BEFORE parent doc!
+        const targetChunkBytes = 350000; // ~350KB per chunk
+        const estimatedChunkCount = Math.max(2, Math.ceil(jsonLen / targetChunkBytes));
+        const chunkSize = Math.max(10, Math.ceil(recordsToSave.length / estimatedChunkCount));
+
+        const chunks: LandRecord[][] = [];
+        for (let i = 0; i < recordsToSave.length; i += chunkSize) {
+          chunks.push(recordsToSave.slice(i, i + chunkSize));
+        }
+
+        // 1. Write all chunk documents FIRST so onSnapshot on the parent document never reads stale chunks
+        await Promise.all(
+          chunks.map((chunkRecords, i) =>
+            setDoc(doc(db, 'records_cache', `${projectId}__chunk_${i}`), {
+              projectId,
+              chunkIndex: i,
+              records: chunkRecords,
+              lastUpdated: Date.now()
+            })
+          )
+        );
+
+        // 2. Save metadata doc in root collection last
+        await setDoc(doc(db, 'records_cache', projectId), {
+          records: chunks[0] || [],
+          chunked: true,
+          totalChunks: chunks.length,
+          totalRecords: recordsToSave.length,
+          hasPendingSheetMutation,
+          lastUpdated: Date.now(),
+          updatedBy: operatorName || user?.email || 'operator'
         });
       }
-
-      await setDoc(doc(db, 'records_cache', projectId), {
-        records: recordsToSave,
-        lastUpdated: Date.now(),
-        updatedBy: operatorName || user?.email || 'operator'
-      });
       console.log("Records cache updated in Firestore successfully for project:", projectId);
     } catch (err) {
       console.error("Gagal menyimpan cache ke Firestore:", err);
@@ -1351,8 +1487,45 @@ export default function App() {
         setProjectUploadsFolderId(activeProj.uploadsFolderId || 'guest_bypass');
         setSheetNameInfo(activeProj.spreadsheetId ? `${activeProj.name} (Sinkron Cloud / ID Spreadsheet Terhubung)` : `${activeProj.name} (Mode Tim Lapangan / Cloud Firestore)`);
 
-        // Try to fetch from public CSV URL first if configured
-        if (activeProj.publicCsvUrl) {
+        // 1. Try to load cached records from localStorage first (for instant initial render)
+        const cached = localStorage.getItem(`project_ventura_records_cache_${projectId}`);
+        let hasLoadedLocal = false;
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setRecords(parsed);
+              hasLoadedLocal = true;
+            }
+          } catch (e) {
+            console.warn("Gagal membaca cache lokal:", e);
+          }
+        }
+
+        // 2. Fetch from Firestore cloud cache FIRST (so live Merge, Split, Delete, and Field Edits are NEVER overwritten by stale read-only CSV!)
+        try {
+          const cloudRecords = await fetchRecordsFromFirestoreCache(projectId);
+          if (cloudRecords.length > 0) {
+            const sortedCloud = [...cloudRecords].sort(compareLandRecords);
+            setRecords(sortedCloud);
+            try {
+              localStorage.setItem(`project_ventura_records_cache_${projectId}`, JSON.stringify(sortedCloud));
+            } catch (e) {}
+            if (options?.isManualSync) {
+              setSyncFeedback({
+                type: 'success',
+                message: `Data terbaru dimuat dari Database Cloud Firestore (${sortedCloud.length} bidang). Hubungkan Google OAuth jika ingin menyinkronkan langsung dengan Google Sheets.`,
+                timestamp: Date.now()
+              });
+            }
+            return; // Successfully got up-to-date real data from Firestore!
+          }
+        } catch (fsErr) {
+          console.warn("Gagal mengambil cache data dari Firestore:", fsErr);
+        }
+
+        // 3. Only if Firestore cache is empty, try to fetch from public CSV URL if configured
+        if (!hasLoadedLocal && activeProj.publicCsvUrl) {
           try {
             console.log("Fetching public CSV URL:", activeProj.publicCsvUrl);
             const csvText = await fetchPublicCsvContent(activeProj.publicCsvUrl);
@@ -1382,12 +1555,12 @@ export default function App() {
               setRecords(sorted);
               setSheetNameInfo(`${activeProj.name} (Web Publish CSV)`);
               
-              // Cache in local storage safely
               try {
                 localStorage.setItem(`project_ventura_records_cache_${projectId}`, JSON.stringify(sorted));
               } catch (storageError) {
                 console.warn("localStorage quota exceeded, unable to cache records locally:", storageError);
               }
+              saveRecordsToFirestoreCache(projectId, sorted, false);
               if (options?.isManualSync) {
                 setSyncFeedback({
                   type: 'success',
@@ -1395,56 +1568,16 @@ export default function App() {
                   timestamp: Date.now()
                 });
               }
-              return; // Success!
+              return;
             }
           } catch (csvErr: any) {
             console.warn("Tautan Publik CSV tidak dapat diakses langsung, mengalihkan ke cache lokal/cloud:", csvErr);
-            // Don't crash, fall back to localStorage cached data or Firestore
           }
         }
 
-        // Try to load cached records from localStorage first (for instant initial load)
-        const cached = localStorage.getItem(`project_ventura_records_cache_${projectId}`);
-        let hasLoadedLocal = false;
-        if (cached) {
-          try {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setRecords(parsed);
-              hasLoadedLocal = true;
-            }
-          } catch (e) {
-            console.warn("Gagal membaca cache lokal:", e);
-          }
-        }
-
-        // Fetch from Firestore cloud cache (always try this to get up-to-date data synced by Admin)
-        try {
-          const cacheRef = doc(db, 'records_cache', projectId);
-          const cacheSnap = await getDoc(cacheRef);
-          if (cacheSnap.exists()) {
-            const cacheData = cacheSnap.data();
-            if (cacheData && Array.isArray(cacheData.records) && cacheData.records.length > 0) {
-              setRecords(cacheData.records);
-              localStorage.setItem(`project_ventura_records_cache_${projectId}`, JSON.stringify(cacheData.records));
-              if (options?.isManualSync) {
-                setSyncFeedback({
-                  type: 'warning',
-                  message: `Mode Tamu: Data diperbarui dari Cadangan Cloud Firestore (${cacheData.records.length} bidang). Hubungkan akun Google untuk mengambil langsung dari Google Sheets.`,
-                  timestamp: Date.now()
-                });
-              }
-              return; // Successfully got up-to-date real data from Firestore!
-            }
-          }
-        } catch (fsErr) {
-          console.warn("Gagal mengambil cache data dari Firestore:", fsErr);
-        }
-
-        // If we didn't get from Firestore and also have nothing in local storage, use the default mocks for initial project
+        // 4. If we didn't get from Firestore, local storage, or CSV, use default mocks for initial project
         if (!hasLoadedLocal) {
           if (projectId === 'proj-1') {
-            // Fallback template records for default sample path
             const mockList: LandRecord[] = [
               createMockRecord("VT-001", "Budi Santoso", "Sukamaju", "SPAN-1", "015", "250", "Lengkap", "Selesai", "APPROVED", "Semua berkas sudah valid"),
               createMockRecord("VT-002", "Siti Rahmawati", "Sukamaju", "SPAN-1", "016", "410", "Sebagian", "Belum", "PENDING", "Menunggu Surat Kuasa ditandatangani"),
@@ -1488,15 +1621,21 @@ export default function App() {
         setSpreadsheetId(sheetId);
         setProjectUploadsFolderId(uploadsFolderId);
         
-        // Fetch cached Firestore count if available to compare integrity & inspect diff
+        // Fetch cached Firestore records & check if there is a pending structural mutation (Merge, Split, Delete)
         let cachedCount = records.length;
         let existingCacheList: LandRecord[] = [];
+        let hasPendingSheetMutation = false;
         try {
-          const cacheRef = doc(db, 'records_cache', projectId);
-          const cacheSnap = await getDoc(cacheRef);
-          if (cacheSnap.exists() && Array.isArray(cacheSnap.data()?.records)) {
-            existingCacheList = cacheSnap.data().records;
+          const cacheDocSnap = await getDoc(doc(db, 'records_cache', projectId));
+          if (cacheDocSnap.exists() && cacheDocSnap.data()?.hasPendingSheetMutation) {
+            hasPendingSheetMutation = true;
+          }
+          existingCacheList = await fetchRecordsFromFirestoreCache(projectId);
+          if (existingCacheList.length > 0) {
             cachedCount = existingCacheList.length;
+            if (existingCacheList.some(r => r._needsSheetSync)) {
+              hasPendingSheetMutation = true;
+            }
           }
         } catch (cErr) {
           console.warn("Could not retrieve cached count for integrity check:", cErr);
@@ -1510,10 +1649,28 @@ export default function App() {
               if (Array.isArray(parsed) && parsed.length > 0) {
                 existingCacheList = parsed;
                 cachedCount = existingCacheList.length;
+                if (existingCacheList.some((r: LandRecord) => r._needsSheetSync)) {
+                  hasPendingSheetMutation = true;
+                }
               }
             }
           } catch (e) {}
         }
+
+        // If Firestore/localStorage has pending mutations (e.g. Merge, Split, Delete, or offline edits),
+        // push them directly to Google Spreadsheet FIRST so the Spreadsheet is updated rather than overwriting our changes!
+        if (hasPendingSheetMutation && existingCacheList.length > 0 && !options?.forceDirectSheet) {
+          try {
+            const syncedList = await overwriteSpreadsheetRecords(accessToken, sheetId, existingCacheList);
+            await saveRecordsToFirestoreCache(projectId, syncedList, false);
+            existingCacheList = syncedList;
+            cachedCount = syncedList.length;
+            hasPendingSheetMutation = false;
+          } catch (pushErr) {
+            console.warn("Auto-push pending mutations to Google Sheets failed, keeping cache:", pushErr);
+          }
+        }
+
         setCachedRecordsForDiff(existingCacheList);
 
         // Fetch all rows with integrity audit
@@ -1523,7 +1680,6 @@ export default function App() {
           onIntegrityCheck: (log) => {
             setIntegrityStatus(log);
             setIsIntegrityDismissed(false);
-            // Save integrity log in local storage & Firestore for audit trail
             saveIntegrityLog({
               ...log,
               timestamp: Date.now(),
@@ -1531,17 +1687,27 @@ export default function App() {
             });
           }
         });
-        return { items, folderId, sheetId, uploadsFolderId, existingCacheList };
+        return { items, folderId, sheetId, uploadsFolderId, existingCacheList, hasPendingSheetMutation };
       })();
 
       const timeoutPromise = new Promise<never>((_, reject) => 
         setTimeout(() => reject(new Error('Koneksi Google Drive/Sheets timeout (35 detik). Mengalihkan ke data cadangan...')), 35000)
       );
 
-      const { items, existingCacheList } = await Promise.race([syncPromise, timeoutPromise]);
+      const { items, existingCacheList, hasPendingSheetMutation } = await Promise.race([syncPromise, timeoutPromise]);
 
       const sortedItems = [...items].sort(compareLandRecords);
       setSpreadsheetRecordsForDiff(sortedItems);
+
+      // If there are still unpushed mutations in existingCacheList, preserve existingCacheList in UI state!
+      if (hasPendingSheetMutation && existingCacheList.length > 0 && !options?.forceDirectSheet) {
+        const sortedCache = [...existingCacheList].sort(compareLandRecords);
+        setRecords(sortedCache);
+        setIsLiveGoogleConnected(true);
+        setSheetNameInfo(activeProj.name);
+        return;
+      }
+
       setRecords(sortedItems);
       setIsLiveGoogleConnected(true);
       
@@ -1552,16 +1718,12 @@ export default function App() {
         console.warn("localStorage quota exceeded, unable to cache records locally:", storageError);
       }
 
-      // If an inconsistency or pending field team edits are detected, do not immediately overwrite Firestore cache
-      // so that Admin can inspect differences and choose whether to apply spreadsheet or push field edits!
+      // Check if there are differences between Firestore cache and Spreadsheet
       const hasCountDiff = existingCacheList && existingCacheList.length > 0 && Math.abs(sortedItems.length - existingCacheList.length) > 0;
       
       const hasFieldEdits = (existingCacheList || []).some(cachedRec => {
         if (cachedRec._needsSheetSync) return true;
-        const sheetRec = sortedItems.find(s => 
-          (cachedRec.ID_UNIK && s.ID_UNIK === cachedRec.ID_UNIK) ||
-          (cachedRec.CODE && s.CODE && s.CODE.trim().toUpperCase() === cachedRec.CODE.trim().toUpperCase())
-        );
+        const sheetRec = sortedItems.find(s => isSameRecord(s, cachedRec));
         if (!sheetRec) return true;
         return cachedRec.NAMA !== sheetRec.NAMA ||
                cachedRec.NIK !== sheetRec.NIK ||
@@ -1573,7 +1735,7 @@ export default function App() {
 
       const hasInconsistency = hasCountDiff || hasFieldEdits;
       if (!hasInconsistency || options?.isManualSync) {
-        saveRecordsToFirestoreCache(projectId, sortedItems);
+        saveRecordsToFirestoreCache(projectId, sortedItems, false);
       } else {
         console.warn(`[Integritas Data] Terdeteksi perbedaan data/editan lapangan antara Firestore Cache dan Spreadsheet. Cache tidak ditimpa agar editan tim lapangan aman.`);
       }
@@ -1596,15 +1758,11 @@ export default function App() {
 
       // 1. Try Firestore Cache (Most up-to-date shared cloud cache)
       try {
-        const cacheRef = doc(db, 'records_cache', projectId);
-        const cacheSnap = await getDoc(cacheRef);
-        if (cacheSnap.exists()) {
-          const cacheData = cacheSnap.data();
-          if (cacheData && Array.isArray(cacheData.records) && cacheData.records.length > 0) {
-            setRecords(cacheData.records);
-            fallbackCount = cacheData.records.length;
-            loadedFromFallback = true;
-          }
+        const cloudRecords = await fetchRecordsFromFirestoreCache(projectId);
+        if (cloudRecords.length > 0) {
+          setRecords(cloudRecords);
+          fallbackCount = cloudRecords.length;
+          loadedFromFallback = true;
         }
       } catch (fsErr) {
         console.warn("Gagal memuat dari Firestore cache:", fsErr);
@@ -1800,11 +1958,7 @@ export default function App() {
     let cacheList = cachedRecordsForDiff;
     if (cacheList.length === 0) {
       try {
-        const cacheRef = doc(db, 'records_cache', activeProjectId);
-        const cacheSnap = await getDoc(cacheRef);
-        if (cacheSnap.exists() && Array.isArray(cacheSnap.data()?.records)) {
-          cacheList = cacheSnap.data().records;
-        }
+        cacheList = await fetchRecordsFromFirestoreCache(activeProjectId);
       } catch (e) {
         console.warn("Could not retrieve cache from Firestore:", e);
       }
@@ -1865,22 +2019,46 @@ export default function App() {
   const handleApplyCacheData = async () => {
     setIsApplyingDiffDecision(true);
     try {
-      const sorted = [...cachedRecordsForDiff].sort(compareLandRecords);
+      const sorted = [...cachedRecordsForDiff].sort(compareLandRecords).map((r, idx) => ({
+        ...r,
+        rowNumber: idx + 2
+      }));
       setRecords(sorted);
+      try {
+        localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(sorted));
+      } catch (e) {}
+
+      const targetSpreadsheetId = spreadsheetId && spreadsheetId !== 'guest_bypass'
+        ? spreadsheetId
+        : projects.find(p => p.id === activeProjectId)?.spreadsheetId;
+
+      if (targetSpreadsheetId && targetSpreadsheetId !== 'guest_bypass' && token && token !== 'GUEST_BYPASS') {
+        await executeWithAuthRetry(async (activeAuthToken) => {
+          await overwriteSpreadsheetRecords(activeAuthToken, targetSpreadsheetId, sorted);
+        });
+        await saveRecordsToFirestoreCache(activeProjectId, sorted, false);
+      } else {
+        await saveRecordsToFirestoreCache(activeProjectId, sorted, true);
+      }
+
       setIsIntegrityDismissed(true);
       setIsDiffModalOpen(false);
       setSyncFeedback({
-        type: 'info',
-        message: `ℹ️ Menggunakan data dari Cache (${sorted.length} baris). Peringatan integritas ditutup.`,
+        type: 'success',
+        message: `✅ Data Cache (${sorted.length} baris) berhasil diterapkan dan disinkronkan ke Google Spreadsheet!`,
         timestamp: Date.now()
       });
       logActivity(
         'RESOLVE-CACHE',
         'UPDATE',
-        `Admin mempertahankan data dari Cache Firestore (${sorted.length} baris) sebagai data operasional.`
+        `Admin menerapkan data dari Cache Firestore (${sorted.length} baris) ke Google Spreadsheet.`
       );
     } catch (err: any) {
-      alert("Gagal menerapkan data cache: " + (err?.message || err));
+      setSyncFeedback({
+        type: 'error',
+        message: `Gagal menerapkan data cache: ${err?.message || err}`,
+        timestamp: Date.now()
+      });
     } finally {
       setIsApplyingDiffDecision(false);
     }
@@ -1898,7 +2076,11 @@ export default function App() {
       : projects.find(p => p.id === activeProjectId)?.spreadsheetId;
 
     if (!targetSpreadsheetId || targetSpreadsheetId === 'guest_bypass') {
-      alert("ID Spreadsheet proyek belum disetel. Periksa pengaturan proyek.");
+      setSyncFeedback({
+        type: 'error',
+        message: 'ID Spreadsheet proyek belum disetel. Periksa pengaturan proyek.',
+        timestamp: Date.now()
+      });
       return;
     }
 
@@ -1915,27 +2097,27 @@ export default function App() {
     setIsPushingFieldEdits(true);
     try {
       await executeWithAuthRetry(async (activeAuthToken) => {
-        let currentRecords = await fetchSpreadsheetRecords(activeAuthToken, targetSpreadsheetId);
-        for (const item of pending) {
-          await saveRecordToSpreadsheet(activeAuthToken, targetSpreadsheetId, item, true, currentRecords);
-        }
-        const refreshed = await fetchSpreadsheetRecords(activeAuthToken, targetSpreadsheetId);
-        const cleaned = refreshed.map(r => ({ ...r, _needsSheetSync: false }));
-        const sorted = [...cleaned].sort(compareLandRecords);
-        setRecords(sorted);
+        const sortedCurrent = [...records].sort(compareLandRecords);
+        const synced = await overwriteSpreadsheetRecords(activeAuthToken, targetSpreadsheetId, sortedCurrent);
+        const finalSorted = [...synced].sort(compareLandRecords);
+        setRecords(finalSorted);
         try {
-          localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(sorted));
+          localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(finalSorted));
         } catch (e) {}
-        await saveRecordsToFirestoreCache(activeProjectId, sorted);
+        await saveRecordsToFirestoreCache(activeProjectId, finalSorted, false);
       });
 
       setSyncFeedback({
         type: 'success',
-        message: `✅ Berhasil menyinkronkan ${pending.length} data editan lapangan ke Google Spreadsheet master!`,
+        message: `✅ Berhasil menyinkronkan seluruh perubahan (${pending.length} mutasi/editan) ke Google Spreadsheet master!`,
         timestamp: Date.now()
       });
     } catch (err: any) {
-      alert("Gagal menyinkronkan editan ke spreadsheet: " + (err?.message || err));
+      setSyncFeedback({
+        type: 'error',
+        message: `Gagal menyinkronkan ke spreadsheet: ${err?.message || err}`,
+        timestamp: Date.now()
+      });
     } finally {
       setIsPushingFieldEdits(false);
     }
@@ -2369,49 +2551,126 @@ export default function App() {
     logActivity(updatedRecord.CODE, actionType, details);
   };
 
-  // Handle Batch Update of Records (e.g. from Merge or Split Bidang)
+  // Handle Batch Update of Records (e.g. from Merge / Gabung Bidang, Split / Pecah Bidang, or Delete / Hapus Bidang)
   const handleBatchUpdateRecords = async (newRecords: LandRecord[], logDetails: string) => {
-    const sorted = [...newRecords].sort(compareLandRecords);
+    let activeToken = token;
+    if (!activeToken || activeToken === 'GUEST_BYPASS') {
+      const stored = typeof window !== 'undefined' ? sessionStorage.getItem('project_ventura_oauth_token') : null;
+      if (stored && stored !== 'GUEST_BYPASS') {
+        activeToken = stored;
+        setToken(stored);
+      }
+    }
+
+    const targetSpreadsheetId = (spreadsheetId && spreadsheetId !== 'guest_bypass')
+      ? spreadsheetId
+      : projects.find(p => p.id === activeProjectId)?.spreadsheetId;
+
+    const isOfflineOrGuest = !activeToken || activeToken === 'GUEST_BYPASS' || !targetSpreadsheetId || targetSpreadsheetId === 'guest_bypass';
+
+    // Sort and assign clean sequential rowNumber (idx + 2)
+    const sorted = [...newRecords].sort(compareLandRecords).map((r, idx) => ({
+      ...r,
+      rowNumber: idx + 2,
+      _lastModified: Date.now(),
+      _needsSheetSync: isOfflineOrGuest ? true : Boolean(r._needsSheetSync)
+    }));
+
     setRecords(sorted);
 
-    // 1. Update localStorage cache
+    // 1. Update localStorage cache immediately
     try {
       localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(sorted));
     } catch (e) {
       console.warn("localStorage quota exceeded:", e);
     }
 
-    // 2. Update Firestore cache
+    // 2. Save to Firestore cloud cache (mark hasPendingSheetMutation = true until Google Sheets confirms write)
     try {
-      await saveRecordsToFirestoreCache(activeProjectId, sorted);
+      await saveRecordsToFirestoreCache(activeProjectId, sorted, true);
     } catch (e) {
       console.warn("Gagal menyimpan cache Firestore:", e);
     }
 
-    // 3. Log Activity
+    // 3. Synchronize full table (including re-indexed n-1 / +N parcels and cleared trailing rows) to Google Spreadsheet
+    let sheetSynced = false;
+    let sheetErrorMsg = '';
+    if (!isOfflineOrGuest && targetSpreadsheetId) {
+      try {
+        await executeWithAuthRetry(async (activeAuthToken) => {
+          const syncedRecords = await overwriteSpreadsheetRecords(activeAuthToken, targetSpreadsheetId, sorted);
+          const finalSorted = [...syncedRecords].sort(compareLandRecords).map((r, idx) => ({
+            ...r,
+            rowNumber: idx + 2,
+            _needsSheetSync: false
+          }));
+          setRecords(finalSorted);
+          setSpreadsheetRecordsForDiff(finalSorted);
+          setCachedRecordsForDiff(finalSorted);
+          try {
+            localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(finalSorted));
+          } catch (e) {}
+          await saveRecordsToFirestoreCache(activeProjectId, finalSorted, false);
+          sheetSynced = true;
+        });
+      } catch (sheetErr: any) {
+        console.warn("Sinkronisasi mutasi bidang ke Google Spreadsheet tertunda:", sheetErr);
+        sheetErrorMsg = sheetErr?.message || 'Koneksi Google Sheets terputus';
+        // Ensure records are flagged so they auto-sync to Google Sheets on next connection
+        const flagged = sorted.map(r => ({ ...r, _needsSheetSync: true }));
+        setRecords(flagged);
+        try {
+          localStorage.setItem(`project_ventura_records_cache_${activeProjectId}`, JSON.stringify(flagged));
+        } catch (e) {}
+        await saveRecordsToFirestoreCache(activeProjectId, flagged, true);
+      }
+    }
+
+    // 4. Log Activity
     logActivity('MUTASI_BIDANG', 'UPDATE', logDetails);
 
-    // 4. Update integrity status if active
+    // 5. Update integrity status if active
     if (integrityStatus) {
       setIntegrityStatus({
         ...integrityStatus,
+        status: sheetSynced ? 'CONSISTENT' : integrityStatus.status,
         cacheCount: sorted.length,
+        spreadsheetCount: sheetSynced ? sorted.length : integrityStatus.spreadsheetCount,
+        difference: sheetSynced ? 0 : Math.abs(sorted.length - integrityStatus.spreadsheetCount),
         message: `[Mutasi Bidang Sukses] ${logDetails} (Total: ${sorted.length} bidang).`
       });
     }
 
-    // 5. Toast Feedback
-    setSyncFeedback({
-      type: 'success',
-      message: `✅ Berhasil: ${logDetails}`,
-      timestamp: Date.now()
-    });
+    // 6. Toast Feedback
+    if (sheetSynced) {
+      setSyncFeedback({
+        type: 'success',
+        message: `✅ Berhasil & Tersinkron ke Database + Google Spreadsheet: ${logDetails}`,
+        timestamp: Date.now()
+      });
+    } else if (sheetErrorMsg) {
+      setSyncFeedback({
+        type: 'warning',
+        message: `✅ Tersimpan di Database Cloud Firestore (${sorted.length} bidang): ${logDetails}. Sinkron ke Google Spreadsheet akan dilanjutkan otomatis saat sesi Google terhubung (${sheetErrorMsg}).`,
+        timestamp: Date.now()
+      });
+    } else {
+      setSyncFeedback({
+        type: 'success',
+        message: `✅ Berhasil disimpan ke Database Cloud Firestore (${sorted.length} bidang): ${logDetails}`,
+        timestamp: Date.now()
+      });
+    }
   };
 
   // Handle Delete Record (Admin Only)
   const handleDeleteRecord = async (targetRecord: LandRecord, adjustNextParcels: boolean = true) => {
     if (role !== 'ADMIN') {
-      alert('Akses Ditolak: Hanya akun dengan peran Administrator (ADMIN) yang diizinkan untuk menghapus data bidang.');
+      setSyncFeedback({
+        type: 'error',
+        message: 'Akses Ditolak: Hanya akun dengan peran Administrator (ADMIN) yang diizinkan untuk menghapus data bidang.',
+        timestamp: Date.now()
+      });
       return;
     }
 
@@ -2420,14 +2679,7 @@ export default function App() {
       adjustNextParcels
     });
 
-    // Delete row from Google Sheets in background if connected and rowNumber is valid
-    if (targetRecord.rowNumber && targetRecord.rowNumber > 1 && spreadsheetId && token && token !== 'GUEST_BYPASS') {
-      deleteSpreadsheetRow(token, spreadsheetId, targetRecord.rowNumber).catch(e => {
-        console.warn('Gagal menghapus baris di Google Sheets:', e);
-      });
-    }
-
-    if (selectedRecordForEdit && (selectedRecordForEdit.CODE === targetRecord.CODE || selectedRecordForEdit.ID_UNIK === targetRecord.ID_UNIK)) {
+    if (selectedRecordForEdit && isSameRecord(selectedRecordForEdit, targetRecord)) {
       setSelectedRecordForEdit(null);
     }
 

@@ -8,7 +8,7 @@ interface DeleteParcelModalProps {
   onClose: () => void;
   targetRecord: LandRecord;
   allRecords: LandRecord[];
-  onConfirmDelete: (updatedRecords: LandRecord[], logMessage: string) => Promise<void>;
+  onConfirmDelete: (updatedRecords: LandRecord[], logMessage: string, adjustNextParcels: boolean) => Promise<void>;
 }
 
 export default function DeleteParcelModal({
@@ -48,7 +48,7 @@ export default function DeleteParcelModal({
         adjustNextParcels
       });
 
-      await onConfirmDelete(updatedRecords, logSummary);
+      await onConfirmDelete(updatedRecords, logSummary, adjustNextParcels);
       onClose();
     } catch (err: any) {
       console.error('Delete parcel error:', err);

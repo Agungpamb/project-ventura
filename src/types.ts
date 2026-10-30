@@ -272,7 +272,13 @@ export const recordToRow = (record: LandRecord): string[] => {
     record.TTD_PEMILIK || ""
   );
 
-  return row;
+  // Sanitize cells so Google Sheets API (50,000 char per cell limit) never rejects a row
+  return row.map(cell => {
+    if (cell === undefined || cell === null) return "";
+    const str = String(cell);
+    if (str.startsWith('data:') && str.length > 40000) return "";
+    return str.length > 48000 ? str.substring(0, 48000) : str;
+  });
 };
 
 // Parses a row array back to a LandRecord object based on index mapping

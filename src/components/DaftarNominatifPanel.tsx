@@ -44,12 +44,12 @@ export default function DaftarNominatifPanel({
   const [desaSearch, setDesaSearch] = useState<string>('');
   const [selectedRecordDetail, setSelectedRecordDetail] = useState<LandRecord | null>(null);
 
-  // Reset filters when active project or records change
+  // Reset filters ONLY when active project changes (never on records mutation so Desa/Span view stays open!)
   useEffect(() => {
     setSelectedDesa('');
     setSelectedSpan('');
     setSelectedRecordCodes(new Set());
-  }, [records, activeProjectId, activeProjectName]);
+  }, [activeProjectId, activeProjectName]);
 
   // Selection state for Merge / Split
   const [selectedRecordCodes, setSelectedRecordCodes] = useState<Set<string>>(new Set());
@@ -1541,12 +1541,12 @@ export default function DaftarNominatifPanel({
           recordB={mergePair[1]}
           allRecords={records}
           onConfirmMerge={async (updatedRecords, logMsg) => {
-            setSelectedRecordCodes(new Set());
-            setIsMergeModalOpen(false);
-            setMergePair(null);
             if (onBatchUpdateRecords) {
               await onBatchUpdateRecords(updatedRecords, logMsg);
             }
+            setSelectedRecordCodes(new Set());
+            setIsMergeModalOpen(false);
+            setMergePair(null);
           }}
         />
       )}
@@ -1562,12 +1562,12 @@ export default function DaftarNominatifPanel({
           targetRecord={splitTarget}
           allRecords={records}
           onConfirmSplit={async (updatedRecords, logMsg) => {
-            setSelectedRecordCodes(new Set());
-            setIsSplitModalOpen(false);
-            setSplitTarget(null);
             if (onBatchUpdateRecords) {
               await onBatchUpdateRecords(updatedRecords, logMsg);
             }
+            setSelectedRecordCodes(new Set());
+            setIsSplitModalOpen(false);
+            setSplitTarget(null);
           }}
         />
       )}
@@ -1599,19 +1599,19 @@ export default function DaftarNominatifPanel({
           onClose={() => setRecordToDelete(null)}
           targetRecord={recordToDelete}
           allRecords={records}
-          onConfirmDelete={async (updatedRecords, logMsg) => {
+          onConfirmDelete={async (updatedRecords, logMsg, adjustNextParcels) => {
             const target = recordToDelete;
+            if (onDeleteRecord) {
+              await onDeleteRecord(target, adjustNextParcels);
+            } else if (onBatchUpdateRecords) {
+              await onBatchUpdateRecords(updatedRecords, logMsg);
+            }
             setSelectedRecordCodes(prev => {
               const next = new Set(prev);
               next.delete(target.CODE);
               return next;
             });
             setRecordToDelete(null);
-            if (onDeleteRecord) {
-              await onDeleteRecord(target, true);
-            } else if (onBatchUpdateRecords) {
-              await onBatchUpdateRecords(updatedRecords, logMsg);
-            }
           }}
         />
       )}

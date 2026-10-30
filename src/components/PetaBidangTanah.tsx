@@ -1588,12 +1588,12 @@ export default function PetaBidangTanah({
           onClose={() => setRecordToDelete(null)}
           targetRecord={recordToDelete}
           allRecords={records}
-          onConfirmDelete={async (updatedRecords, logMsg) => {
+          onConfirmDelete={async (_updatedRecords, _logMsg, adjustNextParcels) => {
             const target = recordToDelete;
-            setRecordToDelete(null);
             if (onDeleteRecord) {
-              await onDeleteRecord(target, true);
+              await onDeleteRecord(target, adjustNextParcels);
             }
+            setRecordToDelete(null);
           }}
         />
       )}
