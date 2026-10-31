@@ -6,7 +6,7 @@ import {
   ArrowRight, Zap, GitMerge, Scissors, CheckSquare, Square, ShieldAlert, Trash2, Briefcase
 } from 'lucide-react';
 import { type LandRecord, type ProjectConfig } from '../types';
-import * as XLSX from 'xlsx';
+import XLSX from 'xlsx-js-style';
 import MergeParcelModal from './MergeParcelModal';
 import SplitParcelModal from './SplitParcelModal';
 import QuickParcelPickerModal from './QuickParcelPickerModal';
@@ -370,7 +370,7 @@ export default function DaftarNominatifPanel({
     });
   };
 
-  // Export ke Excel (.xlsx) dengan struktur persis Daftar Nominatif & tiap baris Identitas/Bukti dipisah per sel
+  // Export ke Excel (.xlsx) dengan struktur persis Daftar Nominatif, garis tegas per bidang, & 1 baris kosong antar bidang
   const handleExportExcel = () => {
     const targetRecords = getRecordsForExport();
     if (targetRecords.length === 0) {
@@ -384,6 +384,8 @@ export default function DaftarNominatifPanel({
     // Bangun Array-of-Arrays (AOA) untuk Worksheet Excel
     const aoa: (string | number)[][] = [];
     const merges: XLSX.Range[] = [];
+    const parcelBlocks: { startRow: number; endRow: number }[] = [];
+    const spacerRows = new Set<number>();
 
     // Baris 0, 1, 2: KOP / Judul Daftar Nominatif (Merge kolom 0 s/d 23)
     aoa.push(['DAFTAR NOMINATIF INVENTARISASI TANAH, BANGUNAN, DAN/ATAU TANAMAN', ...Array(23).fill('')]);
@@ -398,8 +400,9 @@ export default function DaftarNominatifPanel({
     aoa.push([locationSubtitle, ...Array(23).fill('')]);
     merges.push({ s: { r: 2, c: 0 }, e: { r: 2, c: 23 } });
 
-    // Baris 3: Baris kosong pemisah
+    // Baris 3: Baris kosong pemisah KOP dengan Tabel
     aoa.push(Array(24).fill(''));
+    spacerRows.add(3);
 
     // Baris 4: HEADER BARIS 1 (Kelompok Utama persis Daftar Nominatif)
     aoa.push([
@@ -457,6 +460,9 @@ export default function DaftarNominatifPanel({
       ''
     ]);
 
+    const singleValueCols = [0, 1, 2, 3, 6, 7, 8, 18, 19, 20, 21, 22, 23];
+    const singleValueColsSet = new Set<number>(singleValueCols);
+
     // Merge vertikal untuk kolom tunggal pada Header (Baris 4 s/d 5)
     [0, 1, 2, 3, 4, 5, 18, 19, 20, 21, 22, 23].forEach(colIdx => {
       merges.push({ s: { r: 4, c: colIdx }, e: { r: 5, c: colIdx } });
@@ -468,7 +474,7 @@ export default function DaftarNominatifPanel({
 
     let currentRowIndex = 6;
 
-    // Loop setiap bidang: 1 bidang dirender menjadi beberapa baris (subRowsCount)
+    // Loop setiap bidang: 1 bidang dirender menjadi beberapa baris (subRowsCount) + 1 baris kosong antar bidang
     targetRecords.forEach((r, idx) => {
       const identitasLines = getIdentitasLines(r);
       const buktiLines = getBuktiPenguasaanLines(r);
@@ -486,6 +492,9 @@ export default function DaftarNominatifPanel({
       );
 
       const startParcelRow = currentRowIndex;
+      const endParcelRow = startParcelRow + subRowsCount - 1;
+      parcelBlocks.push({ startRow: startParcelRow, endRow: endParcelRow });
+
       const luasTanahNum = parseFloat((r.LUAS || '0').toString().replace(',', '.'));
       const luasTanahVal: string | number = !isNaN(luasTanahNum) ? luasTanahNum : (r.LUAS || 0);
 
@@ -542,18 +551,135 @@ export default function DaftarNominatifPanel({
 
       // Merge vertikal hanya untuk kolom atribut tunggal per bidang (sedangkan Identitas, Bukti, Bangunan, Tanaman TIDAK di-merge agar 1 baris = 1 sel)
       if (subRowsCount > 1) {
-        const endParcelRow = startParcelRow + subRowsCount - 1;
-        [0, 1, 2, 3, 6, 7, 8, 18, 19, 20, 21, 22, 23].forEach(colIdx => {
+        singleValueCols.forEach(colIdx => {
           merges.push({
             s: { r: startParcelRow, c: colIdx },
             e: { r: endParcelRow, c: colIdx }
           });
         });
       }
+
+      // Tambah 1 Baris Kosong sebagai pemisah tegas antar bidang
+      if (idx < targetRecords.length - 1) {
+        aoa.push(Array(24).fill(''));
+        spacerRows.add(currentRowIndex);
+        currentRowIndex++;
+      }
     });
 
     const worksheet = XLSX.utils.aoa_to_sheet(aoa);
     worksheet['!merges'] = merges;
+
+    // Styling Border & Font untuk KOP, Header, dan Garis Tegas per Bidang
+    const borderMediumBlack = { style: 'medium', color: { rgb: '000000' } };
+    const borderThinDark = { style: 'thin', color: { rgb: '475569' } };
+    const borderThinSubtle = { style: 'thin', color: { rgb: 'CBD5E1' } };
+
+    // 1. Style KOP (Baris 0..2)
+    for (let r = 0; r <= 2; r++) {
+      const cellRef = XLSX.utils.encode_cell({ r, c: 0 });
+      if (worksheet[cellRef]) {
+        worksheet[cellRef].s = {
+          font: {
+            name: 'Arial',
+            sz: r === 0 ? 12 : r === 1 ? 11 : 9.5,
+            bold: true,
+            color: { rgb: '0F172A' }
+          },
+          alignment: { horizontal: 'center', vertical: 'center' }
+        };
+      }
+    }
+
+    // 2. Style Header Tabel (Baris 4 & 5)
+    for (let r = 4; r <= 5; r++) {
+      for (let c = 0; c < 24; c++) {
+        const cellRef = XLSX.utils.encode_cell({ r, c });
+        if (!worksheet[cellRef]) {
+          worksheet[cellRef] = { t: 's', v: '' };
+        }
+        worksheet[cellRef].s = {
+          font: { name: 'Arial', sz: 9, bold: true, color: { rgb: 'FFFFFF' } },
+          fill: { fgColor: { rgb: r === 4 ? '0F172A' : '1E293B' } },
+          alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+          border: {
+            top: r === 4 ? borderMediumBlack : borderThinDark,
+            bottom: r === 5 ? borderMediumBlack : borderThinDark,
+            left: c === 0 ? borderMediumBlack : borderThinDark,
+            right: c === 23 ? borderMediumBlack : borderThinDark
+          }
+        };
+      }
+    }
+
+    // 3. Style Setiap Blok Bidang dengan Garis Tegas (Medium Black Border) mengelilingi tiap bidang
+    const centerCols = new Set([0, 1, 2, 3, 13, 14, 15, 16, 17, 18, 19, 20, 21]);
+    const rightCols = new Set([8, 9]);
+    const groupLeftCols = new Set([0, 4, 5, 6, 9, 12, 18]);
+
+    parcelBlocks.forEach(({ startRow, endRow }) => {
+      for (let r = startRow; r <= endRow; r++) {
+        const isFirstRowOfParcel = r === startRow;
+        const isLastRowOfParcel = r === endRow;
+
+        for (let c = 0; c < 24; c++) {
+          const cellRef = XLSX.utils.encode_cell({ r, c });
+          if (!worksheet[cellRef]) {
+            worksheet[cellRef] = { t: 's', v: '' };
+          }
+
+          const isSingleMergedCol = singleValueColsSet.has(c);
+
+          // Garis atas & bawah: TEGAS (medium black) pada batas awal & akhir bidang, tipis di sub-baris dalam bidang
+          const topBorder = isFirstRowOfParcel
+            ? borderMediumBlack
+            : isSingleMergedCol
+            ? undefined
+            : borderThinSubtle;
+
+          const bottomBorder = isLastRowOfParcel
+            ? borderMediumBlack
+            : isSingleMergedCol
+            ? undefined
+            : borderThinSubtle;
+
+          const leftBorder =
+            c === 0 || groupLeftCols.has(c) ? borderMediumBlack : borderThinDark;
+          const rightBorder =
+            c === 23 || groupLeftCols.has(c + 1) ? borderMediumBlack : borderThinDark;
+
+          const isBoldRow =
+            (c === 4 && isFirstRowOfParcel) ||
+            (c === 5 && isFirstRowOfParcel) ||
+            c === 2 ||
+            c === 8;
+
+          worksheet[cellRef].s = {
+            font: {
+              name: 'Arial',
+              sz: 9,
+              bold: isBoldRow,
+              color: { rgb: '0F172A' }
+            },
+            alignment: {
+              horizontal: centerCols.has(c)
+                ? 'center'
+                : rightCols.has(c)
+                ? 'right'
+                : 'left',
+              vertical: isSingleMergedCol ? 'top' : 'center',
+              wrapText: false
+            },
+            border: {
+              ...(topBorder ? { top: topBorder } : {}),
+              ...(bottomBorder ? { bottom: bottomBorder } : {}),
+              left: leftBorder,
+              right: rightBorder
+            }
+          };
+        }
+      }
+    });
 
     // Atur lebar kolom agar rapi dan proporsional saat dibuka di Excel
     worksheet['!cols'] = [
@@ -583,11 +709,11 @@ export default function DaftarNominatifPanel({
       { wch: 30 }  // KETERANGAN
     ];
 
-    // Kunci tinggi setiap baris agar seragam (tidak ada baris yang meninggi sendiri)
+    // Kunci tinggi setiap baris agar seragam (dan baris kosong antar bidang setinggi 14pt)
     worksheet['!rows'] = aoa.map((_, rIdx) => {
       if (rIdx <= 2) return { hpt: 20 };
-      if (rIdx === 3) return { hpt: 10 };
-      if (rIdx === 4 || rIdx === 5) return { hpt: 22 };
+      if (spacerRows.has(rIdx)) return { hpt: 14 };
+      if (rIdx === 4 || rIdx === 5) return { hpt: 24 };
       return { hpt: 19 };
     });
 
@@ -603,7 +729,7 @@ export default function DaftarNominatifPanel({
     XLSX.writeFile(workbook, fileName);
   };
 
-  // Export to CSV (Mengikuti struktur per-baris yang sama dengan Daftar Nominatif)
+  // Export to CSV (Mengikuti struktur per-baris yang sama dengan Daftar Nominatif + 1 baris kosong antar bidang)
   const handleExportCSV = () => {
     const targetRecords = getRecordsForExport();
     if (targetRecords.length === 0) {
@@ -694,6 +820,11 @@ export default function DaftarNominatifPanel({
           isFirstSub ? (r.KETERANGAN || '') : ''
         ];
         csvRows.push(row.map(csvEscape).join(','));
+      }
+
+      // Tambah 1 baris kosong antar bidang
+      if (idx < targetRecords.length - 1) {
+        csvRows.push(Array(24).fill('').map(csvEscape).join(','));
       }
     });
 
@@ -1298,7 +1429,13 @@ export default function DaftarNominatifPanel({
                     subRows.push(
                       <tr 
                         key={`nom-rec-${idx}-sub-${sIdx}`} 
-                        className={`hover:bg-white/5 transition-all text-xs ${!isFirstSub ? 'bg-slate-900/30' : ''} ${sIdx === subRowsCount - 1 ? 'border-b border-white/10' : 'border-b border-white/5'} ${
+                        className={`hover:bg-white/5 transition-all text-xs ${!isFirstSub ? 'bg-slate-900/30' : ''} ${
+                          isFirstSub ? 'border-t-2 border-t-slate-400/70 [html.light_&]:!border-t-slate-900' : ''
+                        } ${
+                          sIdx === subRowsCount - 1
+                            ? 'border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900'
+                            : 'border-b border-white/10'
+                        } ${
                           selectedRecordCodes.has(r.CODE) ? 'bg-emerald-950/20' : ''
                         }`}
                       >
@@ -1306,7 +1443,7 @@ export default function DaftarNominatifPanel({
                         {isFirstSub && (
                           <>
                             {/* CHECKBOX PILIH UNTUK MUTASI (PECAH / GABUNG) */}
-                            <td rowSpan={subRowsCount} className="py-2.5 px-2 text-center border-r border-white/5 align-top no-print">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 text-center border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 align-top no-print">
                               <button
                                 type="button"
                                 onClick={() => toggleSelectRecord(r)}
@@ -1330,17 +1467,17 @@ export default function DaftarNominatifPanel({
                             </td>
 
                             {/* NO */}
-                            <td rowSpan={subRowsCount} className="py-2.5 px-2 text-center border-r border-white/5 font-mono text-slate-400 align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 text-center border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 font-mono text-slate-300 font-bold align-top">
                               {idx + 1}
                             </td>
 
                             {/* SPAN */}
-                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/5 font-mono font-bold text-sky-300 text-center align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 font-mono font-bold text-sky-300 text-center align-top">
                               {r.SPAN || '-'}
                             </td>
 
                             {/* NO BIDANG DENGAN BADGE MUTASI */}
-                            <td rowSpan={subRowsCount} className="py-2.5 px-2 text-center border-r border-white/5 align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 text-center border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 align-top">
                               <div className="flex flex-col items-center gap-1">
                                 <span className="px-1.5 py-0.5 bg-slate-900 border border-white/10 rounded font-mono font-bold text-white">
                                   {r.NOBID || '-'}
@@ -1359,7 +1496,7 @@ export default function DaftarNominatifPanel({
                             </td>
 
                             {/* PIHAK YANG BERHAK ATAS TANAH */}
-                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/5 font-bold text-slate-200 text-center text-[11px] align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 font-bold text-slate-200 text-center text-[11px] align-top">
                               <span className={`px-2 py-1 rounded text-[10px] font-mono block ${
                                 (r.STATUS_KEPEMILIKAN || '').includes('TKD') || (r.STATUS_KEPEMILIKAN || '').includes('PEMDES')
                                   ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
@@ -1372,7 +1509,7 @@ export default function DaftarNominatifPanel({
                         )}
 
                         {/* IDENTITAS PEMILIK: 1 Baris = 1 Data (Tidak menumpuk di 1 sel) */}
-                        <td className={`py-2 px-3 border-r border-white/5 align-middle uppercase ${
+                        <td className={`py-2 px-3 border-r border-white/10 align-middle uppercase ${
                           sIdx === 0
                             ? 'font-bold text-white text-xs'
                             : 'text-[11px] text-slate-300 font-medium'
@@ -1381,7 +1518,7 @@ export default function DaftarNominatifPanel({
                         </td>
 
                         {/* BUKTI PENGUASAAN / KEPEMILIKAN: 1 Baris = 1 Data (Tidak menumpuk di 1 sel) */}
-                        <td className={`py-2 px-3 border-r border-white/5 align-middle ${
+                        <td className={`py-2 px-3 border-r border-white/10 align-middle ${
                           sIdx === 0
                             ? 'text-[10px] font-extrabold uppercase text-amber-400 font-mono'
                             : sIdx === 1
@@ -1394,39 +1531,39 @@ export default function DaftarNominatifPanel({
                         {isFirstSub && (
                           <>
                             {/* TANAH: PENUTUP LAHAN */}
-                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/5 font-semibold text-slate-200 uppercase align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 font-semibold text-slate-200 uppercase align-top">
                               {r.PENUTUP_LAHAN || '-'}
                             </td>
 
                             {/* TANAH: STATUS */}
-                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/5 font-mono text-[10px] text-slate-300 uppercase align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 font-mono text-[10px] text-slate-300 uppercase align-top">
                               {r.STATUS_PENUTUP_LAHAN || r.STATUS_KEPEMILIKAN || 'TANAH MASYARAKAT'}
                             </td>
 
                             {/* TANAH: LUAS (M2) */}
-                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/5 font-mono font-black text-emerald-400 text-right align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 font-mono font-black text-emerald-400 text-right align-top">
                               {r.LUAS ? `${r.LUAS} M²` : '0 M²'}
                             </td>
                           </>
                         )}
 
                         {/* BANGUNAN: LUAS (M2) */}
-                        <td className="py-2.5 px-2 border-r border-white/5 font-mono font-bold text-sky-300 text-right align-middle">
+                        <td className="py-2 px-2 border-r border-white/10 font-mono font-bold text-sky-300 text-right align-middle">
                           {currentBuilding?.luas ? `${currentBuilding.luas} M²` : '-'}
                         </td>
 
                         {/* BANGUNAN: BENTUK */}
-                        <td className="py-2.5 px-2 border-r border-white/5 text-slate-300 align-middle">
+                        <td className="py-2 px-2 border-r border-white/10 text-slate-300 align-middle">
                           {currentBuilding?.bentuk || '-'}
                         </td>
 
                         {/* BANGUNAN: JENIS */}
-                        <td className="py-2.5 px-2 border-r border-white/5 text-slate-300 align-middle">
+                        <td className="py-2 px-2 border-r border-white/10 text-slate-300 align-middle">
                           {currentBuilding?.jenis || '-'}
                         </td>
 
                         {/* TANAMAN: JENIS TANAMAN */}
-                        <td className={`py-2.5 px-2 border-r border-white/5 uppercase text-[11px] align-middle ${
+                        <td className={`py-2 px-2 border-r border-white/10 uppercase text-[11px] align-middle ${
                           currentPlant?.jenis 
                             ? 'text-white [html.light_&]:!text-slate-900 font-bold' 
                             : 'text-slate-500 [html.light_&]:!text-slate-400 font-normal'
@@ -1434,8 +1571,8 @@ export default function DaftarNominatifPanel({
                           {currentPlant?.jenis || '-'}
                         </td>
 
-                        {/* TANAMAN: BELUM MENGHASILKAN (Swapped to come first) */}
-                        <td className={`py-2.5 px-1 border-r border-white/5 text-center font-mono align-middle ${
+                        {/* TANAMAN: BELUM MENGHASILKAN */}
+                        <td className={`py-2 px-1 border-r border-white/10 text-center font-mono align-middle ${
                           valBelum > 0 
                             ? 'font-bold text-white [html.light_&]:!text-slate-900' 
                             : 'font-normal text-slate-500 [html.light_&]:!text-slate-400'
@@ -1443,8 +1580,8 @@ export default function DaftarNominatifPanel({
                           {valBelum > 0 ? valBelum : '-'}
                         </td>
 
-                        {/* TANAMAN: SUDAH MENGHASILKAN (Swapped to come second) */}
-                        <td className={`py-2.5 px-1 border-r border-white/5 text-center font-mono align-middle ${
+                        {/* TANAMAN: SUDAH MENGHASILKAN */}
+                        <td className={`py-2 px-1 border-r border-white/10 text-center font-mono align-middle ${
                           valSudah > 0 
                             ? 'font-bold text-white [html.light_&]:!text-slate-900' 
                             : 'font-normal text-slate-500 [html.light_&]:!text-slate-400'
@@ -1453,7 +1590,7 @@ export default function DaftarNominatifPanel({
                         </td>
 
                         {/* TANAMAN KERAS: KECIL */}
-                        <td className={`py-2.5 px-1 border-r border-white/5 text-center font-mono align-middle ${
+                        <td className={`py-2 px-1 border-r border-white/10 text-center font-mono align-middle ${
                           valKecil > 0 
                             ? 'font-bold text-white [html.light_&]:!text-slate-900' 
                             : 'font-normal text-slate-500 [html.light_&]:!text-slate-400'
@@ -1462,7 +1599,7 @@ export default function DaftarNominatifPanel({
                         </td>
 
                         {/* TANAMAN KERAS: SEDANG */}
-                        <td className={`py-2.5 px-1 border-r border-white/5 text-center font-mono align-middle ${
+                        <td className={`py-2 px-1 border-r border-white/10 text-center font-mono align-middle ${
                           valSedang > 0 
                             ? 'font-bold text-white [html.light_&]:!text-slate-900' 
                             : 'font-normal text-slate-500 [html.light_&]:!text-slate-400'
@@ -1471,7 +1608,7 @@ export default function DaftarNominatifPanel({
                         </td>
 
                         {/* TANAMAN KERAS: BESAR */}
-                        <td className={`py-2.5 px-1 border-r border-white/5 text-center font-mono align-middle ${
+                        <td className={`py-2 px-1 border-r border-white/10 text-center font-mono align-middle ${
                           valBesar > 0 
                             ? 'font-bold text-white [html.light_&]:!text-slate-900' 
                             : 'font-normal text-slate-500 [html.light_&]:!text-slate-400'
@@ -1483,43 +1620,43 @@ export default function DaftarNominatifPanel({
                         {isFirstSub && (
                           <>
                             {/* PERALIHAN HAK */}
-                            <td rowSpan={subRowsCount} className="py-3 px-2 border-r border-white/5 text-center align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 text-center align-top">
                               <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 text-[10px] font-bold rounded">
                                 {r.JENIS_PERALIHAN_HAK || 'SESUAI'}
                               </span>
                             </td>
 
                             {/* PROGRES */}
-                            <td rowSpan={subRowsCount} className="py-3 px-2 border-r border-white/5 text-center align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 text-center align-top">
                               <span className="px-2 py-0.5 bg-sky-500/10 text-sky-300 border border-sky-500/20 text-[10px] font-bold rounded">
                                 {r.PROGRES_PEMBERKASAN || 'SELESAI'}
                               </span>
                             </td>
 
                             {/* KONFIRMASI BPN */}
-                            <td rowSpan={subRowsCount} className="py-3 px-2 border-r border-white/5 text-center font-mono text-[10px] text-slate-300 align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 text-center font-mono text-[10px] text-slate-300 align-top">
                               {r.KONFIRMASI_BPN || 'TIDAK'}
                             </td>
 
                             {/* UPLOAD TRABAS */}
-                            <td rowSpan={subRowsCount} className="py-3 px-2 border-r border-white/5 text-center align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 text-center align-top">
                               <span className="px-2 py-0.5 bg-emerald-600 text-white font-bold text-[10px] rounded shadow-sm">
                                 {r.PROGRES_UPLOAD_TRABAS || 'SUDAH'}
                               </span>
                             </td>
 
                             {/* KEKURANGAN BERKAS */}
-                            <td rowSpan={subRowsCount} className="py-3 px-2 border-r border-white/5 text-slate-400 text-[10px] align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 text-slate-400 text-[10px] align-top">
                               {r.KEKURANGAN_BERKAS || '-'}
                             </td>
 
                             {/* KETERANGAN */}
-                            <td rowSpan={subRowsCount} className="py-3 px-3 border-r border-white/5 font-mono text-[10px] text-slate-300 align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-3 border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 font-mono text-[10px] text-slate-300 align-top">
                               {r.KETERANGAN || '-'}
                             </td>
 
                             {/* AKSI */}
-                            <td rowSpan={subRowsCount} className="py-3 px-2 text-center no-print align-top">
+                            <td rowSpan={subRowsCount} className="py-2.5 px-2 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 text-center no-print align-top">
                               <div className="flex items-center justify-center gap-1">
                                 {/* Tombol Pecah Bidang (Split) */}
                                 <button
@@ -1587,12 +1724,11 @@ export default function DaftarNominatifPanel({
                     );
                   }
 
+                  // 1 Baris Kosong sebagai pemisah tegas antar bidang
                   if (idx < filteredRecords.length - 1) {
                     subRows.push(
-                      <tr key={`nom-rec-${idx}-sep`} className="bg-slate-950/90 border-t border-b border-white/10 h-3">
-                        <td colSpan={26} className="py-1 px-0 bg-slate-900/40 text-center font-mono text-[9px] text-slate-600 border-none">
-                          <div className="h-0.5 bg-gradient-to-r from-transparent via-amber-500/30 to-transparent w-full" />
-                        </td>
+                      <tr key={`nom-rec-${idx}-sep`} className="bg-slate-950 h-6">
+                        <td colSpan={26} className="py-2.5 px-0 bg-slate-950 border-none" />
                       </tr>
                     );
                   }
