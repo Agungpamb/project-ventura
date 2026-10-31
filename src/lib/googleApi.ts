@@ -155,6 +155,11 @@ async function handleResponseError(response: Response, defaultMessage: string): 
     detail.toLowerCase().includes('oauth 2 access token') ||
     detail.toLowerCase().includes('unauthenticated');
 
+  const isPermissionIssue = response.status === 403 ||
+    errorCode === 'PERMISSION_DENIED' ||
+    detail.toLowerCase().includes('caller does not have permission') ||
+    detail.toLowerCase().includes('insufficient permission');
+
   let errorMessage: string;
   if (isAuthIssue) {
     errorMessage = `Sesi Google Drive / Sheets telah kedaluwarsa (Token Expired). Silakan klik "Perbarui Sesi Google" untuk memperbarui izin dan menyimpan data tanpa kehilangan isian form.`;
@@ -166,6 +171,10 @@ async function handleResponseError(response: Response, defaultMessage: string): 
   if (isAuthIssue) {
     err.isAuthError = true;
     err.code = 'UNAUTHENTICATED';
+  }
+  if (isPermissionIssue) {
+    err.isPermissionError = true;
+    err.code = 'PERMISSION_DENIED';
   }
   throw err;
 }
@@ -400,7 +409,7 @@ export async function fetchSpreadsheetRecords(
 
       return records;
     } catch (err: any) {
-      if (attempt < maxRetries && !err?.isAuthError) {
+      if (attempt < maxRetries && !err?.isAuthError && !err?.isPermissionError) {
         attempt++;
         await new Promise(resolve => setTimeout(resolve, retryDelayMs * attempt));
         continue;

@@ -1493,9 +1493,11 @@ export default function App() {
         if (cached) {
           try {
             const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
+            if (Array.isArray(parsed)) {
               setRecords(parsed);
-              hasLoadedLocal = true;
+              if (parsed.length > 0) {
+                hasLoadedLocal = true;
+              }
             }
           } catch (e) {
             console.warn("Gagal membaca cache lokal:", e);
@@ -1504,8 +1506,9 @@ export default function App() {
 
         // 2. Fetch from Firestore cloud cache FIRST (so live Merge, Split, Delete, and Field Edits are NEVER overwritten by stale read-only CSV!)
         try {
+          const cacheDocSnap = await getDoc(doc(db, 'records_cache', projectId));
           const cloudRecords = await fetchRecordsFromFirestoreCache(projectId);
-          if (cloudRecords.length > 0) {
+          if (cloudRecords.length > 0 || cacheDocSnap.exists()) {
             const sortedCloud = [...cloudRecords].sort(compareLandRecords);
             setRecords(sortedCloud);
             try {
@@ -1518,7 +1521,9 @@ export default function App() {
                 timestamp: Date.now()
               });
             }
-            return; // Successfully got up-to-date real data from Firestore!
+            if (cloudRecords.length > 0 || !activeProj.publicCsvUrl) {
+              return; // Successfully got up-to-date real data (including intentionally emptied 0-record state) from Firestore!
+            }
           }
         } catch (fsErr) {
           console.warn("Gagal mengambil cache data dari Firestore:", fsErr);
@@ -1531,7 +1536,8 @@ export default function App() {
             const csvText = await fetchPublicCsvContent(activeProj.publicCsvUrl);
             const csvRows = parseCSV(csvText);
             
-            if (csvRows.length > 1) {
+            // Accept csvRows.length >= 1 so a spreadsheet with ONLY the header row (0 data rows) is valid!
+            if (csvRows.length >= 1) {
               const dataRows = csvRows.slice(1);
               const parsedRecords = dataRows
                 .filter(row => row && row.length > 0 && row.some(cell => cell && String(cell).trim() !== '') && String(row[0]).trim().toUpperCase() !== 'CODE' && String(row[1]).trim().toUpperCase() !== 'DESA')
@@ -1564,7 +1570,9 @@ export default function App() {
               if (options?.isManualSync) {
                 setSyncFeedback({
                   type: 'success',
-                  message: `Berhasil memuat ${sorted.length} data bidang dari Web Publish CSV Google Sheet (${activeProj.name}).`,
+                  message: sorted.length > 0
+                    ? `Berhasil memuat ${sorted.length} data bidang dari Web Publish CSV Google Sheet (${activeProj.name}).`
+                    : `Spreadsheet terhubung (${activeProj.name}) saat ini kosong (0 bidang / hanya baris header). Silakan mulai input data baru.`,
                   timestamp: Date.now()
                 });
               }
@@ -1575,9 +1583,9 @@ export default function App() {
           }
         }
 
-        // 4. If we didn't get from Firestore, local storage, or CSV, use default mocks for initial project
+        // 4. If we didn't get from Firestore, local storage, or CSV, only use default mocks if no custom spreadsheet/CSV is configured
         if (!hasLoadedLocal) {
-          if (projectId === 'proj-1') {
+          if (projectId === 'proj-1' && !activeProj.spreadsheetId && !activeProj.publicCsvUrl) {
             const mockList: LandRecord[] = [
               createMockRecord("VT-001", "Budi Santoso", "Sukamaju", "SPAN-1", "015", "250", "Lengkap", "Selesai", "APPROVED", "Semua berkas sudah valid"),
               createMockRecord("VT-002", "Siti Rahmawati", "Sukamaju", "SPAN-1", "016", "410", "Sebagian", "Belum", "PENDING", "Menunggu Surat Kuasa ditandatangani"),
@@ -1744,7 +1752,9 @@ export default function App() {
       if (options?.isManualSync) {
         setSyncFeedback({
           type: 'success',
-          message: `✅ Sinkronisasi Master Berhasil! ${sortedItems.length} baris data berhasil dimuat langsung dari Google Spreadsheet.`,
+          message: sortedItems.length > 0
+            ? `✅ Sinkronisasi Master Berhasil! ${sortedItems.length} baris data berhasil dimuat langsung dari Google Spreadsheet.`
+            : `✅ Sinkronisasi Master Berhasil! Google Spreadsheet saat ini kosong (0 data / hanya baris header). Silakan mulai input data baru.`,
           timestamp: Date.now()
         });
       }
@@ -1758,11 +1768,14 @@ export default function App() {
 
       // 1. Try Firestore Cache (Most up-to-date shared cloud cache)
       try {
+        const cacheDocSnap = await getDoc(doc(db, 'records_cache', projectId));
         const cloudRecords = await fetchRecordsFromFirestoreCache(projectId);
-        if (cloudRecords.length > 0) {
+        if (cloudRecords.length > 0 || cacheDocSnap.exists()) {
           setRecords(cloudRecords);
           fallbackCount = cloudRecords.length;
-          loadedFromFallback = true;
+          if (cloudRecords.length > 0 || !activeProj?.publicCsvUrl) {
+            loadedFromFallback = true;
+          }
         }
       } catch (fsErr) {
         console.warn("Gagal memuat dari Firestore cache:", fsErr);
@@ -1774,10 +1787,12 @@ export default function App() {
         if (cached) {
           try {
             const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
+            if (Array.isArray(parsed)) {
               setRecords(parsed);
               fallbackCount = parsed.length;
-              loadedFromFallback = true;
+              if (parsed.length > 0 || !activeProj?.publicCsvUrl) {
+                loadedFromFallback = true;
+              }
             }
           } catch (e) {
             console.warn("Gagal memuat dari LocalStorage cache:", e);
@@ -1785,12 +1800,12 @@ export default function App() {
         }
       }
 
-      // 3. Try Public CSV URL if configured
+      // 3. Try Public CSV URL if configured (accepts header-only CSV with 0 data rows!)
       if (!loadedFromFallback && activeProj?.publicCsvUrl) {
         try {
           const csvText = await fetchPublicCsvContent(activeProj.publicCsvUrl);
           const csvRows = parseCSV(csvText);
-          if (csvRows.length > 1) {
+          if (csvRows.length >= 1) {
             const dataRows = csvRows.slice(1);
             const parsedRecords = dataRows
               .filter(row => row && row.length > 0 && row.some(cell => cell && String(cell).trim() !== '') && String(row[0]).trim().toUpperCase() !== 'CODE' && String(row[1]).trim().toUpperCase() !== 'DESA')
@@ -1819,6 +1834,14 @@ export default function App() {
         }
       }
 
+      // 4. Even if Firestore, LocalStorage, and CSV all had 0 rows (e.g. a brand-new or cleared header-only sheet),
+      // initialize an empty record list [] rather than locking the entire Dashboard with dataError!
+      if (!loadedFromFallback) {
+        setRecords([]);
+        fallbackCount = 0;
+        loadedFromFallback = true;
+      }
+
       const isAuthIssue = err?.isAuthError || 
         err?.code === 'UNAUTHENTICATED' || 
         String(err?.message || '').includes('Token') || 
@@ -1828,30 +1851,34 @@ export default function App() {
         String(err?.message || '').includes('Google Drive terputus') ||
         String(err?.message || '').includes('Failed to fetch');
 
-      if (loadedFromFallback) {
-        setSheetNameInfo(`${activeProj?.name || ''} (Cadangan Cloud Firestore)`);
-        if (isAuthIssue) {
-          setDataError('Sesi Google Sheets telah kedaluwarsa atau belum terhubung. Klik "Perbarui Sesi Google" untuk menyinkronkan data langsung dari Google Spreadsheet.');
-          setSyncFeedback({
-            type: 'warning',
-            message: `Perhatian: Sesi Google Sheets kedaluwarsa/belum terhubung. Aplikasi menampilkan data Cadangan Cloud (${fallbackCount} baris). Klik tombol 'Perbarui Sesi Google' di bawah untuk menyinkronkan langsung dari Master Spreadsheet.`,
-            timestamp: Date.now()
-          });
-        } else {
-          setSyncFeedback({
-            type: 'warning',
-            message: `Peringatan: Gagal terhubung ke Google Sheets (${err?.message || 'Koneksi terputus'}). Menampilkan data Cadangan Cloud (${fallbackCount} baris).`,
-            timestamp: Date.now()
-          });
-        }
+      const isPermissionIssue = err?.isPermissionError ||
+        err?.code === 'PERMISSION_DENIED' ||
+        String(err?.message || '').toLowerCase().includes('caller does not have permission') ||
+        String(err?.message || '').includes('403');
+
+      setSheetNameInfo(`${activeProj?.name || ''} (Cadangan Cloud Firestore)`);
+      // Never set blocking dataError here so the Dashboard and Menus remain accessible!
+      setDataError(null);
+
+      if (isPermissionIssue) {
+        setSyncFeedback({
+          type: 'warning',
+          message: `Mode Cadangan Cloud Aktif (${fallbackCount} bidang). Akun Google saat ini belum memiliki akses langsung ke Google Spreadsheet tersebut ("The caller does not have permission"). Pastikan email Anda sudah diberi akses Editor pada file Spreadsheet atau klik "Perbarui Sesi Google".`,
+          timestamp: Date.now()
+        });
+      } else if (isAuthIssue) {
+        setSyncFeedback({
+          type: 'warning',
+          message: `Mode Cadangan Cloud Aktif (${fallbackCount} bidang). Sesi Google Sheets kedaluwarsa/belum terhubung. Klik tombol 'Perbarui Sesi Google' jika ingin menyinkronkan langsung ke Master Spreadsheet.`,
+          timestamp: Date.now()
+        });
       } else {
-        if (isAuthIssue) {
-          setDataError('Sesi Google Drive/Sheets belum terhubung atau telah kedaluwarsa. Klik tombol di bawah untuk memperbarui sesi Google Anda.');
-        } else {
-          setDataError(err.message || 'Gagal menyinkronkan data proyek dengan Google Drive/Sheets. Periksa koneksi internet atau hak akses.');
-        }
+        setSyncFeedback({
+          type: 'warning',
+          message: `Mode Cadangan Cloud Aktif (${fallbackCount} bidang). Gagal terhubung langsung ke Google Sheets (${err?.message || 'Koneksi terputus'}).`,
+          timestamp: Date.now()
+        });
       }
-      throw err;
     } finally {
       setIsLoadingData(false);
     }
