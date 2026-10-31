@@ -1406,8 +1406,6 @@ export default function DaftarNominatifPanel({
                   const buildingsList = activeBuildings.length > 0 ? activeBuildings : null;
                   const subRowsCount = Math.max(
                     1,
-                    identitasLines.length,
-                    buktiLines.length,
                     plantsList?.length || 0,
                     buildingsList?.length || 0
                   );
@@ -1416,8 +1414,6 @@ export default function DaftarNominatifPanel({
 
                   for (let sIdx = 0; sIdx < subRowsCount; sIdx++) {
                     const isFirstSub = sIdx === 0;
-                    const currentIdentitas = identitasLines[sIdx] || '';
-                    const currentBukti = buktiLines[sIdx] || '';
                     const currentPlant = plantsList ? plantsList[sIdx] : null;
                     const currentBuilding = buildingsList ? buildingsList[sIdx] : null;
                     const valBelum = currentPlant ? (parseInt(currentPlant.belum_menghasilkan || '0') || 0) : 0;
@@ -1505,31 +1501,45 @@ export default function DaftarNominatifPanel({
                                 {r.STATUS_KEPEMILIKAN || 'PEMILIK DIKETAHUI'}
                               </span>
                             </td>
-                          </>
-                        )}
 
-                        {/* IDENTITAS PEMILIK: 1 Baris = 1 Data (Tidak menumpuk di 1 sel) */}
-                        <td className={`py-2 px-3 border-r border-white/10 align-middle uppercase ${
-                          sIdx === 0
-                            ? 'font-bold text-white text-xs'
-                            : 'text-[11px] text-slate-300 font-medium'
-                        }`}>
-                          {currentIdentitas}
-                        </td>
+                            {/* IDENTITAS PEMILIK: Dalam 1 kontainer <td rowSpan> agar saat diblok/copy di web tidak menyeleksi kolom sebelah */}
+                            <td rowSpan={subRowsCount} className="p-0 border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 align-top uppercase select-text">
+                              <div className="divide-y divide-white/10">
+                                {identitasLines.map((line, lIdx) => (
+                                  <div
+                                    key={lIdx}
+                                    className={`py-1.5 px-3 ${
+                                      lIdx === 0
+                                        ? 'font-bold text-white text-xs'
+                                        : 'text-[11px] text-slate-300 font-medium'
+                                    }`}
+                                  >
+                                    {line}
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
 
-                        {/* BUKTI PENGUASAAN / KEPEMILIKAN: 1 Baris = 1 Data (Tidak menumpuk di 1 sel) */}
-                        <td className={`py-2 px-3 border-r border-white/10 align-middle ${
-                          sIdx === 0
-                            ? 'text-[10px] font-extrabold uppercase text-amber-400 font-mono'
-                            : sIdx === 1
-                            ? 'text-xs font-mono font-bold text-white'
-                            : 'text-[11px] text-slate-300 font-medium'
-                        }`}>
-                          {currentBukti}
-                        </td>
+                            {/* BUKTI PENGUASAAN / KEPEMILIKAN: Dalam 1 kontainer <td rowSpan> agar saat diblok/copy di web tidak menyeleksi kolom sebelah */}
+                            <td rowSpan={subRowsCount} className="p-0 border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 align-top select-text">
+                              <div className="divide-y divide-white/10">
+                                {buktiLines.map((line, lIdx) => (
+                                  <div
+                                    key={lIdx}
+                                    className={`py-1.5 px-3 ${
+                                      lIdx === 0
+                                        ? 'text-[10px] font-extrabold uppercase text-amber-400 font-mono'
+                                        : lIdx === 1
+                                        ? 'text-xs font-mono font-bold text-white'
+                                        : 'text-[11px] text-slate-300 font-medium'
+                                    }`}
+                                  >
+                                    {line}
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
 
-                        {isFirstSub && (
-                          <>
                             {/* TANAH: PENUTUP LAHAN */}
                             <td rowSpan={subRowsCount} className="py-2.5 px-2 border-r border-white/10 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 font-semibold text-slate-200 uppercase align-top">
                               {r.PENUTUP_LAHAN || '-'}

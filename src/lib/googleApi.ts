@@ -1224,45 +1224,59 @@ export const RESUME_SHEET_HEADERS = [
   "DESA",
   "KECAMATAN",
   "KABUPATEN",
-  "TOTAL_BIDANG",
+  "TARGET_SPAN_AWAL",
+  "ESTIMASI_BIDANG_AWAL",
+  "REALISASI_BIDANG",
   "TOTAL_LUAS_M2",
+  "NAMA_KADES_LURAH",
+  "NAMA_CAMAT",
+  "NAMA_PJT",
+  "NO_SERTIFIKAT_PJT",
   "PROGRES_PERSEN",
-  // 1. Sosialisasi Pendahuluan
-  "STATUS_PENDAHULUAN",
-  "TGL_PENDAHULUAN",
-  "LINK_PDF_PENDAHULUAN",
-  "FOTO_DOKUMENTASI_PENDAHULUAN",
-  "CATATAN_PENDAHULUAN",
-  // 2. Sosialisasi Pengumuman Inv
-  "STATUS_PENGUMUMAN_INV",
-  "TGL_PENGUMUMAN_INV",
-  "LINK_PDF_PENGUMUMAN_INV",
-  "FOTO_DOKUMENTASI_PENGUMUMAN_INV",
-  "CATATAN_PENGUMUMAN_INV",
-  // 3. BAPT Register
-  "STATUS_BAPT_REGISTER",
-  "TGL_BAPT_REGISTER",
-  "LINK_PDF_BAPT_REGISTER",
-  "FOTO_DOKUMENTASI_BAPT_REGISTER",
-  "CATATAN_BAPT_REGISTER",
-  // 4. Sosialisasi Penyampaian Nilai
-  "STATUS_PENYAMPAIAN_NILAI",
-  "TGL_PENYAMPAIAN_NILAI",
-  "LINK_PDF_PENYAMPAIAN_NILAI",
-  "FOTO_DOKUMENTASI_PENYAMPAIAN_NILAI",
-  "CATATAN_PENYAMPAIAN_NILAI",
-  // 5. Sosialisasi Pembayaran Kompensasi
-  "STATUS_PEMBAYARAN_KOMP",
-  "TGL_PEMBAYARAN_KOMP",
-  "LINK_PDF_PEMBAYARAN_KOMP",
-  "FOTO_DOKUMENTASI_PEMBAYARAN_KOMP",
-  "CATATAN_PEMBAYARAN_KOMP",
-  // 6. Bush Clearing
-  "STATUS_BUSH_CLEARING",
-  "TGL_BUSH_CLEARING",
-  "LINK_PDF_BUSH_CLEARING",
-  "FOTO_DOKUMENTASI_BUSH_CLEARING",
-  "CATATAN_BUSH_CLEARING",
+  // 1. Pendataan Awal (Pasal 16 & Lampiran V)
+  "STATUS_PENDATAAN_AWAL",
+  "TGL_PENDATAAN_AWAL",
+  "LINK_PDF_PENDATAAN_AWAL",
+  "FOTO_DOKUMENTASI_PENDATAAN_AWAL",
+  "CATATAN_PENDATAAN_AWAL",
+  // 2. Sosialisasi Rencana Jalur (Pasal 17 & Lampiran VI)
+  "STATUS_SOSIALISASI_DESA",
+  "TGL_SOSIALISASI_DESA",
+  "LINK_PDF_BA_SOSIALISASI",
+  "FOTO_DOKUMENTASI_SOSIALISASI",
+  "CATATAN_SOSIALISASI_DESA",
+  // 3. Survei, Pemotretan Udara & Patok ROW (Pasal 18)
+  "STATUS_SURVEI_PEMETAAN",
+  "TGL_SURVEI_PEMETAAN",
+  "LINK_PDF_PETA_UDARA",
+  "FOTO_DOKUMENTASI_PATOK_ROW",
+  "CATATAN_SURVEI_PEMETAAN",
+  // 4. Inventarisasi, Peta Bidang & Daftar Nominatif (Pasal 19-26 & Lampiran VII-IX)
+  "STATUS_INVENTARISASI_NOMINATIF",
+  "TGL_INVENTARISASI_NOMINATIF",
+  "LINK_PDF_PETA_DAN_NOMINATIF",
+  "FOTO_DOKUMENTASI_INVENTARISASI",
+  "CATATAN_INVENTARISASI_NOMINATIF",
+  // 5. Pengumuman 7 Hari Kerja & BA Inventarisasi Ulang (Pasal 27-28 & Lampiran X-XII)
+  "STATUS_PENGUMUMAN_7HK",
+  "TGL_MULAI_PENGUMUMAN",
+  "TGL_SELESAI_PENGUMUMAN",
+  "JUMLAH_KEBERATAN_WARGA",
+  "LINK_PDF_PENGUMUMAN_LAMP_X",
+  "FOTO_DOKUMENTASI_PENGUMUMAN",
+  "CATATAN_PENGUMUMAN_7HK",
+  // 6. Penyusunan & Penandatanganan BAPT (Pasal 29 & Lampiran XIII)
+  "STATUS_PENYUSUNAN_BAPT",
+  "TGL_TTD_BAPT",
+  "LINK_PDF_BAPT_LAMP_XIII",
+  "FOTO_DOKUMENTASI_TTD_BAPT",
+  "CATATAN_PENYUSUNAN_BAPT",
+  // 7. Permohonan & Nomor Register BAPT ESDM (Pasal 30 & Lampiran XIV)
+  "STATUS_REGISTRASI_BAPT_ESDM",
+  "TGL_PENGAJUAN_REGISTER_BAPT",
+  "NOMOR_REGISTER_BAPT_ESDM",
+  "LINK_PDF_REGISTER_BAPT_LAMP_XIV",
+  "CATATAN_REGISTRASI_BAPT_ESDM",
   // Link Folder Google Drive Desa & Metadata
   "LINK_FOLDER_DESA_DRIVE",
   "TERAKHIR_DIPERBARUI",
@@ -1270,7 +1284,7 @@ export const RESUME_SHEET_HEADERS = [
 ];
 
 /**
- * Creates a brand new dedicated Google Spreadsheet for Project Resumes with all 36 headers
+ * Creates a brand new dedicated Google Spreadsheet for Project Resumes with Permen ESDM No. 13 Tahun 2025 headers
  */
 export async function createDedicatedResumeSpreadsheet(
   accessToken: string,
@@ -1317,7 +1331,7 @@ export async function createDedicatedResumeSpreadsheet(
   const spreadsheetId = data.spreadsheetId;
   const spreadsheetUrl = data.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
 
-  // Write the 36 headers to row 1
+  // Write the headers to row 1
   await fetchWithTimeout(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'${encodeURIComponent(RESUME_SHEET_TAB_NAME)}'!A1?valueInputOption=USER_ENTERED`,
     {
@@ -1508,7 +1522,7 @@ export async function ensureResumeSheetTab(accessToken: string, spreadsheetId: s
 }
 
 /**
- * Maps a VillageResume object to an array of cell values for Google Sheets.
+ * Maps a VillageResume object to an array of cell values for Google Sheets (55 columns Permen ESDM 13/2025).
  */
 export function villageResumeToSheetRow(
   resume: VillageResume, 
@@ -1524,45 +1538,59 @@ export function villageResumeToSheetRow(
     resume.desaName,
     resume.kecamatan || '',
     resume.kabupaten || '',
+    resume.targetSpan ?? '',
+    resume.estimasiBidangAwal ?? '',
     totalBidang > 0 ? totalBidang : '',
     totalLuas > 0 ? totalLuas : '',
+    resume.namaKades || '',
+    resume.namaCamat || '',
+    resume.namaPjt || '',
+    resume.noSertifikatPjt || '',
     `${progressPct}%`,
-    // 1. Sosialisasi Pendahuluan
+    // 1. Pendataan Awal (Pasal 16 & Lampiran V)
+    resume.pendataanAwal?.status || 'BELUM',
+    resume.pendataanAwal?.date || '',
+    resume.pendataanAwal?.pdfUrl || '',
+    (resume.pendataanAwal?.docPhotos || []).join(' ; '),
+    resume.pendataanAwal?.notes || '',
+    // 2. Sosialisasi Rencana Jalur (Pasal 17 & Lampiran VI)
     resume.baSosialisasiAwal?.status || 'BELUM',
     resume.baSosialisasiAwal?.date || '',
     resume.baSosialisasiAwal?.pdfUrl || '',
     (resume.baSosialisasiAwal?.docPhotos || []).join(' ; '),
     resume.baSosialisasiAwal?.notes || '',
-    // 2. Sosialisasi Pengumuman Inv
+    // 3. Survei, Pemotretan Udara & Patok ROW (Pasal 18)
+    resume.surveiPemetaan?.status || 'BELUM',
+    resume.surveiPemetaan?.date || '',
+    resume.surveiPemetaan?.pdfUrl || '',
+    (resume.surveiPemetaan?.docPhotos || []).join(' ; '),
+    resume.surveiPemetaan?.notes || '',
+    // 4. Inventarisasi, Peta Bidang & Daftar Nominatif (Pasal 19-26 & Lampiran VII-IX)
+    resume.inventarisasiNominatif?.status || 'BELUM',
+    resume.inventarisasiNominatif?.date || '',
+    resume.inventarisasiNominatif?.pdfUrl || '',
+    (resume.inventarisasiNominatif?.docPhotos || []).join(' ; '),
+    resume.inventarisasiNominatif?.notes || '',
+    // 5. Pengumuman 7 Hari Kerja & BA Inventarisasi Ulang (Pasal 27-28 & Lampiran X-XII)
     resume.baPengumuman?.status || 'BELUM',
     resume.baPengumuman?.date || '',
+    resume.baPengumuman?.endDate || '',
+    resume.baPengumuman?.jumlahKeberatan ?? 0,
     resume.baPengumuman?.pdfUrl || '',
     (resume.baPengumuman?.docPhotos || []).join(' ; '),
     resume.baPengumuman?.notes || '',
-    // 3. BAPT Register
+    // 6. Penyusunan & Penandatanganan BAPT (Pasal 29 & Lampiran XIII)
     resume.lampiranBapt?.status || 'BELUM',
     resume.lampiranBapt?.date || '',
     resume.lampiranBapt?.pdfUrl || '',
     (resume.lampiranBapt?.docPhotos || []).join(' ; '),
     resume.lampiranBapt?.notes || '',
-    // 4. Sosialisasi Penyampaian Nilai
-    resume.baPenyampaianNilai?.status || 'BELUM',
-    resume.baPenyampaianNilai?.date || '',
-    resume.baPenyampaianNilai?.pdfUrl || '',
-    (resume.baPenyampaianNilai?.docPhotos || []).join(' ; '),
-    resume.baPenyampaianNilai?.notes || '',
-    // 5. Sosialisasi Pembayaran Komp
-    resume.baSerahTerimaRekening?.status || 'BELUM',
-    resume.baSerahTerimaRekening?.date || '',
-    resume.baSerahTerimaRekening?.pdfUrl || '',
-    (resume.baSerahTerimaRekening?.docPhotos || []).join(' ; '),
-    resume.baSerahTerimaRekening?.notes || '',
-    // 6. Bush Clearing
-    resume.bushClearing?.status || 'BELUM',
-    resume.bushClearing?.date || '',
-    resume.bushClearing?.pdfUrl || '',
-    (resume.bushClearing?.docPhotos || []).join(' ; '),
-    resume.bushClearing?.notes || '',
+    // 7. Permohonan & Nomor Register BAPT ESDM (Pasal 30 & Lampiran XIV)
+    resume.registrasiBapt?.status || 'BELUM',
+    resume.registrasiBapt?.date || '',
+    resume.registrasiBapt?.nomorDokumen || '',
+    resume.registrasiBapt?.pdfUrl || '',
+    resume.registrasiBapt?.notes || '',
     // Folder Drive Desa & Metadata
     resume.driveFolderId ? (resume.driveFolderId.startsWith('http') ? resume.driveFolderId : `https://drive.google.com/drive/folders/${resume.driveFolderId}`) : '',
     new Date(resume.lastUpdated || Date.now()).toLocaleString('id-ID'),
@@ -1572,7 +1600,7 @@ export function villageResumeToSheetRow(
 
 /**
  * Maps a row from Google Sheets back into a VillageResume object.
- * Supports both new 42-column format and legacy 36-column format seamlessly.
+ * Supports 55-column Permen ESDM 13/2025 format, 42-column format, and legacy 36-column format seamlessly.
  */
 export function sheetRowToVillageResume(row: any[]): VillageResume {
   const id = row[0] || '';
@@ -1586,9 +1614,84 @@ export function sheetRowToVillageResume(row: any[]): VillageResume {
     return val.split(/[;\n]/).map((s: string) => s.trim()).filter((s: string) => s.length > 0);
   };
 
-  const isNewFormat = row.length >= 40;
+  // Permen ESDM 13/2025 55-column format
+  if (row.length >= 50) {
+    return {
+      id: id || `${projectId}_${desaName.toUpperCase().replace(/[^a-zA-Z0-9]/g, '_')}`,
+      projectId,
+      desaName: desaName.toUpperCase(),
+      kecamatan,
+      kabupaten,
+      targetSpan: row[6] ? Number(row[6]) || undefined : undefined,
+      estimasiBidangAwal: row[7] ? Number(row[7]) || undefined : undefined,
+      namaKades: row[10] || '',
+      namaCamat: row[11] || '',
+      namaPjt: row[12] || '',
+      noSertifikatPjt: row[13] || '',
+      driveFolderId: row[52] || undefined,
+      pendataanAwal: {
+        status: (row[15] as any) || 'BELUM',
+        date: row[16] || '',
+        pdfUrl: row[17] || undefined,
+        docPhotos: parsePhotos(row[18]),
+        notes: row[19] || ''
+      },
+      baSosialisasiAwal: {
+        status: (row[20] as any) || 'BELUM',
+        date: row[21] || '',
+        pdfUrl: row[22] || undefined,
+        docPhotos: parsePhotos(row[23]),
+        notes: row[24] || ''
+      },
+      surveiPemetaan: {
+        status: (row[25] as any) || 'BELUM',
+        date: row[26] || '',
+        pdfUrl: row[27] || undefined,
+        docPhotos: parsePhotos(row[28]),
+        notes: row[29] || ''
+      },
+      inventarisasiNominatif: {
+        status: (row[30] as any) || 'BELUM',
+        date: row[31] || '',
+        pdfUrl: row[32] || undefined,
+        docPhotos: parsePhotos(row[33]),
+        notes: row[34] || ''
+      },
+      baPengumuman: {
+        status: (row[35] as any) || 'BELUM',
+        date: row[36] || '',
+        endDate: row[37] || '',
+        jumlahKeberatan: row[38] ? Number(row[38]) || 0 : 0,
+        pdfUrl: row[39] || undefined,
+        docPhotos: parsePhotos(row[40]),
+        notes: row[41] || ''
+      },
+      lampiranBapt: {
+        status: (row[42] as any) || 'BELUM',
+        date: row[43] || '',
+        pdfUrl: row[44] || undefined,
+        docPhotos: parsePhotos(row[45]),
+        notes: row[46] || ''
+      },
+      registrasiBapt: {
+        status: (row[47] as any) || 'BELUM',
+        date: row[48] || '',
+        nomorDokumen: row[49] || '',
+        pdfUrl: row[50] || undefined,
+        notes: row[51] || '',
+        docPhotos: []
+      },
+      baPenyampaianNilai: { status: 'BELUM', docPhotos: [] },
+      baSerahTerimaRekening: { status: 'BELUM', docPhotos: [] },
+      bushClearing: { status: 'BELUM', docPhotos: [] },
+      lastUpdated: Date.now(),
+      updatedBy: row[54] || 'Google Sheet'
+    };
+  }
 
-  if (isNewFormat) {
+  const is42Format = row.length >= 40;
+
+  if (is42Format) {
     return {
       id: id || `${projectId}_${desaName.toUpperCase().replace(/[^a-zA-Z0-9]/g, '_')}`,
       projectId,
@@ -1596,6 +1699,7 @@ export function sheetRowToVillageResume(row: any[]): VillageResume {
       kecamatan,
       kabupaten,
       driveFolderId: row[39] || undefined,
+      pendataanAwal: { status: 'BELUM', docPhotos: [] },
       baSosialisasiAwal: {
         status: (row[9] as any) || 'BELUM',
         date: row[10] || '',
@@ -1603,6 +1707,8 @@ export function sheetRowToVillageResume(row: any[]): VillageResume {
         docPhotos: parsePhotos(row[12]),
         notes: row[13] || ''
       },
+      surveiPemetaan: { status: 'BELUM', docPhotos: [] },
+      inventarisasiNominatif: { status: 'BELUM', docPhotos: [] },
       baPengumuman: {
         status: (row[14] as any) || 'BELUM',
         date: row[15] || '',
@@ -1617,6 +1723,7 @@ export function sheetRowToVillageResume(row: any[]): VillageResume {
         docPhotos: parsePhotos(row[22]),
         notes: row[23] || ''
       },
+      registrasiBapt: { status: 'BELUM', docPhotos: [] },
       baPenyampaianNilai: {
         status: (row[24] as any) || 'BELUM',
         date: row[25] || '',
@@ -1651,6 +1758,7 @@ export function sheetRowToVillageResume(row: any[]): VillageResume {
     kecamatan,
     kabupaten,
     driveFolderId: row[33] || undefined,
+    pendataanAwal: { status: 'BELUM', docPhotos: [] },
     baSosialisasiAwal: {
       status: (row[9] as any) || 'BELUM',
       date: row[10] || '',
@@ -1658,6 +1766,8 @@ export function sheetRowToVillageResume(row: any[]): VillageResume {
       notes: row[12] || '',
       docPhotos: []
     },
+    surveiPemetaan: { status: 'BELUM', docPhotos: [] },
+    inventarisasiNominatif: { status: 'BELUM', docPhotos: [] },
     baPengumuman: {
       status: (row[13] as any) || 'BELUM',
       date: row[14] || '',
@@ -1672,6 +1782,7 @@ export function sheetRowToVillageResume(row: any[]): VillageResume {
       notes: row[20] || '',
       docPhotos: []
     },
+    registrasiBapt: { status: 'BELUM', docPhotos: [] },
     baPenyampaianNilai: {
       status: (row[21] as any) || 'BELUM',
       date: row[22] || '',
@@ -1802,7 +1913,7 @@ export async function saveVillageResumeToSheet(
     const rowData = villageResumeToSheetRow(resume, projectName, totalBidang, totalLuas, progressPct);
 
     if (targetRow > 1) {
-      const updateRange = `'${RESUME_SHEET_TAB_NAME}'!A${targetRow}:AJ${targetRow}`;
+      const updateRange = `'${RESUME_SHEET_TAB_NAME}'!A${targetRow}:BC${targetRow}`;
       const putRes = await fetchWithTimeout(
         `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(updateRange)}?valueInputOption=USER_ENTERED`,
         {

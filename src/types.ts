@@ -516,7 +516,7 @@ export interface ActivityLog {
   recordCode: string;
 }
 
-// Types for Menu 1.4: Resume Project (Per Desa)
+// Types for Menu 1.4: Resume Project (Per Desa) - Sesuai Permen ESDM No. 13 Tahun 2025
 export type StageStatus = 'BELUM' | 'PROSES' | 'SELESAI';
 
 export interface VillageStageDoc {
@@ -525,7 +525,11 @@ export interface VillageStageDoc {
   docPhotos?: string[]; // Array of base64 or drive URLs (Wajib minimal 4 foto dokumentasi)
   driveFolderId?: string;
   driveFolderUrl?: string;
-  date?: string;
+  date?: string; // Tanggal Mulai / Tanggal Pelaksanaan / Tanggal BA
+  endDate?: string; // Tanggal Selesai (misal: selesai Pengumuman 7 HK atau terbit Register BAPT)
+  nomorDokumen?: string; // Nomor BA / Nomor Pengumuman / Nomor Register BAPT ESDM
+  jumlahKeberatan?: number; // Khusus Tahap Pengumuman (Pasal 28 / Lampiran XI)
+  statusKeberatan?: 'TIDAK_ADA' | 'DITERIMA' | 'DITOLAK'; // Sesuai Lampiran XII BA Inventarisasi Ulang
   status: StageStatus;
   notes?: string;
 }
@@ -536,14 +540,30 @@ export interface VillageResume {
   desaName: string;
   kecamatan?: string;
   kabupaten?: string;
+  // Data Pra-Akuisisi (Sebelum Akuisisi Lapangan Dimulai - Lampiran V & Peta Rencana Jalur)
+  targetSpan?: number; // Jumlah span menara/tiang di desa ini (Lampiran V & XIII)
+  daftarSpan?: string; // Rincian nomor span (misal: T.01 - T.08)
+  estimasiBidangAwal?: number; // Estimasi jumlah bidang pada tahap Pendataan Awal / GeoJSON
+  jadwalMulai?: string; // Jadwal mulai pemeriksaan rencana jalur (Lampiran V)
+  jadwalSelesai?: string; // Jadwal selesai pemeriksaan rencana jalur (Lampiran V)
+  namaKades?: string; // Nama Kepala Desa / Lurah penandatangan BA & BAPT
+  namaCamat?: string; // Nama Camat penandatangan BA Sosialisasi & BAPT
+  namaPjt?: string; // Nama Penanggung Jawab Teknik (Analis Utama/Teknisi Utama - Lampiran XIII & XIV)
+  okupasiPjt?: string; // Okupasi Jabatan PJT
+  noSertifikatPjt?: string; // Nomor Sertifikat Kompetensi PJT
   driveFolderId?: string; // ID folder Google Drive khusus untuk desa ini
-  // 6 Tahapan Proyek Lapangan
-  baSosialisasiAwal: VillageStageDoc;       // Dokumen BA sos awal (upload pdf dan dokumentasi min 4 foto)
-  baPengumuman: VillageStageDoc;            // Dokumen BA Pengumuman (upload pdf dan dokumentasi min 4 foto)
-  lampiranBapt: VillageStageDoc;            // Lampiran BAPT (upload pdf)
-  baPenyampaianNilai: VillageStageDoc;      // Dok BA penyampaian nilai (upload pdf dan dokumentasi min 4 foto)
-  baSerahTerimaRekening: VillageStageDoc;   // Dok BA serah terima buku rekening (upload pdf dan dokumentasi min 4 foto)
-  bushClearing: VillageStageDoc;            // Bush Clearing (upload dokumentasi min 4 foto)
+  // 7 Tahapan Pemeriksaan Rencana Jalur Transmisi sesuai Permen ESDM No. 13 Tahun 2025 (Pasal 13 - Pasal 30)
+  pendataanAwal?: VillageStageDoc;          // 1. Pendataan Awal & Rencana Pelaksanaan (Pasal 16 & Lampiran V)
+  baSosialisasiAwal: VillageStageDoc;       // 2. Sosialisasi Rencana Jalur di Kantor Desa/Kelurahan (Pasal 17 & Lampiran VI)
+  surveiPemetaan?: VillageStageDoc;         // 3. Survei, Pemotretan Udara (1:2000) & Patok ROW 30m (Pasal 18)
+  inventarisasiNominatif?: VillageStageDoc; // 4. Inventarisasi, Peta Bidang & Daftar Nominatif (Pasal 19-26 & Lampiran VII, VIII, IX)
+  baPengumuman: VillageStageDoc;            // 5. Pengumuman 7 Hari Kerja & BA Inventarisasi Ulang (Pasal 27-28 & Lampiran X, XI, XII)
+  lampiranBapt: VillageStageDoc;            // 6. Penyusunan & Penandatanganan BAPT (Pasal 29 & Lampiran XIII)
+  registrasiBapt?: VillageStageDoc;         // 7. Permohonan & Penerbitan Nomor Register BAPT ESDM (Pasal 30 & Lampiran XIV)
+  // Tahapan lanjutan pasca-BAPT (opsional / kompatibilitas)
+  baPenyampaianNilai: VillageStageDoc;      // LHPBK / Penyampaian Nilai
+  baSerahTerimaRekening: VillageStageDoc;   // Pembayaran Kompensasi (Lampiran XIX)
+  bushClearing: VillageStageDoc;            // Pemeliharaan Ruang Bebas / Bush Clearing
   lastUpdated?: number;
   updatedBy?: string;
 }
@@ -579,62 +599,112 @@ export interface ResumeStageConfig {
   hasPdf?: boolean;
   hasPhoto?: boolean;
   color?: string;
+  pasalRef?: string;
+  lampiranRef?: string;
+  slaText?: string;
+  description?: string;
 }
 
 export const DEFAULT_RESUME_STAGES: ResumeStageConfig[] = [
   { 
-    key: 'baSosialisasiAwal', 
-    label: '1. Sos. Pendahuluan', 
-    fullName: 'Sosialisasi Pendahuluan', 
-    active: true, 
-    hasPdf: true, 
-    hasPhoto: true, 
-    color: 'text-amber-400' 
-  },
-  { 
-    key: 'baPengumuman', 
-    label: '2. Sos. Pengumuman Inv.', 
-    fullName: 'Sosialisasi Pengumuman Inventarisasi', 
-    active: true, 
-    hasPdf: true, 
-    hasPhoto: true, 
-    color: 'text-sky-400' 
-  },
-  { 
-    key: 'lampiranBapt', 
-    label: '3. BAPT Register', 
-    fullName: 'BAPT Register', 
+    key: 'pendataanAwal', 
+    label: '1. Pendataan Awal', 
+    fullName: 'Pendataan Awal & Jadwal Rencana Jalur', 
     active: true, 
     hasPdf: true, 
     hasPhoto: false, 
-    color: 'text-amber-400' 
+    color: 'text-slate-300',
+    description: 'Pendataan awal daftar desa, target span, dan jadwal rencana pelaksanaan di koridor jalur transmisi.'
+  },
+  { 
+    key: 'baSosialisasiAwal', 
+    label: '2. Sosialisasi Desa', 
+    fullName: 'Sosialisasi Rencana Jalur', 
+    active: true, 
+    hasPdf: true, 
+    hasPhoto: true, 
+    color: 'text-amber-400',
+    description: 'Pelaksanaan sosialisasi rencana jalur transmisi di Kantor Desa/Kelurahan beserta Berita Acara Sosialisasi.'
+  },
+  { 
+    key: 'surveiPemetaan', 
+    label: '3. Survei & Pemetaan', 
+    fullName: 'Survei, Pemotretan Udara & Patok ROW', 
+    active: true, 
+    hasPdf: true, 
+    hasPhoto: true, 
+    color: 'text-cyan-400',
+    description: 'Survei lapangan, pemotretan udara peta koridor desa, serta pemasangan tanda batas/patok jalur ROW.'
+  },
+  { 
+    key: 'inventarisasiNominatif', 
+    label: '4. Inventarisasi & Nominatif', 
+    fullName: 'Inventarisasi & Pemberkasan Bidang (Otomatis Database)', 
+    active: true, 
+    hasPdf: true, 
+    hasPhoto: true, 
+    color: 'text-emerald-400',
+    description: 'Terisi otomatis dari Database Lahan berdasarkan jumlah berkas per bidang yang telah selesai (Progres Pemberkasan = SELESAI).'
+  },
+  { 
+    key: 'baPengumuman', 
+    label: '5. Pengumuman', 
+    fullName: 'Pengumuman & Inventarisasi Ulang', 
+    active: true, 
+    hasPdf: true, 
+    hasPhoto: true, 
+    color: 'text-sky-400',
+    description: 'Pengumuman Peta Bidang & Daftar Nominatif di Kantor Desa/Kelurahan serta tindak lanjut sanggahan/keberatan warga.'
+  },
+  { 
+    key: 'lampiranBapt', 
+    label: '6. Penyusunan BAPT', 
+    fullName: 'Penyusunan & Penandatanganan BAPT', 
+    active: true, 
+    hasPdf: true, 
+    hasPhoto: true, 
+    color: 'text-purple-400',
+    description: 'Penyusunan dan penandatanganan Berita Acara Pemeriksaan Rencana Jalur Transmisi (BAPT) beserta lampiran Peta Bidang & Daftar Nominatif.'
+  },
+  { 
+    key: 'registrasiBapt', 
+    label: '7. Registrasi BAPT', 
+    fullName: 'Registrasi BAPT', 
+    active: true, 
+    hasPdf: true, 
+    hasPhoto: false, 
+    color: 'text-rose-400',
+    description: 'Pengajuan dan penerbitan Nomor Register BAPT.'
   },
   { 
     key: 'baPenyampaianNilai', 
-    label: '4. Sos. Penyampaian Nilai', 
+    label: '8. Sosialisasi Penyampaian Nilai', 
     fullName: 'Sosialisasi Penyampaian Nilai', 
     active: true, 
     hasPdf: true, 
     hasPhoto: true, 
-    color: 'text-purple-400' 
+    color: 'text-indigo-400',
+    description: 'Sosialisasi dan penyampaian nilai hasil penilaian kompensasi tanah, bangunan, dan tanaman kepada pemilik lahan.'
   },
   { 
     key: 'baSerahTerimaRekening', 
-    label: '5. Sos. Pembayaran Komp.', 
-    fullName: 'Sosialisasi Pembayaran Kompensasi', 
+    label: '9. Sosialisasi Pembayaran', 
+    fullName: 'Sosialisasi Pembayaran', 
     active: true, 
     hasPdf: true, 
     hasPhoto: true, 
-    color: 'text-emerald-400' 
+    color: 'text-teal-400',
+    description: 'Sosialisasi mekanisme pembayaran kompensasi, pengumpulan buku rekening, dan pelaksanaan pembayaran.'
   },
   { 
     key: 'bushClearing', 
-    label: '6. Bush Clearing', 
+    label: '10. Bush Clearing', 
     fullName: 'Bush Clearing', 
     active: true, 
-    hasPdf: false, 
+    hasPdf: true, 
     hasPhoto: true, 
-    color: 'text-rose-400' 
+    color: 'text-lime-400',
+    description: 'Pelaksanaan pembersihan ruang bebas (Bush Clearing / tebang tanam tumbuh) pada koridor jalur transmisi.'
   }
 ];
 

@@ -44,7 +44,13 @@ export const createEmptyStageDoc = (status: StageStatus = 'BELUM'): VillageStage
   notes: ''
 });
 
-export const createDefaultVillageResume = (projectId: string, desaName: string, kecamatan = '', kabupaten = ''): VillageResume => {
+export const createDefaultVillageResume = (
+  projectId: string,
+  desaName: string,
+  kecamatan = '',
+  kabupaten = '',
+  extra?: Partial<VillageResume>
+): VillageResume => {
   const cleanDesa = desaName.trim().toUpperCase();
   const id = `${projectId}_${cleanDesa.replace(/[^a-zA-Z0-9]/g, '_')}`;
   return {
@@ -53,14 +59,28 @@ export const createDefaultVillageResume = (projectId: string, desaName: string, 
     desaName: cleanDesa,
     kecamatan,
     kabupaten,
-    baSosialisasiAwal: createEmptyStageDoc(),
-    baPengumuman: createEmptyStageDoc(),
-    lampiranBapt: createEmptyStageDoc(),
-    baPenyampaianNilai: createEmptyStageDoc(),
-    baSerahTerimaRekening: createEmptyStageDoc(),
-    bushClearing: createEmptyStageDoc(),
+    targetSpan: extra?.targetSpan,
+    daftarSpan: extra?.daftarSpan || '',
+    estimasiBidangAwal: extra?.estimasiBidangAwal,
+    jadwalMulai: extra?.jadwalMulai || '',
+    jadwalSelesai: extra?.jadwalSelesai || '',
+    namaKades: extra?.namaKades || '',
+    namaCamat: extra?.namaCamat || '',
+    namaPjt: extra?.namaPjt || '',
+    okupasiPjt: extra?.okupasiPjt || 'Analis Utama / Teknisi Utama',
+    noSertifikatPjt: extra?.noSertifikatPjt || '',
+    pendataanAwal: extra?.pendataanAwal || createEmptyStageDoc(),
+    baSosialisasiAwal: extra?.baSosialisasiAwal || createEmptyStageDoc(),
+    surveiPemetaan: extra?.surveiPemetaan || createEmptyStageDoc(),
+    inventarisasiNominatif: extra?.inventarisasiNominatif || createEmptyStageDoc(),
+    baPengumuman: extra?.baPengumuman || createEmptyStageDoc(),
+    lampiranBapt: extra?.lampiranBapt || createEmptyStageDoc(),
+    registrasiBapt: extra?.registrasiBapt || createEmptyStageDoc(),
+    baPenyampaianNilai: extra?.baPenyampaianNilai || createEmptyStageDoc(),
+    baSerahTerimaRekening: extra?.baSerahTerimaRekening || createEmptyStageDoc(),
+    bushClearing: extra?.bushClearing || createEmptyStageDoc(),
     lastUpdated: Date.now(),
-    updatedBy: 'Sistem'
+    updatedBy: extra?.updatedBy || 'Sistem'
   };
 };
 
@@ -148,7 +168,7 @@ export async function loadVillageResumes(
     try {
       const parsed = JSON.parse(cached);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        localResumes = parsed;
+        localResumes = parsed.filter((r: VillageResume) => !r.projectId || r.projectId === projectId);
       }
     } catch (e) {
       console.error('Error parsing cached village resumes:', e);
@@ -164,12 +184,15 @@ export async function loadVillageResumes(
     if (!snap.empty) {
       const list: VillageResume[] = [];
       snap.forEach(docSnap => {
-        list.push(docSnap.data() as VillageResume);
+        const data = docSnap.data() as VillageResume;
+        if (!data.projectId || data.projectId === projectId) {
+          list.push(data);
+        }
       });
-      // Merge Firestore data with local cache
+      // Merge Firestore data with local cache for this projectId only
       const mergedMap = new Map<string, VillageResume>();
-      localResumes.forEach(r => mergedMap.set(r.id || r.desaName.toUpperCase(), r));
-      list.forEach(r => mergedMap.set(r.id || r.desaName.toUpperCase(), r));
+      localResumes.forEach(r => mergedMap.set(r.desaName.toUpperCase(), r));
+      list.forEach(r => mergedMap.set(r.desaName.toUpperCase(), r));
       const combined = Array.from(mergedMap.values());
       localStorage.setItem(`${VILLAGE_CACHE_PREFIX}${projectId}`, JSON.stringify(combined));
       return combined;
@@ -376,47 +399,86 @@ export function generateMasterWorkbookExcel(
   const resumeRows = allResumes.map((r, idx) => {
     const proj = projects.find(p => p.id === r.projectId);
     const projName = proj?.name || r.projectId;
+    const desaRecords = allRecords.filter(rec => (rec.DESA || '').trim().toUpperCase() === (r.desaName || '').trim().toUpperCase());
+    const totalBidang = desaRecords.length;
+    const berkasSelesai = desaRecords.filter(rec => (rec.PROGRES_PEMBERKASAN || '').trim().toUpperCase() === 'SELESAI').length;
+    const berkasPct = totalBidang > 0 ? Math.round((berkasSelesai / totalBidang) * 100) : 0;
 
     let points = 0;
-    const stages = [r.baSosialisasiAwal, r.baPengumuman, r.lampiranBapt, r.baPenyampaianNilai, r.baSerahTerimaRekening, r.bushClearing];
-    stages.forEach(s => {
-      if (s?.status === 'SELESAI') points += 100 / 6;
-      else if (s?.status === 'PROSES') points += 50 / 6;
+    const manualStages = [
+      r.pendataanAwal,
+      r.baSosialisasiAwal,
+      r.surveiPemetaan,
+      r.baPengumuman,
+      r.lampiranBapt,
+      r.registrasiBapt,
+      r.baPenyampaianNilai,
+      r.baSerahTerimaRekening,
+      r.bushClearing
+    ];
+    const totalStagesCount = 10;
+    manualStages.forEach(s => {
+      if (s?.status === 'SELESAI') points += 100 / totalStagesCount;
+      else if (s?.status === 'PROSES') points += 50 / totalStagesCount;
     });
-    const pct = Math.round(points);
+    points += (berkasPct / 100) * (100 / totalStagesCount);
+    const pct = Math.min(100, Math.round(points));
 
     return {
       'NO': idx + 1,
-      'JALUR KOMPENSASI': projName,
+      'JALUR TRANSMISI': projName,
       'ID JALUR': r.projectId,
-      'DESA': r.desaName,
+      'DESA / KELURAHAN': r.desaName,
       'KECAMATAN': r.kecamatan || '',
-      'KABUPATEN': r.kabupaten || '',
-      'PROGRES (%)': `${pct}%`,
-      '1. PENDAHULUAN - STATUS': r.baSosialisasiAwal?.status || 'BELUM',
-      '1. PENDAHULUAN - TANGGAL': r.baSosialisasiAwal?.date || '',
-      '1. PENDAHULUAN - LINK DRIVE': r.baSosialisasiAwal?.pdfUrl || '',
-      '1. PENDAHULUAN - CATATAN': r.baSosialisasiAwal?.notes || '',
-      '2. PENGUMUMAN INV - STATUS': r.baPengumuman?.status || 'BELUM',
-      '2. PENGUMUMAN INV - TANGGAL': r.baPengumuman?.date || '',
-      '2. PENGUMUMAN INV - LINK DRIVE': r.baPengumuman?.pdfUrl || '',
-      '2. PENGUMUMAN INV - CATATAN': r.baPengumuman?.notes || '',
-      '3. BAPT REGISTER - STATUS': r.lampiranBapt?.status || 'BELUM',
-      '3. BAPT REGISTER - TANGGAL': r.lampiranBapt?.date || '',
-      '3. BAPT REGISTER - LINK DRIVE': r.lampiranBapt?.pdfUrl || '',
-      '3. BAPT REGISTER - CATATAN': r.lampiranBapt?.notes || '',
-      '4. PENYAMPAIAN NILAI - STATUS': r.baPenyampaianNilai?.status || 'BELUM',
-      '4. PENYAMPAIAN NILAI - TANGGAL': r.baPenyampaianNilai?.date || '',
-      '4. PENYAMPAIAN NILAI - LINK DRIVE': r.baPenyampaianNilai?.pdfUrl || '',
-      '4. PENYAMPAIAN NILAI - CATATAN': r.baPenyampaianNilai?.notes || '',
-      '5. PEMBAYARAN KOMP - STATUS': r.baSerahTerimaRekening?.status || 'BELUM',
-      '5. PEMBAYARAN KOMP - TANGGAL': r.baSerahTerimaRekening?.date || '',
-      '5. PEMBAYARAN KOMP - LINK DRIVE': r.baSerahTerimaRekening?.pdfUrl || '',
-      '5. PEMBAYARAN KOMP - CATATAN': r.baSerahTerimaRekening?.notes || '',
-      '6. BUSH CLEARING - STATUS': r.bushClearing?.status || 'BELUM',
-      '6. BUSH CLEARING - TANGGAL': r.bushClearing?.date || '',
-      '6. BUSH CLEARING - LINK DRIVE': r.bushClearing?.pdfUrl || (r.bushClearing?.docPhotos?.[0] || ''),
-      '6. BUSH CLEARING - CATATAN': r.bushClearing?.notes || '',
+      'KABUPATEN / KOTA': r.kabupaten || '',
+      'TARGET SPAN (PRA-AKUISISI)': r.targetSpan || '',
+      'ESTIMASI BIDANG AWAL': r.estimasiBidangAwal || '',
+      'KEPALA DESA / LURAH': r.namaKades || '',
+      'CAMAT': r.namaCamat || '',
+      'PJT (ANALIS UTAMA)': r.namaPjt || '',
+      'NO SERTIFIKAT PJT': r.noSertifikatPjt || '',
+      'TOTAL PROGRES (%)': `${pct}%`,
+      '1. PENDATAAN AWAL - STATUS': r.pendataanAwal?.status || 'BELUM',
+      '1. PENDATAAN AWAL - TANGGAL': r.pendataanAwal?.date || '',
+      '1. PENDATAAN AWAL - LINK DOKUMEN': r.pendataanAwal?.pdfUrl || '',
+      '1. PENDATAAN AWAL - CATATAN': r.pendataanAwal?.notes || '',
+      '2. SOSIALISASI DESA - STATUS': r.baSosialisasiAwal?.status || 'BELUM',
+      '2. SOSIALISASI DESA - TANGGAL': r.baSosialisasiAwal?.date || '',
+      '2. SOSIALISASI DESA - NO BA': r.baSosialisasiAwal?.nomorDokumen || '',
+      '2. SOSIALISASI DESA - LINK BA': r.baSosialisasiAwal?.pdfUrl || '',
+      '2. SOSIALISASI DESA - CATATAN': r.baSosialisasiAwal?.notes || '',
+      '3. SURVEI & PEMETAAN - STATUS': r.surveiPemetaan?.status || 'BELUM',
+      '3. SURVEI & PEMETAAN - TANGGAL': r.surveiPemetaan?.date || '',
+      '3. SURVEI & PEMETAAN - LINK PETA': r.surveiPemetaan?.pdfUrl || '',
+      '3. SURVEI & PEMETAAN - CATATAN': r.surveiPemetaan?.notes || '',
+      '4. INVENTARISASI & NOMINATIF (OTOMATIS DB) - PERSENTASE': `${berkasPct}%`,
+      '4. INVENTARISASI & NOMINATIF (OTOMATIS DB) - BERKAS SELESAI': `${berkasSelesai}/${totalBidang} Bidang`,
+      '5. PENGUMUMAN - STATUS': r.baPengumuman?.status || 'BELUM',
+      '5. PENGUMUMAN - TGL MULAI': r.baPengumuman?.date || '',
+      '5. PENGUMUMAN - TGL SELESAI': r.baPengumuman?.endDate || '',
+      '5. PENGUMUMAN - JML KEBERATAN': r.baPengumuman?.jumlahKeberatan ?? 0,
+      '5. PENGUMUMAN - LINK DOKUMEN': r.baPengumuman?.pdfUrl || '',
+      '6. PENYUSUNAN BAPT - STATUS': r.lampiranBapt?.status || 'BELUM',
+      '6. PENYUSUNAN BAPT - TANGGAL TTD': r.lampiranBapt?.date || '',
+      '6. PENYUSUNAN BAPT - LINK BAPT': r.lampiranBapt?.pdfUrl || '',
+      '6. PENYUSUNAN BAPT - CATATAN': r.lampiranBapt?.notes || '',
+      '7. REGISTRASI BAPT - STATUS': r.registrasiBapt?.status || 'BELUM',
+      '7. REGISTRASI BAPT - TGL PENGAJUAN': r.registrasiBapt?.date || '',
+      '7. REGISTRASI BAPT - NOMOR REGISTER': r.registrasiBapt?.nomorDokumen || '',
+      '7. REGISTRASI BAPT - LINK SURAT REGISTER': r.registrasiBapt?.pdfUrl || '',
+      '7. REGISTRASI BAPT - CATATAN': r.registrasiBapt?.notes || '',
+      '8. SOSIALISASI PENYAMPAIAN NILAI - STATUS': r.baPenyampaianNilai?.status || 'BELUM',
+      '8. SOSIALISASI PENYAMPAIAN NILAI - TANGGAL': r.baPenyampaianNilai?.date || '',
+      '8. SOSIALISASI PENYAMPAIAN NILAI - LINK BA': r.baPenyampaianNilai?.pdfUrl || '',
+      '8. SOSIALISASI PENYAMPAIAN NILAI - CATATAN': r.baPenyampaianNilai?.notes || '',
+      '9. SOSIALISASI PEMBAYARAN - STATUS': r.baSerahTerimaRekening?.status || 'BELUM',
+      '9. SOSIALISASI PEMBAYARAN - TANGGAL': r.baSerahTerimaRekening?.date || '',
+      '9. SOSIALISASI PEMBAYARAN - LINK BA': r.baSerahTerimaRekening?.pdfUrl || '',
+      '9. SOSIALISASI PEMBAYARAN - CATATAN': r.baSerahTerimaRekening?.notes || '',
+      '10. BUSH CLEARING - STATUS': r.bushClearing?.status || 'BELUM',
+      '10. BUSH CLEARING - TANGGAL': r.bushClearing?.date || '',
+      '10. BUSH CLEARING - LINK BA': r.bushClearing?.pdfUrl || '',
+      '10. BUSH CLEARING - CATATAN': r.bushClearing?.notes || '',
       'FOLDER DRIVE DESA': r.driveFolderId ? `https://drive.google.com/drive/folders/${r.driveFolderId}` : '',
       'TERAKHIR DIPERBARUI': new Date(r.lastUpdated || Date.now()).toLocaleDateString('id-ID'),
       'PETUGAS': r.updatedBy || 'Operator'
@@ -455,12 +517,9 @@ export function generateMasterWorkbookExcel(
 /**
  * Generates and downloads 1 Excel Workbook (.xlsx) dedicated to a SINGLE JALUR (Project).
  * Accommodates:
- * 1. RESUME_PROYEK (Nama desa otomatis digenerate dari data yang ada di daftar nominatif & resume)
+ * 1. RESUME_PROYEK (Tahapan 1-10 + Data Pra-Akuisisi)
  * 2. SURAT_INSTANSI (Data surat menyurat dinas/instansi untuk jalur ini)
  * 3. DAFTAR_NOMINATIF (Rincian bidang tanah, pemilik, alas hak, dan link drive)
- * 
- * Memenuhi kebutuhan pengguna agar excel dibuat perjalur untuk mempermudah QC,
- * pengamatan, dan maintenance, serta surat instansi langsung diwadahi dalam satu file terpadu.
  */
 export function generateJalurWorkbookExcel(
   project: ProjectConfig,
@@ -470,64 +529,95 @@ export function generateJalurWorkbookExcel(
 ): void {
   const wb = XLSX.utils.book_new();
 
-  // 1. OTOMATIS GENERATE NAMA DESA DARI DATA YANG ADA
+  // 1. OTOMATIS GABUNGKAN NAMA DESA DARI PRA-AKUISISI (RESUME) & DATABASE AKUISISI
   const desasFromRecords = Array.from(new Set(records.map(r => (r.DESA || '').trim().toUpperCase()).filter(Boolean)));
   const desasFromResumes = Array.from(new Set(villageResumes.map(r => (r.desaName || '').trim().toUpperCase()).filter(Boolean)));
-  const allUniqueDesas = Array.from(new Set([...desasFromRecords, ...desasFromResumes])).sort((a, b) => a.localeCompare(b));
+  const allUniqueDesas = Array.from(new Set([...desasFromResumes, ...desasFromRecords])).sort((a, b) => a.localeCompare(b));
 
-  const activeStages = (project.resumeStages || DEFAULT_RESUME_STAGES).filter(s => s.active !== false);
+  const activeStages = DEFAULT_RESUME_STAGES.filter(s => s.active !== false);
 
   const resumeRows = allUniqueDesas.map((desaName, idx) => {
     const existingResume = villageResumes.find(r => (r.desaName || '').trim().toUpperCase() === desaName);
     const desaRecords = records.filter(r => (r.DESA || '').trim().toUpperCase() === desaName);
     
     const totalBidang = desaRecords.length;
+    const berkasSelesai = desaRecords.filter(r => (r.PROGRES_PEMBERKASAN || '').trim().toUpperCase() === 'SELESAI').length;
+    const berkasPct = totalBidang > 0 ? Math.round((berkasSelesai / totalBidang) * 100) : 0;
+    const totalSpanRealisasi = new Set(desaRecords.map(r => (r.SPAN || '').trim()).filter(Boolean)).size;
     const totalLuas = desaRecords.reduce((sum, r) => sum + (parseFloat(String(r.LUAS || '0').replace(',', '.')) || 0), 0);
     const kecamatan = existingResume?.kecamatan || desaRecords[0]?.KECAMATAN || '';
     const kabupaten = existingResume?.kabupaten || desaRecords[0]?.KABUPATEN || '';
+    const kades = existingResume?.namaKades || desaRecords.find(r => r.NAMA_KADES)?.NAMA_KADES || '';
 
-    // Hitung persentase progres berdasarkan tahapan aktif
+    // Hitung persentase progres berdasarkan tahapan aktif (1-10)
     let points = 0;
     activeStages.forEach(st => {
-      const stageDoc = existingResume ? (existingResume as any)[st.key] : null;
-      if (stageDoc?.status === 'SELESAI') points += 100 / activeStages.length;
-      else if (stageDoc?.status === 'PROSES') points += 50 / activeStages.length;
+      if (st.key === 'inventarisasiNominatif') {
+        points += (berkasPct / 100) * (100 / activeStages.length);
+      } else {
+        const stageDoc = existingResume ? (existingResume as any)[st.key] : null;
+        if (stageDoc?.status === 'SELESAI') points += 100 / activeStages.length;
+        else if (stageDoc?.status === 'PROSES') points += 50 / activeStages.length;
+      }
     });
     const pct = Math.min(100, Math.round(points));
 
     return {
       'NO': idx + 1,
-      'JALUR KOMPENSASI': project.name,
-      'DESA': desaName,
+      'JALUR TRANSMISI': project.name,
+      'DESA / KELURAHAN': desaName,
       'KECAMATAN': kecamatan,
-      'KABUPATEN': kabupaten,
-      'TOTAL BIDANG': totalBidang > 0 ? totalBidang : (existingResume ? '-' : 0),
-      'TOTAL LUAS (M2)': totalLuas > 0 ? Math.round(totalLuas * 100) / 100 : '-',
-      'PROGRES (%)': `${pct}%`,
-      '1. PENDAHULUAN - STATUS': existingResume?.baSosialisasiAwal?.status || 'BELUM',
-      '1. PENDAHULUAN - TANGGAL': existingResume?.baSosialisasiAwal?.date || '',
-      '1. PENDAHULUAN - LINK BUKTI DRIVE': existingResume?.baSosialisasiAwal?.pdfUrl || '',
-      '1. PENDAHULUAN - CATATAN': existingResume?.baSosialisasiAwal?.notes || '',
-      '2. PENGUMUMAN INV - STATUS': existingResume?.baPengumuman?.status || 'BELUM',
-      '2. PENGUMUMAN INV - TANGGAL': existingResume?.baPengumuman?.date || '',
-      '2. PENGUMUMAN INV - LINK BUKTI DRIVE': existingResume?.baPengumuman?.pdfUrl || '',
-      '2. PENGUMUMAN INV - CATATAN': existingResume?.baPengumuman?.notes || '',
-      '3. BAPT REGISTER - STATUS': existingResume?.lampiranBapt?.status || 'BELUM',
-      '3. BAPT REGISTER - TANGGAL': existingResume?.lampiranBapt?.date || '',
-      '3. BAPT REGISTER - LINK BUKTI DRIVE': existingResume?.lampiranBapt?.pdfUrl || '',
-      '3. BAPT REGISTER - CATATAN': existingResume?.lampiranBapt?.notes || '',
-      '4. PENYAMPAIAN NILAI - STATUS': existingResume?.baPenyampaianNilai?.status || 'BELUM',
-      '4. PENYAMPAIAN NILAI - TANGGAL': existingResume?.baPenyampaianNilai?.date || '',
-      '4. PENYAMPAIAN NILAI - LINK BUKTI DRIVE': existingResume?.baPenyampaianNilai?.pdfUrl || '',
-      '4. PENYAMPAIAN NILAI - CATATAN': existingResume?.baPenyampaianNilai?.notes || '',
-      '5. PEMBAYARAN KOMP - STATUS': existingResume?.baSerahTerimaRekening?.status || 'BELUM',
-      '5. PEMBAYARAN KOMP - TANGGAL': existingResume?.baSerahTerimaRekening?.date || '',
-      '5. PEMBAYARAN KOMP - LINK BUKTI DRIVE': existingResume?.baSerahTerimaRekening?.pdfUrl || '',
-      '5. PEMBAYARAN KOMP - CATATAN': existingResume?.baSerahTerimaRekening?.notes || '',
-      '6. BUSH CLEARING - STATUS': existingResume?.bushClearing?.status || 'BELUM',
-      '6. BUSH CLEARING - TANGGAL': existingResume?.bushClearing?.date || '',
-      '6. BUSH CLEARING - LINK BUKTI DRIVE': existingResume?.bushClearing?.pdfUrl || (existingResume?.bushClearing?.docPhotos?.[0] || ''),
-      '6. BUSH CLEARING - CATATAN': existingResume?.bushClearing?.notes || '',
+      'KABUPATEN / KOTA': kabupaten,
+      'TARGET SPAN (PRA-AKUISISI)': existingResume?.targetSpan || (totalSpanRealisasi > 0 ? totalSpanRealisasi : '-'),
+      'ESTIMASI BIDANG AWAL': existingResume?.estimasiBidangAwal || '-',
+      'REALISASI BIDANG TERAKUISISI': totalBidang,
+      'TOTAL LUAS TERAKUISISI (M2)': totalLuas > 0 ? Math.round(totalLuas * 100) / 100 : 0,
+      'KEPALA DESA / LURAH': kades,
+      'CAMAT': existingResume?.namaCamat || '',
+      'PJT (ANALIS UTAMA)': existingResume?.namaPjt || '',
+      'NO SERTIFIKAT PJT': existingResume?.noSertifikatPjt || '',
+      'TOTAL PROGRES (%)': `${pct}%`,
+      '1. PENDATAAN AWAL - STATUS': existingResume?.pendataanAwal?.status || 'BELUM',
+      '1. PENDATAAN AWAL - TANGGAL': existingResume?.pendataanAwal?.date || '',
+      '1. PENDATAAN AWAL - LINK DOKUMEN': existingResume?.pendataanAwal?.pdfUrl || '',
+      '1. PENDATAAN AWAL - CATATAN': existingResume?.pendataanAwal?.notes || '',
+      '2. SOSIALISASI DESA - STATUS': existingResume?.baSosialisasiAwal?.status || 'BELUM',
+      '2. SOSIALISASI DESA - TANGGAL': existingResume?.baSosialisasiAwal?.date || '',
+      '2. SOSIALISASI DESA - NO BA': existingResume?.baSosialisasiAwal?.nomorDokumen || '',
+      '2. SOSIALISASI DESA - LINK BA': existingResume?.baSosialisasiAwal?.pdfUrl || '',
+      '2. SOSIALISASI DESA - CATATAN': existingResume?.baSosialisasiAwal?.notes || '',
+      '3. SURVEI & PEMETAAN - STATUS': existingResume?.surveiPemetaan?.status || 'BELUM',
+      '3. SURVEI & PEMETAAN - TANGGAL': existingResume?.surveiPemetaan?.date || '',
+      '3. SURVEI & PEMETAAN - LINK PETA': existingResume?.surveiPemetaan?.pdfUrl || '',
+      '3. SURVEI & PEMETAAN - CATATAN': existingResume?.surveiPemetaan?.notes || '',
+      '4. INVENTARISASI & NOMINATIF (OTOMATIS DB) - PERSENTASE': `${berkasPct}%`,
+      '4. INVENTARISASI & NOMINATIF (OTOMATIS DB) - BERKAS SELESAI': `${berkasSelesai}/${totalBidang} Bidang`,
+      '5. PENGUMUMAN - STATUS': existingResume?.baPengumuman?.status || 'BELUM',
+      '5. PENGUMUMAN - TGL MULAI': existingResume?.baPengumuman?.date || '',
+      '5. PENGUMUMAN - TGL SELESAI': existingResume?.baPengumuman?.endDate || '',
+      '5. PENGUMUMAN - JML KEBERATAN': existingResume?.baPengumuman?.jumlahKeberatan ?? 0,
+      '5. PENGUMUMAN - LINK DOKUMEN': existingResume?.baPengumuman?.pdfUrl || '',
+      '6. PENYUSUNAN BAPT - STATUS': existingResume?.lampiranBapt?.status || 'BELUM',
+      '6. PENYUSUNAN BAPT - TANGGAL TTD': existingResume?.lampiranBapt?.date || '',
+      '6. PENYUSUNAN BAPT - LINK BAPT': existingResume?.lampiranBapt?.pdfUrl || '',
+      '6. PENYUSUNAN BAPT - CATATAN': existingResume?.lampiranBapt?.notes || '',
+      '7. REGISTRASI BAPT - STATUS': existingResume?.registrasiBapt?.status || 'BELUM',
+      '7. REGISTRASI BAPT - TGL PENGAJUAN': existingResume?.registrasiBapt?.date || '',
+      '7. REGISTRASI BAPT - NOMOR REGISTER': existingResume?.registrasiBapt?.nomorDokumen || '',
+      '7. REGISTRASI BAPT - LINK SURAT REGISTER': existingResume?.registrasiBapt?.pdfUrl || '',
+      '7. REGISTRASI BAPT - CATATAN': existingResume?.registrasiBapt?.notes || '',
+      '8. SOSIALISASI PENYAMPAIAN NILAI - STATUS': existingResume?.baPenyampaianNilai?.status || 'BELUM',
+      '8. SOSIALISASI PENYAMPAIAN NILAI - TANGGAL': existingResume?.baPenyampaianNilai?.date || '',
+      '8. SOSIALISASI PENYAMPAIAN NILAI - LINK BA': existingResume?.baPenyampaianNilai?.pdfUrl || '',
+      '8. SOSIALISASI PENYAMPAIAN NILAI - CATATAN': existingResume?.baPenyampaianNilai?.notes || '',
+      '9. SOSIALISASI PEMBAYARAN - STATUS': existingResume?.baSerahTerimaRekening?.status || 'BELUM',
+      '9. SOSIALISASI PEMBAYARAN - TANGGAL': existingResume?.baSerahTerimaRekening?.date || '',
+      '9. SOSIALISASI PEMBAYARAN - LINK BA': existingResume?.baSerahTerimaRekening?.pdfUrl || '',
+      '9. SOSIALISASI PEMBAYARAN - CATATAN': existingResume?.baSerahTerimaRekening?.notes || '',
+      '10. BUSH CLEARING - STATUS': existingResume?.bushClearing?.status || 'BELUM',
+      '10. BUSH CLEARING - TANGGAL': existingResume?.bushClearing?.date || '',
+      '10. BUSH CLEARING - LINK BA': existingResume?.bushClearing?.pdfUrl || '',
+      '10. BUSH CLEARING - CATATAN': existingResume?.bushClearing?.notes || '',
       'LINK FOLDER DESA DRIVE': existingResume?.driveFolderId ? `https://drive.google.com/drive/folders/${existingResume.driveFolderId}` : '',
       'TERAKHIR DIPERBARUI': existingResume?.lastUpdated ? new Date(existingResume.lastUpdated).toLocaleDateString('id-ID') : new Date().toLocaleDateString('id-ID'),
       'PETUGAS': existingResume?.updatedBy || 'Operator'
@@ -731,7 +821,7 @@ export async function importMasterWorkbookExcel(
   }
 }
 
-export async function deleteVillageResume(projectId: string, resumeId: string): Promise<void> {
+export async function deleteVillageResume(projectId: string, resumeId: string, desaName?: string): Promise<void> {
   // 1. LocalStorage
   try {
     const raw = localStorage.getItem(`${VILLAGE_CACHE_PREFIX}${projectId}`);
@@ -739,7 +829,12 @@ export async function deleteVillageResume(projectId: string, resumeId: string): 
     if (raw) {
       try { current = JSON.parse(raw); } catch {}
     }
-    const filtered = current.filter(r => r.id !== resumeId);
+    const cleanTargetDesa = (desaName || '').trim().toUpperCase();
+    const filtered = current.filter(r => {
+      if (r.id === resumeId) return false;
+      if (cleanTargetDesa && (r.desaName || '').trim().toUpperCase() === cleanTargetDesa) return false;
+      return true;
+    });
     localStorage.setItem(`${VILLAGE_CACHE_PREFIX}${projectId}`, JSON.stringify(filtered));
   } catch (err) {
     console.warn('Gagal delete local village resume:', err);
@@ -765,7 +860,10 @@ export function subscribeVillageResumes(
     return onSnapshot(q, (snapshot) => {
       const list: VillageResume[] = [];
       snapshot.forEach(d => {
-        list.push(d.data() as VillageResume);
+        const data = d.data() as VillageResume;
+        if (!data.projectId || data.projectId === projectId) {
+          list.push(data);
+        }
       });
       localStorage.setItem(`${VILLAGE_CACHE_PREFIX}${projectId}`, JSON.stringify(list));
       callback(list);

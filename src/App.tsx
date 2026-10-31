@@ -1481,28 +1481,33 @@ export default function App() {
       const activeProj = projects.find(p => p.id === projectId);
       if (!activeProj) throw new Error("Proyek tidak ditemukan.");
 
+      // Immediately scope records to this projectId's local cache (or empty array) so previous jalur records never bleed while syncing
+      const cached = localStorage.getItem(`project_ventura_records_cache_${projectId}`);
+      let hasLoadedLocal = false;
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) {
+            setRecords(parsed);
+            if (parsed.length > 0) {
+              hasLoadedLocal = true;
+            }
+          } else {
+            setRecords([]);
+          }
+        } catch (e) {
+          console.warn("Gagal membaca cache lokal:", e);
+          setRecords([]);
+        }
+      } else {
+        setRecords([]);
+      }
+
       if (!accessToken || accessToken === 'GUEST_BYPASS' || accessToken === 'null' || accessToken === 'undefined' || accessToken.trim() === '') {
         setIsLiveGoogleConnected(false);
         setSpreadsheetId(activeProj.spreadsheetId || 'guest_bypass');
         setProjectUploadsFolderId(activeProj.uploadsFolderId || 'guest_bypass');
         setSheetNameInfo(activeProj.spreadsheetId ? `${activeProj.name} (Sinkron Cloud / ID Spreadsheet Terhubung)` : `${activeProj.name} (Mode Tim Lapangan / Cloud Firestore)`);
-
-        // 1. Try to load cached records from localStorage first (for instant initial render)
-        const cached = localStorage.getItem(`project_ventura_records_cache_${projectId}`);
-        let hasLoadedLocal = false;
-        if (cached) {
-          try {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed)) {
-              setRecords(parsed);
-              if (parsed.length > 0) {
-                hasLoadedLocal = true;
-              }
-            }
-          } catch (e) {
-            console.warn("Gagal membaca cache lokal:", e);
-          }
-        }
 
         // 2. Fetch from Firestore cloud cache FIRST (so live Merge, Split, Delete, and Field Edits are NEVER overwritten by stale read-only CSV!)
         try {
@@ -1882,7 +1887,7 @@ export default function App() {
     } finally {
       setIsLoadingData(false);
     }
-  }, [projects, records.length]);
+  }, [projects]);
 
   // Sync when token/projectId becomes available
   useEffect(() => {
@@ -5150,17 +5155,23 @@ export default function App() {
                   />
                 )}
 
-                {/* Menu 1.4: Resume Project (Per Desa) */}
+                {/* Menu 1.4: Resume Project (Per Desa - Strictly Scoped Per Jalur) */}
                 {activeMenu === 'resume_project' && (
                   <ResumeProjectPanel 
+                    key={activeProjectId}
                     records={records}
+                    loadedGeoJSONs={loadedGeoJSONs.filter(g => {
+                      if (g.projectId === activeProjectId) return true;
+                      if (g.isDefault && (activeProjectId === 'proj-1' || (projects.find(p => p.id === activeProjectId)?.name || '').toUpperCase().includes('JELOK'))) return true;
+                      return false;
+                    })}
                     activeProjectId={activeProjectId}
                     activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
                     role={role}
                     userEmail={user?.email || 'operator@ventura.id'}
                     operatorName={operatorName}
                     accessToken={token || undefined}
-                    spreadsheetId={projects.find(p => p.id === activeProjectId)?.resumeSpreadsheetId || spreadsheetId || projects.find(p => p.id === activeProjectId)?.spreadsheetId || undefined}
+                    spreadsheetId={projects.find(p => p.id === activeProjectId)?.resumeSpreadsheetId || projects.find(p => p.id === activeProjectId)?.spreadsheetId || undefined}
                     allProjects={projects}
                     uploadsFolderId={projectUploadsFolderId || undefined}
                     resumeUploadsFolderId={projects.find(p => p.id === activeProjectId)?.resumeUploadsFolderId || undefined}

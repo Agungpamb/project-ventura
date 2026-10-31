@@ -233,7 +233,7 @@ export async function loadDeployedDefaultGeoJSONs(): Promise<SavedGeoJSONLayer[]
               visible: true,
               isDefault: true,
               fieldMapping: null,
-              projectId: 'global'
+              projectId: 'proj-1'
             });
             break;
           }
