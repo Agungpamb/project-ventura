@@ -227,11 +227,147 @@ export default function PetaBidangTanah({
   }, [records, selectedDesa, selectedSpan]);
 
   // Total Area Calculation
+  // Total Area Calculation
   const totalLuas = useMemo(() => {
     return filteredRecords.reduce((sum, r) => sum + (Number(r.LUAS) || 0), 0);
   }, [filteredRecords]);
 
+  // ============================================================================
+  // GEODETIC CONVERSION: WGS 1984 (Lat/Lng) -> UTM (Easting X, Northing Y) & Web Mercator
+  // ============================================================================
+  const wgs84ToUtm = (lat: number, lng: number): { x: number; y: number; zone: number; hemisphere: 'N' | 'S'; convergenceDeg: number } => {
+    const a = 6378137.0; // WGS84 semi-major axis (m)
+    const f = 1 / 298.257223563; // WGS84 flattening
+    const k0 = 0.9996;
+    const eSq = 2 * f - f * f;
+    const ePrimeSq = eSq / (1 - eSq);
+
+    const zone = Math.floor((lng + 180) / 6) + 1;
+    const lonOrigin = (zone - 1) * 6 - 180 + 3; // Central meridian of UTM zone
+    const latRad = (lat * Math.PI) / 180;
+    const lonRad = (lng * Math.PI) / 180;
+    const lonOriginRad = (lonOrigin * Math.PI) / 180;
+    const dLon = lonRad - lonOriginRad;
+
+    const sinLat = Math.sin(latRad);
+    const cosLat = Math.cos(latRad);
+    const tanLat = Math.tan(latRad);
+
+    const N = a / Math.sqrt(1 - eSq * sinLat * sinLat);
+    const T = tanLat * tanLat;
+    const C = ePrimeSq * cosLat * cosLat;
+    const A = cosLat * dLon;
+
+    const e4 = eSq * eSq;
+    const e6 = e4 * eSq;
+    const M =
+      a *
+      ((1 - eSq / 4 - (3 * e4) / 64 - (5 * e6) / 256) * latRad -
+        ((3 * eSq) / 8 + (3 * e4) / 32 + (45 * e6) / 1024) * Math.sin(2 * latRad) +
+        ((15 * e4) / 256 + (45 * e6) / 1024) * Math.sin(4 * latRad) -
+        ((35 * e6) / 3072) * Math.sin(6 * latRad));
+
+    const easting =
+      500000.0 +
+      k0 *
+        N *
+        (A +
+          ((1 - T + C) * Math.pow(A, 3)) / 6 +
+          ((5 - 18 * T + T * T + 72 * C - 58 * ePrimeSq) * Math.pow(A, 5)) / 120);
+
+    let northing =
+      k0 *
+      (M +
+        N *
+          tanLat *
+          ((A * A) / 2 +
+            ((5 - T + 9 * C + 4 * C * C) * Math.pow(A, 4)) / 24 +
+            ((61 - 58 * T + T * T + 600 * C - 330 * ePrimeSq) * Math.pow(A, 6)) / 720));
+
+    const hemisphere: 'N' | 'S' = lat < 0 ? 'S' : 'N';
+    if (lat < 0) {
+      northing += 10000000.0;
+    }
+
+    // Meridian convergence angle (gamma) in degrees
+    const convergenceRad = Math.atan(Math.tan(dLon) * sinLat);
+    const convergenceDeg = (convergenceRad * 180) / Math.PI;
+
+    return { x: easting, y: northing, zone, hemisphere, convergenceDeg };
+  };
+
+  const wgs84ToWebMercator = (lat: number, lng: number): { x: number; y: number } => {
+    const R = 6378137.0;
+    const x = (lng * Math.PI * R) / 180.0;
+    const clampedLat = Math.max(-85.05112878, Math.min(85.05112878, lat));
+    const latRad = (clampedLat * Math.PI) / 180.0;
+    const y = R * Math.log(Math.tan(Math.PI / 4 + latRad / 2));
+    return { x, y };
+  };
+
+  // Normalize any tower token e.g. "T.02", "T.2", "02", "2", "T.16A", "GI Jelok", "GI Sanggarahan"
+  const normalizeTowerToken = (raw: any): { canonicalId: string; displayName: string; sortNum: number; suffix: string } | null => {
+    if (raw === undefined || raw === null) return null;
+    const str = String(raw).trim();
+    if (!str) return null;
+
+    // Check if Gardu Induk (GI)
+    if (/\bgi\b/i.test(str)) {
+      const cleanGi = str.replace(/\s+/g, ' ').trim();
+      const upperGi = cleanGi.toUpperCase();
+      // GI Jelok is at the start (Tower 0), GI Sanggarahan is at the end (Tower 9999)
+      const isStartGi = /jelok|awal|start/i.test(upperGi);
+      return {
+        canonicalId: 'GI_' + upperGi.replace(/[^A-Z0-9]/g, ''),
+        displayName: cleanGi.toUpperCase(),
+        sortNum: isStartGi ? 0 : 99999,
+        suffix: ''
+      };
+    }
+
+    // Match T.40, T02, Tower 15A, or plain number 40
+    const m = str.match(/^(?:t(?:ower|wr|pk|apak)?[\.\-_\s]*)?0*(\d+)([a-zA-Z]?)$/i);
+    if (m) {
+      const numVal = parseInt(m[1], 10);
+      const numStr = String(isNaN(numVal) ? 0 : numVal);
+      const suffix = (m[2] || '').toUpperCase();
+      return {
+        canonicalId: `T.${numStr}${suffix}`,
+        displayName: `T.${numStr}${suffix}`,
+        sortNum: numVal,
+        suffix
+      };
+    }
+
+    return null;
+  };
+
+  // Parse selectedSpan into [Tower Kecil (Left), Tower Besar (Right)]
+  const parseSpanEndpoints = (spanStr: string) => {
+    if (!spanStr) return [];
+    const cleaned = spanStr.replace(/^span\s+/i, '').trim();
+    const parts = cleaned
+      .split(/\s*(?:[-–—/]|s\/d|sampai|to)\s*/i)
+      .map(p => p.trim())
+      .filter(Boolean);
+
+    const parsed = parts
+      .map(p => normalizeTowerToken(p))
+      .filter((item): item is NonNullable<ReturnType<typeof normalizeTowerToken>> => item !== null);
+
+    // Handle shorthand like "T.40-41" or "T.10-1"
+    if (parsed.length === 2) {
+      parsed.sort((a, b) => {
+        if (a.sortNum !== b.sortNum) return a.sortNum - b.sortNum;
+        return a.suffix.localeCompare(b.suffix);
+      });
+    }
+    return parsed;
+  };
+
   // Base GeoJSON Rotation detection from GeoJSON features in selected Desa/Span
+  // Note: ArcGIS Data Driven Pages "ROTATE" attribute is Counter-Clockwise (CCW),
+  // whereas CSS transform rotate() is Clockwise (CW) -> CSS Angle = (360 - ROTATE) % 360
   const baseGeojsonRotasi = useMemo(() => {
     if (!selectedDesa) return 0;
     const normSelDesa = normalizeDesa(selectedDesa);
@@ -254,7 +390,7 @@ export default function PetaBidangTanah({
             : findPropCaseInsensitive(props, ['rotasi', 'rotate', 'rotation', 'angle', 'sudut']);
           const rotNum = Number(rotKey);
           if (!isNaN(rotNum) && rotNum !== 0) {
-            return rotNum;
+            return ((360 - (rotNum % 360)) + 360) % 360;
           }
         }
       }
@@ -266,51 +402,34 @@ export default function PetaBidangTanah({
   const featPropsTower = (props: any, layer?: LoadedGeoJSON) => {
     if (!props) return 'Tower';
     if (layer?.fieldMapping?.tower && props[layer.fieldMapping.tower]) {
-      const mapped = String(props[layer.fieldMapping.tower]).trim();
-      if (mapped) {
-        if (/^t[\.\-_\s]?/i.test(mapped)) {
-          return 'T.' + mapped.replace(/^t[\.\-_\s]?/i, '').trim();
-        }
-        if (/^[0-9]+[a-zA-Z]?$/.test(mapped)) {
-          return `T.${mapped}`;
-        }
-        return mapped;
-      }
+      const tok = normalizeTowerToken(props[layer.fieldMapping.tower]);
+      if (tok) return tok.displayName;
     }
-    const val = findPropCaseInsensitive(props, [
-      'towernumb', 'tower_numb', 'tower', 'no_tower', 'id_tower', 'nomor_tower', 'no_tapak', 'tapak', 'tapaktower', 'tapak_tower', 'nama', 'namobj', 'name', 
-      'code', 'label', 'text', 'no'
+    const primaryVal = findPropCaseInsensitive(props, [
+      'towernumb', 'tower_numb', 'tower', 'no_tower', 'id_tower', 'nomor_tower', 'tower_no', 'nama', 'namobj', 'name', 'label'
     ]);
-    if (!val) return 'Tower';
-    const str = String(val).trim();
-    if (/^t[\.\-_\s]?/i.test(str)) {
-      return 'T.' + str.replace(/^t[\.\-_\s]?/i, '').trim();
+    if (primaryVal) {
+      const tok = normalizeTowerToken(primaryVal);
+      if (tok) return tok.displayName;
+      return String(primaryVal).trim();
     }
-    if (/^[0-9]+[a-zA-Z]?$/.test(str)) {
-      return `T.${str}`;
+    const nomerVal = findPropCaseInsensitive(props, ['nomer', 'nomor', 'no']);
+    if (nomerVal) {
+      const tok = normalizeTowerToken(nomerVal);
+      if (tok) return tok.displayName;
     }
-    return str;
+    return 'Tower';
   };
 
-  // Extract Tower Coordinates (X / Easting / Lng, Y / Northing / Lat) strictly for towers in current active span
+  // Extract Tower Coordinates (WGS84 Lng/Lat + UTM Easting X / Northing Y) strictly for towers in current active span,
+  // OR automatically synthesize from As Tower (jalur) WGS84 LineString if tower points are not in a separate layer!
   const towerPoints = useMemo(() => {
-    const list: { name: string; lng: number; lat: number }[] = [];
+    const list: { name: string; canonicalId: string; sortNum: number; lng: number; lat: number; utmX: number; utmY: number; utmZone: string }[] = [];
     if (!selectedSpan) return list;
 
-    // Extract tower tokens from selectedSpan e.g. "T.70 - T.71" -> ["70", "71"] or "SPAN T.15-T.16A" -> ["15", "16A"]
-    const cleanSpan = selectedSpan.toUpperCase();
-    const match = cleanSpan.match(/T\.?\s*([0-9a-zA-Z]+)\s*[\-\–\/]\s*T\.?\s*([0-9a-zA-Z]+)/i);
-    let t1Raw = match ? match[1] : '';
-    let t2Raw = match ? match[2] : '';
+    const targetEndpoints = parseSpanEndpoints(selectedSpan);
+    const targetIds = new Set(targetEndpoints.map(e => e.canonicalId));
 
-    if (!t1Raw) {
-      const singleMatch = cleanSpan.match(/T\.?\s*([0-9a-zA-Z]+)/i);
-      if (singleMatch) t1Raw = singleMatch[1];
-    }
-
-    const targetTokens = [t1Raw, t2Raw].filter(Boolean);
-
-    // Helper to calculate coordinates from Point or Polygon feature
     const getFeatureCoords = (feat: any): { lng: number; lat: number } | null => {
       if (!feat.geometry) return null;
       const geomType = feat.geometry.type;
@@ -320,12 +439,7 @@ export default function PetaBidangTanah({
         return { lng: Number(coords[0]), lat: Number(coords[1]) };
       }
       if ((geomType === 'Polygon' || geomType === 'MultiPolygon') && Array.isArray(coords)) {
-        let pts: number[][] = [];
-        if (geomType === 'Polygon') {
-          pts = coords[0] || [];
-        } else {
-          pts = coords[0]?.[0] || [];
-        }
+        const pts: number[][] = geomType === 'Polygon' ? (coords[0] || []) : (coords[0]?.[0] || []);
         if (pts.length > 0) {
           let sumLng = 0, sumLat = 0, count = 0;
           pts.forEach((p: any) => {
@@ -343,143 +457,319 @@ export default function PetaBidangTanah({
       return null;
     };
 
-    const foundTowersMap = new Map<string, { name: string; lng: number; lat: number }>();
+    const foundTowersMap = new Map<string, typeof list[0]>();
 
     loadedGeoJSONs.forEach(layer => {
       if (!layer.data?.features) return;
-      const isTowerLayer = layer.type === 'tower' || /tower|tapak|tw/i.test(layer.name || '');
+      const isTowerLayer = layer.type === 'tower' || /tower|tapak|tw/i.test(layer.name || '') || /tower|tapak|tw/i.test(layer.id || '');
+      // Do not extract point towers from parcel (bidang) polygons
+      if (layer.type === 'bidang' && !isTowerLayer) return;
 
       layer.data.features.forEach((f: any) => {
         const props = f.properties || {};
         const coords = getFeatureCoords(f);
-        if (!coords) return;
+        if (!coords || isNaN(coords.lat) || isNaN(coords.lng)) return;
 
-        // Check all property string values in feature
-        const allPropValuesStr = Object.values(props).map(v => String(v).trim().toUpperCase()).join(' ');
+        // Strictly check tower name / number attributes (NEVER FID, OBJECTID, TAPAK foundation size, or luas!)
+        const candidateRawValues: any[] = [];
+        if (layer.fieldMapping?.tower && props[layer.fieldMapping.tower] !== undefined) {
+          candidateRawValues.push(props[layer.fieldMapping.tower]);
+        }
+        const explicitTowerName = findPropCaseInsensitive(props, [
+          'towernumb', 'tower_numb', 'tower', 'no_tower', 'id_tower', 'nomor_tower', 'tower_no', 'nama', 'namobj', 'name', 'label'
+        ]);
+        if (explicitTowerName) candidateRawValues.push(explicitTowerName);
 
-        let matchedToken = '';
-        for (const tok of targetTokens) {
-          const normTok = tok.replace(/[^0-9a-zA-Z]/g, '').toUpperCase();
-          if (!normTok) continue;
-
-          // Match exact token or T.<tok> or T<tok> or token in property values
-          const regexStr = `(?:\\b|T[\\._\\-]?)${normTok}\\b`;
-          const tokenRegex = new RegExp(regexStr, 'i');
-
-          if (tokenRegex.test(allPropValuesStr)) {
-            matchedToken = tok;
-            break;
-          }
+        // Only use 'NOMER' if explicitTowerName is absent or doesn't parse
+        if (candidateRawValues.length === 0 && isTowerLayer) {
+          const nomerProp = findPropCaseInsensitive(props, ['nomer', 'nomor']);
+          if (nomerProp) candidateRawValues.push(nomerProp);
         }
 
-        const featSpan = layer.fieldMapping?.span 
-          ? props[layer.fieldMapping.span] 
-          : findPropCaseInsensitive(props, ['span', 'section', 'jalur']);
-        const isSpanMatch = featSpan && normalizeSpan(featSpan) === normalizeSpan(selectedSpan);
+        for (const rawVal of candidateRawValues) {
+          const tok = normalizeTowerToken(rawVal);
+          if (!tok) continue;
 
-        if (matchedToken || (isTowerLayer && isSpanMatch)) {
-          const tNameFromProp = featPropsTower(props);
-          const displayName = matchedToken ? `T.${matchedToken.toUpperCase()}` : tNameFromProp;
-          if (!foundTowersMap.has(displayName)) {
-            foundTowersMap.set(displayName, {
-              name: displayName,
+          if (targetIds.has(tok.canonicalId) && !foundTowersMap.has(tok.canonicalId)) {
+            const utmCalc = wgs84ToUtm(coords.lat, coords.lng);
+            const propX = Number(findPropCaseInsensitive(props, ['x', 'easting', 'utm_x']));
+            const propY = Number(findPropCaseInsensitive(props, ['y', 'northing', 'utm_y']));
+            // Use property X/Y if they are valid UTM meters (e.g. Easting 100,000..900,000, Northing > 1,000,000)
+            const hasValidUtmProps = !isNaN(propX) && !isNaN(propY) && propX > 100000 && propX < 900000 && propY > 1000000;
+
+            foundTowersMap.set(tok.canonicalId, {
+              name: tok.displayName,
+              canonicalId: tok.canonicalId,
+              sortNum: tok.sortNum,
               lng: coords.lng,
-              lat: coords.lat
+              lat: coords.lat,
+              utmX: hasValidUtmProps ? propX : utmCalc.x,
+              utmY: hasValidUtmProps ? propY : utmCalc.y,
+              utmZone: `${utmCalc.zone}${utmCalc.hemisphere}`
             });
+            break;
           }
         }
       });
     });
 
-    const result = Array.from(foundTowersMap.values());
-    result.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+    // If Tower layer didn't have both towers, try extracting the exact span vertices from the As Tower (jalur) WGS84 LineString!
+    if (foundTowersMap.size < 2 && targetEndpoints.length === 2) {
+      const [epSmall, epLarge] = targetEndpoints;
+      // Collect active span parcel points to locate the exact segment on As Tower (jalur)
+      const normSelSpan = normalizeSpan(selectedSpan);
+      const normSelDesa = normalizeDesa(selectedDesa);
+      const spanBidangPts: { lng: number; lat: number }[] = [];
 
-    return result;
-  }, [loadedGeoJSONs, selectedSpan]);
-
-  // Calculate rotation automatically to make span corridor HORIZONTAL on screen
-  const towerCalculatedRotasi = useMemo(() => {
-    let dx = 0, dy = 0;
-    let foundVector = false;
-
-    if (towerPoints && towerPoints.length >= 2) {
-      // Sort towers by number/suffix so Tower Kecil is T1 and Tower Besar is T2
-      const sortedTowers = [...towerPoints].sort((a, b) => {
-        const numA = parseFloat(a.name.replace(/[^0-9.]/g, '')) || 0;
-        const numB = parseFloat(b.name.replace(/[^0-9.]/g, '')) || 0;
-        if (numA !== numB) return numA - numB;
-        return a.name.localeCompare(b.name, undefined, { numeric: true });
-      });
-
-      const t1 = sortedTowers[0]; // Tower Kecil
-      const t2 = sortedTowers[sortedTowers.length - 1]; // Tower Besar
-
-      if (t1 && t2) {
-        const avgLatRad = ((t1.lat + t2.lat) / 2) * (Math.PI / 180);
-        dx = (t2.lng - t1.lng) * Math.cos(avgLatRad);
-        dy = t2.lat - t1.lat;
-        if (Math.abs(dx) > 1e-9 || Math.abs(dy) > 1e-9) {
-          foundVector = true;
-        }
-      }
-    }
-
-    // Fallback if tower points are missing: find 2 furthest points across all loaded GeoJSON features for current span
-    if (!foundVector) {
-      const allPts: [number, number][] = [];
       loadedGeoJSONs.forEach(layer => {
-        if (!layer?.data?.features) return;
+        if (!layer.data?.features || layer.type !== 'bidang') return;
         layer.data.features.forEach((f: any) => {
-          const geom = f.geometry;
-          if (!geom?.coordinates) return;
-          const collectPts = (c: any) => {
-            if (typeof c[0] === 'number' && typeof c[1] === 'number') {
-              allPts.push([c[0], c[1]]);
-            } else if (Array.isArray(c)) {
-              c.forEach(collectPts);
-            }
-          };
-          collectPts(geom.coordinates);
+          const props = f.properties || {};
+          const s = layer.fieldMapping?.span ? props[layer.fieldMapping.span] : findPropCaseInsensitive(props, ['span', 'section', 'jalur']);
+          const d = layer.fieldMapping?.desa ? props[layer.fieldMapping.desa] : findPropCaseInsensitive(props, ['desa', 'village', 'kelurahan']);
+          if (normalizeSpan(s) === normSelSpan && (!normSelDesa || normalizeDesa(d) === normSelDesa)) {
+            const collect = (c: any) => {
+              if (typeof c?.[0] === 'number' && typeof c?.[1] === 'number') {
+                spanBidangPts.push({ lng: Number(c[0]), lat: Number(c[1]) });
+              } else if (Array.isArray(c)) {
+                c.forEach(collect);
+              }
+            };
+            collect(f.geometry?.coordinates);
+          }
         });
       });
 
-      if (allPts.length >= 2) {
-        let maxDistSq = -1;
-        let pBest1: [number, number] | null = null;
-        let pBest2: [number, number] | null = null;
-        const refLat = allPts[0][1];
-        const cosLat = Math.cos((refLat * Math.PI) / 180);
+      if (spanBidangPts.length > 0) {
+        const centroidLng = spanBidangPts.reduce((acc, p) => acc + p.lng, 0) / spanBidangPts.length;
+        const centroidLat = spanBidangPts.reduce((acc, p) => acc + p.lat, 0) / spanBidangPts.length;
 
-        const step = Math.max(1, Math.floor(allPts.length / 80));
-        for (let i = 0; i < allPts.length; i += step) {
-          for (let j = i + 1; j < allPts.length; j += step) {
-            const dX = (allPts[j][0] - allPts[i][0]) * cosLat;
-            const dY = allPts[j][1] - allPts[i][1];
-            const dSq = dX * dX + dY * dY;
-            if (dSq > maxDistSq) {
-              maxDistSq = dSq;
-              pBest1 = allPts[i];
-              pBest2 = allPts[j];
-            }
+        let bestSeg: { p1: { lng: number; lat: number }; p2: { lng: number; lat: number }; distSq: number } | null = null;
+
+        loadedGeoJSONs.forEach(layer => {
+          if (!layer.data?.features) return;
+          const isJalur = layer.type === 'jalur' || /jalur|as_tower|astower|row|koridor|line/i.test(layer.name || '');
+          if (!isJalur) return;
+
+          layer.data.features.forEach((f: any) => {
+            const geom = f.geometry;
+            if (!geom?.coordinates) return;
+            const lines: number[][][] =
+              geom.type === 'LineString'
+                ? [geom.coordinates]
+                : geom.type === 'MultiLineString'
+                ? geom.coordinates
+                : [];
+
+            lines.forEach(lineCoords => {
+              for (let i = 0; i < lineCoords.length - 1; i++) {
+                const a = lineCoords[i];
+                const b = lineCoords[i + 1];
+                if (!a || !b || a.length < 2 || b.length < 2) continue;
+                const midLng = (Number(a[0]) + Number(b[0])) / 2;
+                const midLat = (Number(a[1]) + Number(b[1])) / 2;
+                // Project point-to-segment distance from span parcel centroid
+                const dx = Number(b[0]) - Number(a[0]);
+                const dy = Number(b[1]) - Number(a[1]);
+                const lenSq = dx * dx + dy * dy;
+                if (lenSq < 1e-12) continue;
+                const t = Math.max(0, Math.min(1, ((centroidLng - Number(a[0])) * dx + (centroidLat - Number(a[1])) * dy) / lenSq));
+                const projLng = Number(a[0]) + t * dx;
+                const projLat = Number(a[1]) + t * dy;
+                const dSq = Math.pow(centroidLng - projLng, 2) + Math.pow(centroidLat - projLat, 2);
+
+                if (!bestSeg || dSq < bestSeg.distSq) {
+                  bestSeg = {
+                    p1: { lng: Number(a[0]), lat: Number(a[1]) },
+                    p2: { lng: Number(b[0]), lat: Number(b[1]) },
+                    distSq: dSq
+                  };
+                }
+              }
+            });
+          });
+        });
+
+        if (bestSeg) {
+          const seg = bestSeg as { p1: { lng: number; lat: number }; p2: { lng: number; lat: number }; distSq: number };
+          const utm1 = wgs84ToUtm(seg.p1.lat, seg.p1.lng);
+          const utm2 = wgs84ToUtm(seg.p2.lat, seg.p2.lng);
+          if (!foundTowersMap.has(epSmall.canonicalId)) {
+            foundTowersMap.set(epSmall.canonicalId, {
+              name: epSmall.displayName,
+              canonicalId: epSmall.canonicalId,
+              sortNum: epSmall.sortNum,
+              lng: seg.p1.lng,
+              lat: seg.p1.lat,
+              utmX: utm1.x,
+              utmY: utm1.y,
+              utmZone: `${utm1.zone}${utm1.hemisphere}`
+            });
           }
-        }
-
-        if (pBest1 && pBest2 && maxDistSq > 1e-12) {
-          dx = (pBest2[0] - pBest1[0]) * cosLat;
-          dy = pBest2[1] - pBest1[1];
-          foundVector = true;
+          if (!foundTowersMap.has(epLarge.canonicalId)) {
+            foundTowersMap.set(epLarge.canonicalId, {
+              name: epLarge.displayName,
+              canonicalId: epLarge.canonicalId,
+              sortNum: epLarge.sortNum,
+              lng: seg.p2.lng,
+              lat: seg.p2.lat,
+              utmX: utm2.x,
+              utmY: utm2.y,
+              utmZone: `${utm2.zone}${utm2.hemisphere}`
+            });
+          }
         }
       }
     }
 
-    if (!foundVector) return null;
+    // Sort strictly by tower number so index 0 is ALWAYS Tower Kecil (Left) and index 1 is ALWAYS Tower Besar (Right)
+    const result = Array.from(foundTowersMap.values());
+    result.sort((a, b) => {
+      if (a.sortNum !== b.sortNum) return a.sortNum - b.sortNum;
+      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    });
 
-    // Viewport Rotation angle (deg) to orient vector (dx, dy) horizontally on screen
-    const autoRot = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
-    return autoRot;
-  }, [towerPoints, loadedGeoJSONs]);
+    return result;
+  }, [loadedGeoJSONs, selectedSpan, selectedDesa]);
 
-  // Combined Base Rotation: Prefer tower line bearing calculation if available, else fall back to GeoJSON attribute rotation
+  // ============================================================================
+  // AUTOMATIC HORIZONTAL SPAN SLOPE CALCULATION (TOWER KECIL DI KIRI -> TOWER BESAR DI KANAN)
+  // ============================================================================
+  const spanSlopeDetails = useMemo(() => {
+    // 1. Primary Source: Tower Kecil (t1) -> Tower Besar (t2) from Tower / As Tower WGS84 coordinates
+    if (towerPoints && towerPoints.length >= 2) {
+      const t1 = towerPoints[0]; // Tower Kecil (Wajib di Kiri)
+      const t2 = towerPoints[towerPoints.length - 1]; // Tower Besar (Wajib di Kanan)
+
+      // Web Mercator vector (for exact horizontal alignment on Leaflet EPSG:3857 canvas)
+      const merc1 = wgs84ToWebMercator(t1.lat, t1.lng);
+      const merc2 = wgs84ToWebMercator(t2.lat, t2.lng);
+      const dMercX = merc2.x - merc1.x;
+      const dMercY = merc2.y - merc1.y;
+
+      // UTM metric vector (for engineering report, distance, and ArcGIS Data Driven Pages ROTATE)
+      const dUtmX = t2.utmX - t1.utmX;
+      const dUtmY = t2.utmY - t1.utmY;
+      const spanDistanceMeters = Math.hypot(dUtmX, dUtmY);
+
+      if (Math.abs(dMercX) > 1e-6 || Math.abs(dMercY) > 1e-6) {
+        // On Leaflet screen: +X is East, +Y_screen is South (-dMercY).
+        // Rotating container clockwise by atan2(dMercY, dMercX) puts vector (t1 -> t2) at 0° (pointing right: t1 Left, t2 Right).
+        const webClockwiseDeg = ((Math.atan2(dMercY, dMercX) * 180) / Math.PI + 360) % 360;
+        const utmClockwiseDeg = ((Math.atan2(dUtmY, dUtmX) * 180) / Math.PI + 360) % 360;
+        const arcgisRotateCcwDeg = ((360 - utmClockwiseDeg) + 360) % 360;
+        // True North Azimuth (0° = North, 90° = East, 180° = South, 270° = West)
+        const azimuthDeg = ((Math.atan2(dUtmX, dUtmY) * 180) / Math.PI + 360) % 360;
+
+        return {
+          source: 'AS_TOWER_WGS84' as const,
+          t1,
+          t2,
+          fromName: t1.name || 'Tower Kiri',
+          toName: t2.name || 'Tower Kanan',
+          utmZoneLabel: t1.utmZone || '49S',
+          dX: dUtmX,
+          dY: dUtmY,
+          distanceMeters: spanDistanceMeters,
+          dUtmX,
+          dUtmY,
+          spanDistanceMeters,
+          webClockwiseDeg,
+          utmClockwiseDeg,
+          arcgisRotateCcwDeg,
+          azimuthDeg
+        };
+      }
+    }
+
+    // 2. Fallback: Principal Axis of current span's parcels (bidang) in WGS84
+    const normSelSpan = normalizeSpan(selectedSpan);
+    const normSelDesa = normalizeDesa(selectedDesa);
+    const spanPts: { lng: number; lat: number; mercX: number; mercY: number }[] = [];
+
+    loadedGeoJSONs.forEach(layer => {
+      if (!layer?.data?.features) return;
+      layer.data.features.forEach((f: any) => {
+        const props = f.properties || {};
+        const s = layer.fieldMapping?.span ? props[layer.fieldMapping.span] : findPropCaseInsensitive(props, ['span', 'section', 'jalur']);
+        const d = layer.fieldMapping?.desa ? props[layer.fieldMapping.desa] : findPropCaseInsensitive(props, ['desa', 'village', 'kelurahan']);
+        if (normSelSpan && normalizeSpan(s) === normSelSpan && (!normSelDesa || normalizeDesa(d) === normSelDesa)) {
+          const collect = (c: any) => {
+            if (typeof c?.[0] === 'number' && typeof c?.[1] === 'number') {
+              const lng = Number(c[0]);
+              const lat = Number(c[1]);
+              const m = wgs84ToWebMercator(lat, lng);
+              spanPts.push({ lng, lat, mercX: m.x, mercY: m.y });
+            } else if (Array.isArray(c)) {
+              c.forEach(collect);
+            }
+          };
+          collect(f.geometry?.coordinates);
+        }
+      });
+    });
+
+    if (spanPts.length >= 2) {
+      let maxDistSq = -1;
+      let p1 = spanPts[0];
+      let p2 = spanPts[1];
+      const step = Math.max(1, Math.floor(spanPts.length / 100));
+      for (let i = 0; i < spanPts.length; i += step) {
+        for (let j = i + 1; j < spanPts.length; j += step) {
+          const dx = spanPts[j].mercX - spanPts[i].mercX;
+          const dy = spanPts[j].mercY - spanPts[i].mercY;
+          const dSq = dx * dx + dy * dy;
+          if (dSq > maxDistSq) {
+            maxDistSq = dSq;
+            p1 = spanPts[i];
+            p2 = spanPts[j];
+          }
+        }
+      }
+
+      // If baseGeojsonRotasi exists from ArcGIS ROTATE field, align p1->p2 direction with it
+      let webClockwiseDeg = ((Math.atan2(p2.mercY - p1.mercY, p2.mercX - p1.mercX) * 180) / Math.PI + 360) % 360;
+      if (baseGeojsonRotasi !== 0) {
+        const diff = Math.abs((((webClockwiseDeg - baseGeojsonRotasi) % 360) + 540) % 360 - 180);
+        if (diff > 90) {
+          webClockwiseDeg = (webClockwiseDeg + 180) % 360;
+        }
+      }
+
+      const u1 = wgs84ToUtm(p1.lat, p1.lng);
+      const u2 = wgs84ToUtm(p2.lat, p2.lng);
+      const eps = parseSpanEndpoints(selectedSpan);
+      const dUtmX = u2.x - u1.x;
+      const dUtmY = u2.y - u1.y;
+      const spanDistanceMeters = Math.hypot(dUtmX, dUtmY);
+      return {
+        source: 'SPAN_POLYGON_AXIS' as const,
+        t1: null,
+        t2: null,
+        fromName: eps[0]?.displayName || 'Ujung Kiri',
+        toName: eps[1]?.displayName || 'Ujung Kanan',
+        utmZoneLabel: `${u1.zone}${u1.hemisphere}`,
+        dX: dUtmX,
+        dY: dUtmY,
+        distanceMeters: spanDistanceMeters,
+        dUtmX,
+        dUtmY,
+        spanDistanceMeters,
+        webClockwiseDeg,
+        utmClockwiseDeg: webClockwiseDeg,
+        arcgisRotateCcwDeg: ((360 - webClockwiseDeg) + 360) % 360,
+        azimuthDeg: ((90 - webClockwiseDeg) % 360 + 360) % 360
+      };
+    }
+
+    return null;
+  }, [towerPoints, loadedGeoJSONs, selectedSpan, selectedDesa, baseGeojsonRotasi]);
+
+  const towerCalculatedRotasi = useMemo(() => {
+    return spanSlopeDetails ? spanSlopeDetails.webClockwiseDeg : null;
+  }, [spanSlopeDetails]);
+
+  // Combined Base Rotation: Prefer WGS84 As Tower / Tapak Tower bearing calculation, else fall back to GeoJSON attribute rotation
   const computedBaseRotasi = useMemo(() => {
     if (towerCalculatedRotasi !== null) {
       return towerCalculatedRotasi;
@@ -549,10 +839,12 @@ export default function PetaBidangTanah({
     const initialCenter: L.LatLngExpression = [-7.284, 110.355];
     const initialZoom = 17;
 
-    // 1. Initialize Top Map (Sket / Vector Light Basemap)
+    // 1. Initialize Top Map (Sket / Vector Light Basemap) with fractional zoom so rotated horizontal spans fit accurately
     const topMap = L.map(topMapContainerRef.current, {
       center: initialCenter,
       zoom: initialZoom,
+      zoomSnap: 0.25,
+      zoomDelta: 0.5,
       zoomControl: true,
       attributionControl: false,
       scrollWheelZoom: false
@@ -570,6 +862,8 @@ export default function PetaBidangTanah({
     const bottomMap = L.map(bottomMapContainerRef.current, {
       center: initialCenter,
       zoom: initialZoom,
+      zoomSnap: 0.25,
+      zoomDelta: 0.5,
       zoomControl: true,
       attributionControl: false,
       scrollWheelZoom: false
@@ -942,20 +1236,88 @@ export default function PetaBidangTanah({
       });
     });
 
-    // Fit camera view tightly to highlighted span features
+    // Fit camera view tightly to the rotated span (including both span parcels and endpoint towers)
+    // inside the actual visible viewport (clientWidth x 320px) rather than the 350%x500% oversized canvas
     const boundsToFit = spanBidangBounds.length > 0 ? spanBidangBounds : spanOtherBounds;
-    if (boundsToFit.length > 0) {
-      let mergedBounds = boundsToFit[0];
-      for (let i = 1; i < boundsToFit.length; i++) {
-        mergedBounds.extend(boundsToFit[i]);
+    const samplePoints: Array<{ lat: number; lng: number }> = [];
+
+    boundsToFit.forEach(b => {
+      if (b.isValid()) {
+        const sw = b.getSouthWest();
+        const ne = b.getNorthEast();
+        const nw = b.getNorthWest();
+        const se = b.getSouthEast();
+        samplePoints.push(
+          { lat: sw.lat, lng: sw.lng },
+          { lat: ne.lat, lng: ne.lng },
+          { lat: nw.lat, lng: nw.lng },
+          { lat: se.lat, lng: se.lng }
+        );
       }
+    });
+
+    // Always include the active span's endpoint towers so Tower Kecil (Left) and Tower Besar (Right) are framed
+    towerPoints.forEach(tw => {
+      if (Number.isFinite(tw.lat) && Number.isFinite(tw.lng)) {
+        samplePoints.push({ lat: tw.lat, lng: tw.lng });
+      }
+    });
+
+    if (samplePoints.length > 0) {
+      const refLat = samplePoints.reduce((acc, p) => acc + p.lat, 0) / samplePoints.length;
+      const refLng = samplePoints.reduce((acc, p) => acc + p.lng, 0) / samplePoints.length;
+      const cosLat = Math.cos((refLat * Math.PI) / 180);
+      const metersPerDegLat = 111132.92;
+      const metersPerDegLng = 111412.84 * cosLat;
+      const rad = (effectiveRotationAngle * Math.PI) / 180;
+      const cosA = Math.cos(rad);
+      const sinA = Math.sin(rad);
+
+      let minScreenX = Infinity;
+      let maxScreenX = -Infinity;
+      let minScreenY = Infinity;
+      let maxScreenY = -Infinity;
+
+      samplePoints.forEach(p => {
+        const dE = (p.lng - refLng) * metersPerDegLng;
+        const dN = (p.lat - refLat) * metersPerDegLat;
+        // Rotated screen coordinates in meters (+X right, +Y down)
+        const sx = dE * cosA + dN * sinA;
+        const sy = dE * sinA - dN * cosA;
+        if (sx < minScreenX) minScreenX = sx;
+        if (sx > maxScreenX) maxScreenX = sx;
+        if (sy < minScreenY) minScreenY = sy;
+        if (sy > maxScreenY) maxScreenY = sy;
+      });
+
+      const midScreenX = (minScreenX + maxScreenX) / 2;
+      const midScreenY = (minScreenY + maxScreenY) / 2;
+      const midDE = midScreenX * cosA + midScreenY * sinA;
+      const midDN = midScreenX * sinA - midScreenY * cosA;
+      const centerLat = refLat + midDN / metersPerDegLat;
+      const centerLng = refLng + midDE / metersPerDegLng;
+
+      const spanWidthMeters = Math.max(maxScreenX - minScreenX, 60);
+      const spanHeightMeters = Math.max(maxScreenY - minScreenY, 35);
+
+      const visibleViewport = topMapContainerRef.current?.parentElement?.parentElement;
+      const visibleWidthPx = visibleViewport?.clientWidth || 900;
+      const visibleHeightPx = visibleViewport?.clientHeight || 320;
+
+      const reqMetersPerPx = Math.max(
+        spanWidthMeters / (visibleWidthPx * 0.80),
+        spanHeightMeters / (visibleHeightPx * 0.72)
+      );
+      const rawZoom = Math.log2((156543.03392 * cosLat) / reqMetersPerPx);
+      const idealZoom = Math.max(14.5, Math.min(19, Math.floor(rawZoom * 4) / 4));
+
       if ((topMap as any)._mapPane) {
         topMap.invalidateSize();
-        topMap.fitBounds(mergedBounds, { padding: [15, 15], maxZoom: 19, animate: false });
+        topMap.setView([centerLat, centerLng], idealZoom, { animate: false });
       }
       if ((bottomMap as any)._mapPane) {
         bottomMap.invalidateSize();
-        bottomMap.fitBounds(mergedBounds, { padding: [15, 15], maxZoom: 19, animate: false });
+        bottomMap.setView([centerLat, centerLng], idealZoom, { animate: false });
       }
     } else {
       if ((topMap as any)._mapPane) topMap.invalidateSize();
@@ -966,7 +1328,7 @@ export default function PetaBidangTanah({
       topLayerGroup.clearLayers();
       bottomLayerGroup.clearLayers();
     };
-  }, [loadedGeoJSONs, selectedDesa, selectedSpan, effectiveRotationAngle]);
+  }, [loadedGeoJSONs, selectedDesa, selectedSpan, effectiveRotationAngle, towerPoints]);
 
   // Invalidate map size when rotation changes to ensure tiles fill oversized canvas
   useEffect(() => {
@@ -1161,9 +1523,9 @@ export default function PetaBidangTanah({
           {/* Rotation Management / Custom Adjustment */}
           <div>
             <label className="text-[11px] font-bold text-slate-300 block mb-1 flex items-center justify-between">
-              <span>Rotasi Viewport Peta (Line Bearing Tower / Map Series):</span>
+              <span>Rotasi Horizontal (Tower Kecil Kiri → Besar Kanan):</span>
               <span className="text-emerald-400 font-mono text-[10px]">
-                {effectiveRotationAngle.toFixed(1)}° ({towerCalculatedRotasi !== null ? `Bearing Tower ${computedBaseRotasi.toFixed(1)}°` : `GeoJSON ${baseGeojsonRotasi}°`} + Offset {rotasiOffset > 0 ? `+${rotasiOffset}` : rotasiOffset}°)
+                {effectiveRotationAngle.toFixed(2)}°
               </span>
             </label>
             <div className="flex items-center gap-1 flex-wrap">
@@ -1219,6 +1581,38 @@ export default function PetaBidangTanah({
             </div>
           </div>
         </div>
+
+        {/* Kalkulasi Kemiringan Span Otomatis (Konversi WGS 1984 -> Proyeksi Meter UTM & Web Mercator) */}
+        {spanSlopeDetails && (
+          <div className="pt-2 border-t border-white/10">
+            <div className="bg-slate-950/70 border border-emerald-500/30 rounded-xl px-3.5 py-2.5 flex flex-col lg:flex-row lg:items-center justify-between gap-2 text-[11px]">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold text-[10px]">
+                  KALKULASI KEMIRINGAN AS TOWER (WGS 1984 → UTM {spanSlopeDetails.utmZoneLabel || '49S'})
+                </span>
+                <span className="text-slate-300 font-semibold">
+                  Kiri (Kecil): <strong className="text-amber-300 font-mono">{spanSlopeDetails.fromName}</strong>
+                  {' '}→{' '}
+                  Kanan (Besar): <strong className="text-amber-300 font-mono">{spanSlopeDetails.toName}</strong>
+                </span>
+                <span className="text-slate-400 font-mono text-[10px]">
+                  (ΔX = {Number(spanSlopeDetails.dX || 0) >= 0 ? `+${Number(spanSlopeDetails.dX || 0).toFixed(2)}` : Number(spanSlopeDetails.dX || 0).toFixed(2)} m, ΔY = {Number(spanSlopeDetails.dY || 0) >= 0 ? `+${Number(spanSlopeDetails.dY || 0).toFixed(2)}` : Number(spanSlopeDetails.dY || 0).toFixed(2)} m, Jarak = {Number(spanSlopeDetails.distanceMeters || 0).toFixed(2)} m)
+                </span>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap font-mono text-[10px]">
+                <span className="bg-slate-900 border border-slate-700 px-2 py-0.5 rounded text-sky-300" title="Sudut rotasi searah jarum jam pada Web Peta agar As Tower lurus horizontal (0°)">
+                  Rotasi Web (CW): <strong>{Number(spanSlopeDetails.webClockwiseDeg || 0).toFixed(2)}°</strong>
+                </span>
+                <span className="bg-slate-900 border border-slate-700 px-2 py-0.5 rounded text-amber-300" title="Sudut ROTATE untuk Data Driven Pages ArcGIS / QGIS (berlawanan jarum jam)">
+                  ROTATE GIS/ArcGIS (CCW): <strong>{Number(spanSlopeDetails.arcgisRotateCcwDeg || 0).toFixed(2)}°</strong>
+                </span>
+                <span className="bg-slate-900 border border-slate-700 px-2 py-0.5 rounded text-emerald-300" title="Azimuth Kompas dari Tower Kecil ke Tower Besar">
+                  Azimuth: <strong>{Number(spanSlopeDetails.azimuthDeg || 0).toFixed(2)}°</strong>
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* PRINTABLE DUAL MAP & TABULAR LAYOUT FRAME */}
@@ -1402,16 +1796,18 @@ export default function PetaBidangTanah({
           {/* ARAH UTARA & SKALA (4 cols) */}
           <div className="md:col-span-4 border-2 border-slate-800 rounded-xl p-3 flex flex-col items-center justify-center text-center space-y-2">
             <div className="flex items-center gap-2">
-              {/* Rotated Compass Arrow */}
+              {/* Rotated Compass Arrow matching the map's rotated North direction */}
               <div 
                 className="w-8 h-8 rounded-full border-2 border-slate-800 flex items-center justify-center bg-slate-100 shadow-inner transition-transform duration-300"
-                style={{ transform: `rotate(${-effectiveRotationAngle}deg)` }}
+                style={{ transform: `rotate(${effectiveRotationAngle}deg)` }}
               >
                 <ArrowUp className="w-5 h-5 text-red-600 font-extrabold" />
               </div>
               <div className="text-left">
                 <span className="text-[10px] font-black uppercase text-slate-800 block">ARAH UTARA</span>
-                <span className="text-[9px] text-slate-500 font-mono block">Rotasi: {effectiveRotationAngle}°</span>
+                <span className="text-[9px] text-slate-500 font-mono block">
+                  Web: {effectiveRotationAngle.toFixed(1)}° {spanSlopeDetails ? `| GIS: ${spanSlopeDetails.arcgisRotateCcwDeg.toFixed(1)}°` : ''}
+                </span>
               </div>
             </div>
             <div className="border-t border-slate-300 w-full pt-1.5">
@@ -1438,14 +1834,14 @@ export default function PetaBidangTanah({
                   towerPoints.map((tw, idx) => (
                     <tr key={idx} className="border-b border-slate-300 font-mono">
                       <td className="py-1 px-1 border-r border-slate-800 font-bold bg-slate-50">{tw.name}</td>
-                      <td className="py-1 px-1 border-r border-slate-800">{tw.lng.toFixed(5)}</td>
-                      <td className="py-1 px-1">{tw.lat.toFixed(5)}</td>
+                      <td className="py-1 px-1 border-r border-slate-800">{Number(tw.utmX ?? tw.lng ?? 0).toFixed(4)}</td>
+                      <td className="py-1 px-1">{Number(tw.utmY ?? tw.lat ?? 0).toFixed(4)}</td>
                     </tr>
                   ))
                 ) : (
                   <tr>
                     <td colSpan={3} className="py-2 text-slate-400 italic text-[9px]">
-                      Data koordinat tower dimuat otomatis dari layer GeoJSON Tower
+                      Data koordinat tower dimuat otomatis dari layer GeoJSON Tower / As Jalur
                     </td>
                   </tr>
                 )}

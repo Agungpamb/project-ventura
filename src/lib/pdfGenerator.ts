@@ -146,8 +146,71 @@ function getDirectImageUrls(url: string): string[] {
   return [trimmed];
 }
 
-// Cache for candidate GeoJSON datasets to avoid repetitive network/Firestore fetching
-let cachedCandidateGeoJSONs: { data: any; fieldMapping?: any }[] | null = null;
+function wgs84ToWebMercator(lat: number, lng: number): { x: number; y: number } {
+  const R = 6378137.0;
+  const x = (lng * Math.PI * R) / 180.0;
+  const clampedLat = Math.max(-85.05112878, Math.min(85.05112878, lat));
+  const latRad = (clampedLat * Math.PI) / 180.0;
+  const y = R * Math.log(Math.tan(Math.PI / 4 + latRad / 2));
+  return { x, y };
+}
+
+function normalizeTowerToken(raw: any): { canonicalId: string; displayName: string; sortNum: number; suffix: string } | null {
+  if (raw === undefined || raw === null) return null;
+  const str = String(raw).trim();
+  if (!str) return null;
+
+  if (/\bgi\b/i.test(str)) {
+    const cleanGi = str.replace(/\s+/g, ' ').trim();
+    const upperGi = cleanGi.toUpperCase();
+    const isStartGi = /jelok|awal|start/i.test(upperGi);
+    return {
+      canonicalId: 'GI_' + upperGi.replace(/[^A-Z0-9]/g, ''),
+      displayName: cleanGi.toUpperCase(),
+      sortNum: isStartGi ? 0 : 99999,
+      suffix: ''
+    };
+  }
+
+  const m = str.match(/^(?:t(?:ower|wr|pk|apak)?[\.\-_\s]*)?0*(\d+)([a-zA-Z]?)$/i);
+  if (m) {
+    const numVal = parseInt(m[1], 10);
+    const numStr = String(isNaN(numVal) ? 0 : numVal);
+    const suffix = (m[2] || '').toUpperCase();
+    return {
+      canonicalId: `T.${numStr}${suffix}`,
+      displayName: `T.${numStr}${suffix}`,
+      sortNum: numVal,
+      suffix
+    };
+  }
+
+  return null;
+}
+
+function parseSpanEndpoints(spanStr: string) {
+  if (!spanStr) return [];
+  const cleaned = spanStr.replace(/^span\s+/i, '').trim();
+  const parts = cleaned
+    .split(/\s*(?:[-–—/]|s\/d|sampai|to)\s*/i)
+    .map(p => p.trim())
+    .filter(Boolean);
+
+  const parsed = parts
+    .map(p => normalizeTowerToken(p))
+    .filter((item): item is NonNullable<ReturnType<typeof normalizeTowerToken>> => item !== null);
+
+  if (parsed.length === 2) {
+    parsed.sort((a, b) => {
+      if (a.sortNum !== b.sortNum) return a.sortNum - b.sortNum;
+      return a.suffix.localeCompare(b.suffix);
+    });
+  }
+  return parsed;
+}
+
+// Cache for candidate GeoJSON datasets (including bidang, tower, and jalur) to avoid repetitive network/Firestore fetching
+let cachedCandidateGeoJSONs: { id?: string; name?: string; type: 'bidang' | 'tower' | 'jalur'; data: any; fieldMapping?: any }[] | null = null;
 
 /**
  * Helper to load an image from URL, resize it to a maximum width to reduce file size, and return its Base64 representation.
@@ -1121,48 +1184,93 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
   let customMapping: any = null;
 
   try {
-    let candidateGeoJSONs: { data: any; fieldMapping?: any }[] = [];
+    let candidateGeoJSONs: { id?: string; name?: string; type: 'bidang' | 'tower' | 'jalur'; data: any; fieldMapping?: any }[] = [];
 
     if (cachedCandidateGeoJSONs && cachedCandidateGeoJSONs.length > 0) {
       candidateGeoJSONs = cachedCandidateGeoJSONs;
     } else {
-      // 1. Gather custom layers from localStorage
+      // 1. Gather all custom layers (bidang, tower, jalur) from localStorage
       try {
         const localLayers = JSON.parse(localStorage.getItem('local_geojson_layers') || '[]');
         localLayers.forEach((l: any) => {
-          if (l.data && l.data.features && (l.type === 'bidang' || !l.type)) {
-            candidateGeoJSONs.push({ data: l.data, fieldMapping: l.fieldMapping });
+          if (l.data && Array.isArray(l.data.features) && l.data.features.length > 0) {
+            const inferredType: 'bidang' | 'tower' | 'jalur' =
+              l.type === 'tower' || /tower|tapak/i.test(l.name || '') || /tower|tapak/i.test(l.id || '')
+                ? 'tower'
+                : l.type === 'jalur' || /jalur|as_tower|astower|row|koridor/i.test(l.name || '') || /jalur|as_tower|astower/i.test(l.id || '')
+                ? 'jalur'
+                : 'bidang';
+            candidateGeoJSONs.push({
+              id: l.id,
+              name: l.name,
+              type: inferredType,
+              data: l.data,
+              fieldMapping: l.fieldMapping
+            });
           }
         });
       } catch (e) {}
 
-      // 2. Static primary files
+      // 2. Also attempt to load any Firestore geojson_layers if available
+      try {
+        const snap = await getDocs(collection(db, 'geojson_layers'));
+        const loadedDocs = await Promise.all(snap.docs.map(d => loadGeoJSONLayerDoc(d).catch(() => null)));
+        loadedDocs.forEach(l => {
+          if (l && l.data && Array.isArray(l.data.features) && l.data.features.length > 0) {
+            const exists = candidateGeoJSONs.some(c => c.id && c.id === l.id && c.data?.features?.length >= l.data.features.length);
+            if (!exists) {
+              candidateGeoJSONs.push({
+                id: l.id,
+                name: l.name,
+                type: l.type || 'bidang',
+                data: l.data,
+                fieldMapping: l.fieldMapping
+              });
+            }
+          }
+        });
+      } catch (e) {}
+
+      // 3. Static primary files for bidang, tower, and jalur
       const projName = projectName || '';
       const normalizedProj = projName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-      
-      const bids: string[] = [
-        '/geojson/KOMPENSASI ROW 150 kV JELOK - SANGGARAHAN_BIDANG_WARGA.geojson',
-        '/geojson/bidang_warga.geojson',
-        '/geojson/bidang_tanah.geojson',
-        '/geojson/bidang.geojson'
+
+      const staticEntries: { path: string; type: 'bidang' | 'tower' | 'jalur' }[] = [
+        { path: '/geojson/KOMPENSASI ROW 150 kV JELOK - SANGGARAHAN_BIDANG_WARGA.geojson', type: 'bidang' },
+        { path: '/geojson/KOMPENSASI ROW 150 kV JELOK - SANGGARAHAN_TAPAK_TOWER.geojson', type: 'tower' },
+        { path: '/geojson/KOMPENSASI ROW 150 kV JELOK - SANGGARAHAN_JALUR_UTUH.geojson', type: 'jalur' },
+        { path: '/geojson/bidang_warga.geojson', type: 'bidang' },
+        { path: '/geojson/bidang_tanah.geojson', type: 'bidang' },
+        { path: '/geojson/bidang.geojson', type: 'bidang' },
+        { path: '/geojson/tapak_tower.geojson', type: 'tower' },
+        { path: '/geojson/tower.geojson', type: 'tower' },
+        { path: '/geojson/jalur_utuh.geojson', type: 'jalur' },
+        { path: '/geojson/jalur.geojson', type: 'jalur' }
       ];
       if (projName) {
-        bids.unshift(
-          `/geojson/${projName}_BIDANG_WARGA.geojson`,
-          `/geojson/${normalizedProj}_bidang_warga.geojson`
+        staticEntries.unshift(
+          { path: `/geojson/${projName}_BIDANG_WARGA.geojson`, type: 'bidang' },
+          { path: `/geojson/${normalizedProj}_bidang_warga.geojson`, type: 'bidang' },
+          { path: `/geojson/${projName}_TAPAK_TOWER.geojson`, type: 'tower' },
+          { path: `/geojson/${projName}_JALUR_UTUH.geojson`, type: 'jalur' }
         );
       }
-      
+
       await Promise.allSettled(
-        bids.map(async (path) => {
+        staticEntries.map(async (entry) => {
           try {
-            const response = await fetch(encodeURI(path));
+            const response = await fetch(encodeURI(entry.path));
             if (response.ok) {
               const contentType = response.headers.get('content-type') || '';
               if (contentType.includes('html')) return;
               const fetchedJson = await response.json();
-              if (fetchedJson && fetchedJson.features) {
-                candidateGeoJSONs.push({ data: fetchedJson, fieldMapping: customMapping });
+              if (fetchedJson && Array.isArray(fetchedJson.features)) {
+                candidateGeoJSONs.push({
+                  name: entry.path,
+                  type: entry.type,
+                  data: fetchedJson,
+                  fieldMapping: customMapping
+                });
               }
             }
           } catch (err) {
@@ -1175,8 +1283,9 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
       cachedCandidateGeoJSONs = candidateGeoJSONs;
     }
 
-    // Search across all candidate GeoJSON datasets for matched parcel!
+    // Search across all candidate 'bidang' GeoJSON datasets for matched parcel!
     for (const candidate of candidateGeoJSONs) {
+      if (candidate.type !== 'bidang') continue;
       const gData = candidate.data;
       if (!gData || !Array.isArray(gData.features)) continue;
       const cMapping = candidate.fieldMapping || customMapping;
@@ -1237,133 +1346,238 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
         const userOffset = Number(props.userRotationOffset || props.rotasiOffset || cMapping?.rotasiOffset || 0);
         const projCorr = Number(props.projectionCorrection || cMapping?.projectionCorrection || 0);
 
-        // Calculate Line Bearing from 2 Tower Points in candidateGeoJSONs for record.SPAN if available
+        // =========================================================================
+        // EXACT SAME HORIZONTAL SPAN SLOPE CALCULATION AS PETA BIDANG TANAH (1.3):
+        // Tower Kecil on LEFT -> Tower Besar on RIGHT (0° Horizontal)
+        // =========================================================================
+        const activeSpanStr = record.SPAN || findPropInObj(props, ['span', 'section', 'jalur']) || '';
+        const targetEndpoints = parseSpanEndpoints(activeSpanStr);
+        const targetIds = new Set(targetEndpoints.map(e => e.canonicalId));
+
         let pdfTowerCalcRotation: number | null = null;
-        if (record.SPAN) {
-          const cleanSpan = String(record.SPAN).toUpperCase();
-          const match = cleanSpan.match(/T\.?\s*([0-9a-zA-Z]+)\s*[\-\–\/]\s*T\.?\s*([0-9a-zA-Z]+)/i);
-          let t1Raw = match ? match[1] : '';
-          let t2Raw = match ? match[2] : '';
-          if (!t1Raw) {
-            const singleMatch = cleanSpan.match(/T\.?\s*([0-9a-zA-Z]+)/i);
-            if (singleMatch) t1Raw = singleMatch[1];
-          }
-          const targetTokens = [t1Raw, t2Raw].filter(Boolean);
+        const foundTowersMap = new Map<string, { name: string; canonicalId: string; sortNum: number; lng: number; lat: number }>();
 
-          if (targetTokens.length >= 2) {
-            const foundTowersMap = new Map<string, { name: string; lng: number; lat: number }>();
-            for (const candidate of candidateGeoJSONs) {
-              const gData = candidate.data;
-              if (!gData?.features) continue;
-              for (const f of gData.features) {
-                const fProps = f.properties || {};
-                const allPropStr = Object.values(fProps).map(v => String(v).trim().toUpperCase()).join(' ');
+        if (targetIds.size > 0) {
+          for (const cand of candidateGeoJSONs) {
+            const isTowerLayer = cand.type === 'tower' || /tower|tapak|tw/i.test(cand.name || '') || /tower|tapak|tw/i.test(cand.id || '');
+            if (cand.type === 'bidang' && !isTowerLayer) continue;
+            const cData = cand.data;
+            if (!cData?.features) continue;
 
-                let matchedToken = '';
-                for (const tok of targetTokens) {
-                  const normTok = tok.replace(/[^0-9a-zA-Z]/g, '').toUpperCase();
-                  if (!normTok) continue;
-                  const tokenRegex = new RegExp(`(?:\\b|T[\\._\\-]?)${normTok}\\b`, 'i');
-                  if (tokenRegex.test(allPropStr)) {
-                    matchedToken = tok;
-                    break;
+            for (const f of cData.features) {
+              const fProps = f.properties || {};
+              const fGeom = f.geometry;
+              if (!fGeom?.coordinates) continue;
+
+              let ptLng = NaN;
+              let ptLat = NaN;
+              if (fGeom.type === 'Point' && Array.isArray(fGeom.coordinates) && fGeom.coordinates.length >= 2) {
+                ptLng = Number(fGeom.coordinates[0]);
+                ptLat = Number(fGeom.coordinates[1]);
+              } else if ((fGeom.type === 'Polygon' || fGeom.type === 'MultiPolygon') && Array.isArray(fGeom.coordinates)) {
+                const pts = fGeom.type === 'Polygon' ? (fGeom.coordinates[0] || []) : (fGeom.coordinates[0]?.[0] || []);
+                let sumLng = 0, sumLat = 0, cnt = 0;
+                pts.forEach((p: any) => {
+                  if (Array.isArray(p) && p.length >= 2) {
+                    sumLng += Number(p[0]);
+                    sumLat += Number(p[1]);
+                    cnt++;
                   }
+                });
+                if (cnt > 0) {
+                  ptLng = sumLng / cnt;
+                  ptLat = sumLat / cnt;
                 }
+              }
+              if (isNaN(ptLng) || isNaN(ptLat)) continue;
 
-                if (matchedToken) {
-                  const geom = f.geometry;
-                  let ptLng = 0, ptLat = 0, count = 0;
-                  if (geom?.type === 'Point' && Array.isArray(geom.coordinates)) {
-                    ptLng = Number(geom.coordinates[0]);
-                    ptLat = Number(geom.coordinates[1]);
-                    count = 1;
-                  } else if ((geom?.type === 'Polygon' || geom?.type === 'MultiPolygon') && geom.coordinates) {
-                    const pts = geom.type === 'Polygon' ? geom.coordinates[0] : geom.coordinates[0]?.[0];
-                    if (Array.isArray(pts) && pts.length > 0) {
-                      pts.forEach((p: any) => {
-                        if (Array.isArray(p) && p.length >= 2) {
-                          ptLng += Number(p[0]);
-                          ptLat += Number(p[1]);
-                          count++;
-                        }
-                      });
-                      if (count > 0) {
-                        ptLng /= count;
-                        ptLat /= count;
-                      }
-                    }
-                  }
+              const candidateRawValues: any[] = [];
+              if (cand.fieldMapping?.tower && fProps[cand.fieldMapping.tower] !== undefined) {
+                candidateRawValues.push(fProps[cand.fieldMapping.tower]);
+              }
+              const explicitTowerName = findPropInObj(fProps, [
+                'towernumb', 'tower_numb', 'tower', 'no_tower', 'id_tower', 'nomor_tower', 'tower_no', 'nama', 'namobj', 'name', 'label'
+              ]);
+              if (explicitTowerName) candidateRawValues.push(explicitTowerName);
 
-                  if (count > 0 && !isNaN(ptLng) && !isNaN(ptLat)) {
-                    const displayName = `T.${matchedToken.toUpperCase()}`;
-                    if (!foundTowersMap.has(displayName)) {
-                      foundTowersMap.set(displayName, { name: displayName, lng: ptLng, lat: ptLat });
-                    }
-                  }
+              if (candidateRawValues.length === 0 && isTowerLayer) {
+                const nomerProp = findPropInObj(fProps, ['nomer', 'nomor']);
+                if (nomerProp) candidateRawValues.push(nomerProp);
+              }
+
+              for (const rawVal of candidateRawValues) {
+                const tok = normalizeTowerToken(rawVal);
+                if (!tok) continue;
+                if (targetIds.has(tok.canonicalId) && !foundTowersMap.has(tok.canonicalId)) {
+                  foundTowersMap.set(tok.canonicalId, {
+                    name: tok.displayName,
+                    canonicalId: tok.canonicalId,
+                    sortNum: tok.sortNum,
+                    lng: ptLng,
+                    lat: ptLat
+                  });
+                  break;
                 }
               }
             }
+          }
 
-            const towersList = Array.from(foundTowersMap.values());
-            if (towersList.length >= 2) {
-              towersList.sort((a, b) => {
-                const numA = parseFloat(a.name.replace(/[^0-9.]/g, '')) || 0;
-                const numB = parseFloat(b.name.replace(/[^0-9.]/g, '')) || 0;
-                if (numA !== numB) return numA - numB;
-                return a.name.localeCompare(b.name, undefined, { numeric: true });
-              });
-              const t1 = towersList[0];
-              const t2 = towersList[towersList.length - 1];
-              const avgLatRad = ((t1.lat + t2.lat) / 2) * (Math.PI / 180);
-              const dx = (t2.lng - t1.lng) * Math.cos(avgLatRad);
-              const dy = t2.lat - t1.lat;
-              if (Math.abs(dx) > 1e-9 || Math.abs(dy) > 1e-9) {
-                pdfTowerCalcRotation = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+          // Fallback to As Tower (jalur) WGS84 LineString segment if separate tower layer doesn't have both endpoints
+          if (foundTowersMap.size < 2 && targetEndpoints.length === 2 && polygonPoints.length > 0) {
+            const [epSmall, epLarge] = targetEndpoints;
+            const centroidLng = polygonPoints.reduce((acc, p) => acc + p[0], 0) / polygonPoints.length;
+            const centroidLat = polygonPoints.reduce((acc, p) => acc + p[1], 0) / polygonPoints.length;
+
+            let bestSeg: { p1: { lng: number; lat: number }; p2: { lng: number; lat: number }; distSq: number } | null = null;
+            for (const cand of candidateGeoJSONs) {
+              const isJalur = cand.type === 'jalur' || /jalur|as_tower|astower|row|koridor|line/i.test(cand.name || '');
+              if (!isJalur || !cand.data?.features) continue;
+
+              for (const f of cand.data.features) {
+                const fGeom = f.geometry;
+                if (!fGeom?.coordinates) continue;
+                const lines: number[][][] =
+                  fGeom.type === 'LineString'
+                    ? [fGeom.coordinates]
+                    : fGeom.type === 'MultiLineString'
+                    ? fGeom.coordinates
+                    : [];
+
+                lines.forEach(lineCoords => {
+                  for (let i = 0; i < lineCoords.length - 1; i++) {
+                    const a = lineCoords[i];
+                    const b = lineCoords[i + 1];
+                    if (!a || !b || a.length < 2 || b.length < 2) continue;
+                    const dx = Number(b[0]) - Number(a[0]);
+                    const dy = Number(b[1]) - Number(a[1]);
+                    const lenSq = dx * dx + dy * dy;
+                    if (lenSq < 1e-12) continue;
+                    const t = Math.max(0, Math.min(1, ((centroidLng - Number(a[0])) * dx + (centroidLat - Number(a[1])) * dy) / lenSq));
+                    const projLng = Number(a[0]) + t * dx;
+                    const projLat = Number(a[1]) + t * dy;
+                    const dSq = Math.pow(centroidLng - projLng, 2) + Math.pow(centroidLat - projLat, 2);
+
+                    if (!bestSeg || dSq < bestSeg.distSq) {
+                      bestSeg = {
+                        p1: { lng: Number(a[0]), lat: Number(a[1]) },
+                        p2: { lng: Number(b[0]), lat: Number(b[1]) },
+                        distSq: dSq
+                      };
+                    }
+                  }
+                });
+              }
+            }
+
+            if (bestSeg) {
+              const seg = bestSeg as { p1: { lng: number; lat: number }; p2: { lng: number; lat: number }; distSq: number };
+              if (!foundTowersMap.has(epSmall.canonicalId)) {
+                foundTowersMap.set(epSmall.canonicalId, {
+                  name: epSmall.displayName,
+                  canonicalId: epSmall.canonicalId,
+                  sortNum: epSmall.sortNum,
+                  lng: seg.p1.lng,
+                  lat: seg.p1.lat
+                });
+              }
+              if (!foundTowersMap.has(epLarge.canonicalId)) {
+                foundTowersMap.set(epLarge.canonicalId, {
+                  name: epLarge.displayName,
+                  canonicalId: epLarge.canonicalId,
+                  sortNum: epLarge.sortNum,
+                  lng: seg.p2.lng,
+                  lat: seg.p2.lat
+                });
               }
             }
           }
         }
 
-        // Fallback if towers not found: calculate main orientation vector of the matched parcel polygon
-        if (pdfTowerCalcRotation === null && polygonPoints && polygonPoints.length >= 2) {
-          let maxDistSq = -1;
-          let pBest1: [number, number] | null = null;
-          let pBest2: [number, number] | null = null;
-          const refLat = polygonPoints[0][1];
-          const cosLat = Math.cos((refLat * Math.PI) / 180);
+        const towersList = Array.from(foundTowersMap.values()).sort((a, b) => {
+          if (a.sortNum !== b.sortNum) return a.sortNum - b.sortNum;
+          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+        });
 
-          for (let i = 0; i < polygonPoints.length; i++) {
-            for (let j = i + 1; j < polygonPoints.length; j++) {
-              const dX = (polygonPoints[j][0] - polygonPoints[i][0]) * cosLat;
-              const dY = polygonPoints[j][1] - polygonPoints[i][1];
-              const dSq = dX * dX + dY * dY;
-              if (dSq > maxDistSq) {
-                maxDistSq = dSq;
-                pBest1 = polygonPoints[i];
-                pBest2 = polygonPoints[j];
+        if (towersList.length >= 2) {
+          const t1 = towersList[0]; // Tower Kecil (Left)
+          const t2 = towersList[towersList.length - 1]; // Tower Besar (Right)
+          const merc1 = wgs84ToWebMercator(t1.lat, t1.lng);
+          const merc2 = wgs84ToWebMercator(t2.lat, t2.lng);
+          const dMercX = merc2.x - merc1.x;
+          const dMercY = merc2.y - merc1.y;
+          if (Math.abs(dMercX) > 1e-6 || Math.abs(dMercY) > 1e-6) {
+            pdfTowerCalcRotation = ((Math.atan2(dMercY, dMercX) * 180) / Math.PI + 360) % 360;
+          }
+        }
+
+        // Convert ArcGIS ROTATE (CCW) to Clockwise screen rotation if present
+        let geojsonBaseRotasi = 0;
+        const rotRaw =
+          cMapping?.rotasi && props[cMapping.rotasi] !== undefined
+            ? props[cMapping.rotasi]
+            : findPropInObj(props, ['rotate', 'rotasi', 'rotation', 'rotdetec', 'sudut', 'angle']);
+        const rotNum = parseFloat(String(rotRaw || '0'));
+        if (!isNaN(rotNum) && rotNum !== 0) {
+          geojsonBaseRotasi = ((360 - rotNum) % 360 + 360) % 360;
+        }
+
+        // Fallback if towers not found: principal axis across ALL parcels in the active span
+        if (pdfTowerCalcRotation === null) {
+          const normSelSpan = normalizeSpan(activeSpanStr);
+          const spanPts: { mercX: number; mercY: number }[] = [];
+          if (normSelSpan && geojsonData?.features) {
+            geojsonData.features.forEach((f: any) => {
+              const fProps = f.properties || {};
+              const s = cMapping?.span ? fProps[cMapping.span] : findPropInObj(fProps, ['span', 'section', 'jalur']);
+              if (normalizeSpan(s) === normSelSpan) {
+                const collect = (c: any) => {
+                  if (typeof c?.[0] === 'number' && typeof c?.[1] === 'number') {
+                    const m = wgs84ToWebMercator(Number(c[1]), Number(c[0]));
+                    spanPts.push({ mercX: m.x, mercY: m.y });
+                  } else if (Array.isArray(c)) {
+                    c.forEach(collect);
+                  }
+                };
+                collect(f.geometry?.coordinates);
               }
-            }
+            });
           }
 
-          if (pBest1 && pBest2 && maxDistSq > 1e-12) {
-            const dX = (pBest2[0] - pBest1[0]) * cosLat;
-            const dY = pBest2[1] - pBest1[1];
-            pdfTowerCalcRotation = (Math.atan2(dY, dX) * 180 / Math.PI + 360) % 360;
+          if (spanPts.length >= 2) {
+            let maxDistSq = -1;
+            let p1 = spanPts[0];
+            let p2 = spanPts[1];
+            const step = Math.max(1, Math.floor(spanPts.length / 100));
+            for (let i = 0; i < spanPts.length; i += step) {
+              for (let j = i + 1; j < spanPts.length; j += step) {
+                const dx = spanPts[j].mercX - spanPts[i].mercX;
+                const dy = spanPts[j].mercY - spanPts[i].mercY;
+                const dSq = dx * dx + dy * dy;
+                if (dSq > maxDistSq) {
+                  maxDistSq = dSq;
+                  p1 = spanPts[i];
+                  p2 = spanPts[j];
+                }
+              }
+            }
+            let webCw = ((Math.atan2(p2.mercY - p1.mercY, p2.mercX - p1.mercX) * 180) / Math.PI + 360) % 360;
+            if (geojsonBaseRotasi !== 0) {
+              const diff = Math.abs((((webCw - geojsonBaseRotasi) % 360) + 540) % 360 - 180);
+              if (diff > 90) webCw = (webCw + 180) % 360;
+            }
+            pdfTowerCalcRotation = webCw;
           }
         }
 
         if (pdfTowerCalcRotation !== null) {
           rotationDeg = pdfTowerCalcRotation;
-        } else if (cMapping && cMapping.rotasi && props[cMapping.rotasi] !== undefined) {
-          rotationDeg = Number(props[cMapping.rotasi] || 0);
         } else {
-          const rotVal = findPropInObj(props, ['rotate', 'rotasi', 'rotation', 'rotdetec', 'sudut', 'angle']);
-          rotationDeg = Number(rotVal || 0);
+          rotationDeg = geojsonBaseRotasi;
         }
 
         if (isNaN(rotationDeg)) rotationDeg = 0;
-        
-        // Final Rotation = Base (Line Bearing / GeoJSON) + UserRotationOffset + ProjectionCorrection
+
+        // Final Rotation = Base (WGS84 As Tower Bearing / GeoJSON) + UserRotationOffset + ProjectionCorrection
         rotationDeg = ((rotationDeg + userOffset + projCorr) % 360 + 360) % 360;
         break;
       }
@@ -1396,32 +1610,32 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
 
     const latScaleFactor = Math.cos(centerLat * Math.PI / 180);
 
-    // 2. Viewport Rotation directly using ArcGIS Pro Map Series 'rotate' field
+    // 2. Viewport Rotation synchronized with Peta Bidang Tanah (Tower Kecil Left -> Tower Besar Right)
     const effectiveRotDeg = rotationDeg;
     const rad = (effectiveRotDeg * Math.PI) / 180;
     const cosR = Math.cos(rad);
     const sinR = Math.sin(rad);
 
-    // Calculate unrotated bounding box of the target polygon
-    let mMinLng = Infinity, mMaxLng = -Infinity;
-    let mMinLat = Infinity, mMaxLat = -Infinity;
+    // Calculate actual rotated bounding box of the target polygon so it fits snugly
+    let minRotX = Infinity, maxRotX = -Infinity;
+    let minRotY = Infinity, maxRotY = -Infinity;
 
     polygonPoints.forEach(([lng, lat]) => {
-      if (lng < mMinLng) mMinLng = lng;
-      if (lng > mMaxLng) mMaxLng = lng;
-      if (lat < mMinLat) mMinLat = lat;
-      if (lat > mMaxLat) mMaxLat = lat;
+      const uX = (lng - centerLng) * latScaleFactor;
+      const uY = -(lat - centerLat);
+      const rX = uX * cosR - uY * sinR;
+      const rY = uX * sinR + uY * cosR;
+      if (rX < minRotX) minRotX = rX;
+      if (rX > maxRotX) maxRotX = rX;
+      if (rY < minRotY) minRotY = rY;
+      if (rY > maxRotY) maxRotY = rY;
     });
 
-    const unrotatedWidth = (mMaxLng - mMinLng) * latScaleFactor;
-    const unrotatedHeight = mMaxLat - mMinLat;
+    const boundW = maxRotX - minRotX;
+    const boundH = maxRotY - minRotY;
 
-    // Viewport rotated extent to fit inside drawing box
-    const boundW = Math.abs(unrotatedWidth * cosR) + Math.abs(unrotatedHeight * sinR);
-    const boundH = Math.abs(unrotatedWidth * sinR) + Math.abs(unrotatedHeight * cosR);
-
-    const targetW = Math.max(boundW * 1.35, 0.00008);
-    const targetH = Math.max(boundH * 1.35, 0.00005);
+    const targetW = Math.max(boundW * 1.45, 0.00008);
+    const targetH = Math.max(boundH * 1.45, 0.00005);
 
     const containerAspect = boxW / boxH;
     let viewW = targetW;
@@ -1557,6 +1771,93 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
         });
       }
 
+      // 4b. Also draw As Tower (jalur) lines and Tapak Tower (tower) features from separate GeoJSON layers
+      if (cachedCandidateGeoJSONs && cachedCandidateGeoJSONs.length > 0) {
+        cachedCandidateGeoJSONs.forEach(cand => {
+          if (cand.type === 'jalur' && cand.data?.features) {
+            cand.data.features.forEach((f: any) => {
+              const geom = f.geometry;
+              if (!geom?.coordinates) return;
+              const lines: number[][][] =
+                geom.type === 'LineString'
+                  ? [geom.coordinates]
+                  : geom.type === 'MultiLineString'
+                  ? geom.coordinates
+                  : [];
+              doc.setDrawColor(234, 88, 12); // Orange ROW / As Tower line
+              doc.setLineWidth(0.25);
+              lines.forEach(lineCoords => {
+                for (let i = 0; i < lineCoords.length - 1; i++) {
+                  const a = lineCoords[i];
+                  const b = lineCoords[i + 1];
+                  if (!a || !b || a.length < 2 || b.length < 2) continue;
+                  const rA = getRotatedCoords(Number(a[0]), Number(a[1]));
+                  const rB = getRotatedCoords(Number(b[0]), Number(b[1]));
+                  const x1 = screenCenterX + rA.rotX;
+                  const y1 = screenCenterY + rA.rotY;
+                  const x2 = screenCenterX + rB.rotX;
+                  const y2 = screenCenterY + rB.rotY;
+                  // Draw if at least near the viewport
+                  if (
+                    (x1 >= boxX - 40 && x1 <= boxX + boxW + 40 && y1 >= boxY - 40 && y1 <= boxY + boxH + 40) ||
+                    (x2 >= boxX - 40 && x2 <= boxX + boxW + 40 && y2 >= boxY - 40 && y2 <= boxY + boxH + 40)
+                  ) {
+                    doc.line(x1, y1, x2, y2);
+                  }
+                }
+              });
+            });
+          } else if (cand.type === 'tower' && cand.data?.features) {
+            cand.data.features.forEach((f: any) => {
+              const geom = f.geometry;
+              if (!geom?.coordinates) return;
+              const props = f.properties || {};
+              let pLng = NaN, pLat = NaN;
+              if (geom.type === 'Point' && Array.isArray(geom.coordinates)) {
+                pLng = Number(geom.coordinates[0]);
+                pLat = Number(geom.coordinates[1]);
+              } else if ((geom.type === 'Polygon' || geom.type === 'MultiPolygon') && Array.isArray(geom.coordinates)) {
+                const pts = geom.type === 'Polygon' ? (geom.coordinates[0] || []) : (geom.coordinates[0]?.[0] || []);
+                if (pts.length > 0) {
+                  let sLng = 0, sLat = 0, cnt = 0;
+                  pts.forEach((p: any) => {
+                    if (Array.isArray(p) && p.length >= 2) {
+                      sLng += Number(p[0]);
+                      sLat += Number(p[1]);
+                      cnt++;
+                    }
+                  });
+                  if (cnt > 0) {
+                    pLng = sLng / cnt;
+                    pLat = sLat / cnt;
+                  }
+                }
+              }
+              if (isNaN(pLng) || isNaN(pLat)) return;
+              const { rotX, rotY } = getRotatedCoords(pLng, pLat);
+              const px = screenCenterX + rotX;
+              const py = screenCenterY + rotY;
+              if (px >= boxX + 2 && px <= boxX + boxW - 2 && py >= boxY + 2 && py <= boxY + boxH - 2) {
+                doc.setDrawColor(185, 28, 28);
+                doc.setFillColor(254, 226, 226);
+                doc.setLineWidth(0.35);
+                doc.rect(px - 2.2, py - 2.2, 4.4, 4.4, 'FD');
+                doc.line(px - 2.2, py - 2.2, px + 2.2, py + 2.2);
+                doc.line(px - 2.2, py + 2.2, px + 2.2, py - 2.2);
+
+                const rawTw = findPropInObj(props, ['towernumb', 'tower_numb', 'tower', 'no_tower', 'nama', 'name', 'nomer']);
+                const tok = normalizeTowerToken(rawTw);
+                const twName = tok ? tok.displayName : (rawTw || 'Tower');
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(5.8);
+                doc.setTextColor(185, 28, 28);
+                doc.text(String(twName), px, py - 2.8, { align: 'center' });
+              }
+            });
+          }
+        });
+      }
+
       // 5. Draw the highlighted selected matched parcel
       const paperPoints = polygonPoints.map(([lng, lat]) => {
         const { rotX, rotY } = getRotatedCoords(lng, lat);
@@ -1610,15 +1911,15 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
       doc.setLineWidth(0.35);
       doc.rect(boxX, boxY, boxW, boxH, 'D');
 
-      // 8. Draw Compass rose rotated with effective map rotation!
+      // 8. Draw Compass rose rotated with effective map rotation (matching Peta Bidang Tanah)!
       const compX = boxX + boxW - 12;
       const compY = boxY + 12;
       doc.setDrawColor(148, 163, 184);
       doc.setLineWidth(0.15);
       doc.circle(compX, compY, 3.5, 'S');
 
-      // Rotation needles
-      const theta = -effectiveRotDeg * Math.PI / 180;
+      // Rotation needles: North (uX=0, uY=-1) rotated clockwise by effectiveRotDeg -> (+sin(theta), -cos(theta))
+      const theta = (effectiveRotDeg * Math.PI) / 180;
       const uX = compX + Math.sin(theta) * 3.5;
       const uY = compY - Math.cos(theta) * 3.5;
       const sX = compX - Math.sin(theta) * 3.5;
