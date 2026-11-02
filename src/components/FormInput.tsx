@@ -293,15 +293,29 @@ export default function FormInput({
   // Sync count of active plants with populated ones from record when editing
   useEffect(() => {
     if (formData.plants) {
-      const populatedCount = formData.plants.filter(p => p.jenis.trim() !== '').length;
+      const populatedCount = formData.plants.filter(
+        p => p.jenis.trim() !== '' || Boolean(p.keterangan && p.keterangan.trim() !== '')
+      ).length;
       setActivePlantsCount(Math.max(1, populatedCount));
     }
   }, [selectedEditRecord, formData.CODE]);
 
-  const handlePlantChange = (index: number, field: 'jenis' | 'sudah_menghasilkan' | 'belum_menghasilkan' | 'kecil' | 'sedang' | 'besar', value: string) => {
+  const handlePlantChange = (
+    index: number,
+    field: 'jenis' | 'sudah_menghasilkan' | 'belum_menghasilkan' | 'kecil' | 'sedang' | 'besar' | 'keterangan',
+    value: string
+  ) => {
     const updatedPlants = [...formData.plants];
     if (!updatedPlants[index]) {
-      updatedPlants[index] = { jenis: '', sudah_menghasilkan: '', belum_menghasilkan: '', kecil: '', sedang: '', besar: '' };
+      updatedPlants[index] = {
+        jenis: '',
+        sudah_menghasilkan: '',
+        belum_menghasilkan: '',
+        kecil: '',
+        sedang: '',
+        besar: '',
+        keterangan: ''
+      };
     }
     updatedPlants[index][field] = value;
     setFormData(prev => ({ ...prev, plants: updatedPlants }));
@@ -310,7 +324,15 @@ export default function FormInput({
   const removePlantAt = (index: number) => {
     const updatedPlants = [...formData.plants];
     // Reset fields in the 30 slots
-    updatedPlants[index] = { jenis: '', sudah_menghasilkan: '', belum_menghasilkan: '', kecil: '', sedang: '', besar: '' };
+    updatedPlants[index] = {
+      jenis: '',
+      sudah_menghasilkan: '',
+      belum_menghasilkan: '',
+      kecil: '',
+      sedang: '',
+      besar: '',
+      keterangan: ''
+    };
     setFormData(prev => ({ ...prev, plants: updatedPlants }));
     if (activePlantsCount > 1) {
       setActivePlantsCount(prev => prev - 1);
@@ -1702,6 +1724,19 @@ export default function FormInput({
                               title="Jumlah tanaman ukuran Besar"
                             />
                           </div>
+                        </div>
+
+                        <div className="sm:col-span-2 md:col-span-6 pt-1 border-t border-white/10">
+                          <label className="block text-[10px] font-bold text-amber-300 uppercase mb-1.5 tracking-wide">
+                            KETERANGAN TANAMAN #{i + 1} <span className="text-slate-400 font-normal normal-case">(Tampil di Daftar Nominatif & Database, tidak masuk ke PDF Form Invent)</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={p.keterangan || ''}
+                            onChange={(e) => handlePlantChange(i, 'keterangan', e.target.value)}
+                            className="w-full px-3 py-2 bg-slate-950 border border-white/20 rounded-xl text-xs focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 font-medium text-white placeholder:text-slate-500"
+                            placeholder={`Catatan / keterangan tambahan untuk Tanaman #${i + 1} (opsional)`}
+                          />
                         </div>
                       </div>
                     </div>

@@ -274,7 +274,7 @@ export function CsvPublishGuideModal({
                   }`}
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5" />
-                  <span>1. Lahan (267 Kolom)</span>
+                  <span>1. Lahan (305 Kolom)</span>
                 </button>
                 <button
                   type="button"
@@ -314,11 +314,11 @@ export function CsvPublishGuideModal({
                         </h4>
                       </div>
                       <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                        267 Kolom Resmi
+                        305 Kolom Resmi
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-300 leading-relaxed">
-                      Dokumen utama untuk seluruh inventarisasi bidang tanah kompensasi ROW, identitas KTP/KK pemilik, alas hak, 8 blok bangunan, 30 jenis tanaman, dan persetujuan QC.
+                      Dokumen utama untuk seluruh inventarisasi bidang tanah kompensasi ROW, identitas KTP/KK pemilik, alas hak, 8 blok bangunan, 30 jenis tanaman, persetujuan QC, serta 30 kolom Keterangan Tanaman di bagian paling kanan database.
                     </p>
 
                     <div className="flex flex-wrap items-center gap-2.5 pt-1">
@@ -328,7 +328,7 @@ export function CsvPublishGuideModal({
                         className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5"
                       >
                         {copiedHeaders ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                        {copiedHeaders ? '267 Header Disalin!' : 'Salin 267 Header (Paste ke A1)'}
+                        {copiedHeaders ? '305 Header Disalin!' : 'Salin 305 Header (Paste ke A1)'}
                       </button>
 
                       <button

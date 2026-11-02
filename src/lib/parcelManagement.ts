@@ -93,7 +93,8 @@ export function autoSumPlants(plantsA: PlantData[] = [], plantsB: PlantData[] = 
         belum_menghasilkan: p.belum_menghasilkan || '',
         kecil: p.kecil || '',
         sedang: p.sedang || '',
-        besar: p.besar || ''
+        besar: p.besar || '',
+        keterangan: (p.keterangan || '').trim()
       });
     } else {
       const cur = map.get(key)!;
@@ -102,6 +103,14 @@ export function autoSumPlants(plantsA: PlantData[] = [], plantsB: PlantData[] = 
       cur.kecil = sumValues(cur.kecil, p.kecil);
       cur.sedang = sumValues(cur.sedang, p.sedang);
       cur.besar = sumValues(cur.besar, p.besar);
+      const nextKet = (p.keterangan || '').trim();
+      if (nextKet) {
+        if (!cur.keterangan) {
+          cur.keterangan = nextKet;
+        } else if (!cur.keterangan.toLowerCase().includes(nextKet.toLowerCase())) {
+          cur.keterangan = `${cur.keterangan}; ${nextKet}`;
+        }
+      }
     }
   };
 
@@ -116,7 +125,8 @@ export function autoSumPlants(plantsA: PlantData[] = [], plantsB: PlantData[] = 
       belum_menghasilkan: '',
       kecil: '',
       sedang: '',
-      besar: ''
+      besar: '',
+      keterangan: ''
     });
   }
   return result.slice(0, 30);

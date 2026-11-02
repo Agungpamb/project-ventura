@@ -654,6 +654,11 @@ export default function QCPanel({
                               <p className="col-span-2 text-[9px] text-slate-500">
                                 Ukuran: K({p.kecil || 0}) S({p.sedang || 0}) B({p.besar || 0})
                               </p>
+                              {p.keterangan && p.keterangan.trim() !== '' && (
+                                <p className="col-span-2 text-[10px] text-amber-300/90 border-t border-white/5 pt-1 mt-0.5">
+                                  Ket: {p.keterangan}
+                                </p>
+                              )}
                             </div>
                           </div>
                         );

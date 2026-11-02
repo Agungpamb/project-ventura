@@ -1207,7 +1207,7 @@ export default function App() {
   ): LandRecord => {
     const buildings = Array.from({ length: 8 }, () => ({ luas: "", bentuk: "", jenis: "" }));
     const plants = Array.from({ length: 30 }, () => ({
-      jenis: "", sudah_menghasilkan: "", belum_menghasilkan: "", kecil: "", sedang: "", besar: ""
+      jenis: "", sudah_menghasilkan: "", belum_menghasilkan: "", kecil: "", sedang: "", besar: "", keterangan: ""
     }));
     return {
       CODE: code,
@@ -1547,7 +1547,7 @@ export default function App() {
               const parsedRecords = dataRows
                 .filter(row => row && row.length > 0 && row.some(cell => cell && String(cell).trim() !== '') && String(row[0]).trim().toUpperCase() !== 'CODE' && String(row[1]).trim().toUpperCase() !== 'DESA')
                 .map((row, idx) => {
-                  const record = rowToRecord(row, idx);
+                  const record = rowToRecord(row, idx, csvRows[0]);
                   record.rowNumber = idx + 2;
                   if (!record.CODE || record.CODE.trim() === '') {
                     const cleanDesa = (record.DESA || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
@@ -1743,7 +1743,8 @@ export default function App() {
                cachedRec.LUAS !== sheetRec.LUAS ||
                cachedRec.PROGRES_PEMBERKASAN !== sheetRec.PROGRES_PEMBERKASAN ||
                cachedRec.PROGRES_UPLOAD_TRABAS !== sheetRec.PROGRES_UPLOAD_TRABAS ||
-               cachedRec.QC_STATUS !== sheetRec.QC_STATUS;
+               cachedRec.QC_STATUS !== sheetRec.QC_STATUS ||
+               JSON.stringify(cachedRec.plants) !== JSON.stringify(sheetRec.plants);
       });
 
       const hasInconsistency = hasCountDiff || hasFieldEdits;
@@ -1815,7 +1816,7 @@ export default function App() {
             const parsedRecords = dataRows
               .filter(row => row && row.length > 0 && row.some(cell => cell && String(cell).trim() !== '') && String(row[0]).trim().toUpperCase() !== 'CODE' && String(row[1]).trim().toUpperCase() !== 'DESA')
               .map((row, idx) => {
-                const record = rowToRecord(row, idx);
+                const record = rowToRecord(row, idx, csvRows[0]);
                 record.rowNumber = idx + 2;
                 if (!record.CODE || record.CODE.trim() === '') {
                   const cleanDesa = (record.DESA || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');

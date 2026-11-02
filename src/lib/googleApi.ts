@@ -344,7 +344,7 @@ export async function fetchSpreadsheetRecords(
           continue;
         }
 
-        const record = rowToRecord(row, i);
+        const record = rowToRecord(row, i, headers);
         record.rowNumber = sheetRowNumber;
 
         // Auto-heal missing CODE in memory if DESA, SPAN, and NOBID are present

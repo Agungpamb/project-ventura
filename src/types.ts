@@ -11,6 +11,7 @@ export interface PlantData {
   kecil: string;
   sedang: string;
   besar: string;
+  keterangan?: string;
 }
 
 export interface LandRecord {
@@ -160,7 +161,13 @@ export const getSheetHeaders = (): string[] => {
     "TTD SAKSI 1", "TTD SAKSI 2", "TTD TIM 1", "TTD TIM 2", "TTD KADES", "CAP DESA", "TTD PEMILIK"
   ];
 
-  return [...baseHeaders, ...buildingHeaders, ...plantHeaders, ...adminAndLinksHeaders];
+  // Adding 30 plant keterangan columns at the far right of the database
+  const plantKeteranganHeaders: string[] = [];
+  for (let i = 1; i <= 30; i++) {
+    plantKeteranganHeaders.push(`KETERANGAN TANAMAN ${i}`);
+  }
+
+  return [...baseHeaders, ...buildingHeaders, ...plantHeaders, ...adminAndLinksHeaders, ...plantKeteranganHeaders];
 };
 
 // Maps a LandRecord object into a row array aligned with headers
@@ -208,7 +215,7 @@ export const recordToRow = (record: LandRecord): string[] => {
 
   // Plants (30 items, 6 fields each)
   for (let i = 0; i < 30; i++) {
-    const p = record.plants?.[i] || { jenis: "", sudah_menghasilkan: "", belum_menghasilkan: "", kecil: "", sedang: "", besar: "" };
+    const p = record.plants?.[i] || { jenis: "", sudah_menghasilkan: "", belum_menghasilkan: "", kecil: "", sedang: "", besar: "", keterangan: "" };
     row.push(
       p.jenis || "",
       p.sudah_menghasilkan || "",
@@ -272,6 +279,12 @@ export const recordToRow = (record: LandRecord): string[] => {
     record.TTD_PEMILIK || ""
   );
 
+  // Plant Keterangan (30 columns at the far right of the database, indices 275..304)
+  for (let i = 0; i < 30; i++) {
+    const p = record.plants?.[i];
+    row.push(p?.keterangan || "");
+  }
+
   // Sanitize cells so Google Sheets API (50,000 char per cell limit) never rejects a row
   return row.map(cell => {
     if (cell === undefined || cell === null) return "";
@@ -282,7 +295,7 @@ export const recordToRow = (record: LandRecord): string[] => {
 };
 
 // Parses a row array back to a LandRecord object based on index mapping
-export const rowToRecord = (row: any[], index?: number): LandRecord => {
+export const rowToRecord = (row: any[], index?: number, headers?: any[]): LandRecord => {
   const getVal = (index: number): string => {
     if (index >= row.length || row[index] === undefined || row[index] === null) return "";
     return String(row[index]);
@@ -336,7 +349,8 @@ export const rowToRecord = (row: any[], index?: number): LandRecord => {
       belum_menghasilkan: getVal(plantStartIdx + 2),
       kecil: getVal(plantStartIdx + 3),
       sedang: getVal(plantStartIdx + 4),
-      besar: getVal(plantStartIdx + 5)
+      besar: getVal(plantStartIdx + 5),
+      keterangan: ""
     });
     plantStartIdx += 6;
   }
@@ -412,13 +426,42 @@ export const rowToRecord = (row: any[], index?: number): LandRecord => {
   record.CAP_DESA = getVal(adminStartIdx + 48);
   record.TTD_PEMILIK = getVal(adminStartIdx + 49);
 
+  // Plant Keterangan (30 columns at the far right of the database, default index 275..304)
+  // Also auto-detects if the spreadsheet has an explicit header or was extended from an older 264/267/268-column template
+  let plantKetStartIdx = adminStartIdx + 50; // 275
+  if (Array.isArray(headers) && headers.length > 0) {
+    const explicitIdx = headers.findIndex(h => {
+      const norm = String(h || '').trim().toUpperCase().replace(/[._-]+/g, ' ').replace(/\s+/g, ' ');
+      return (
+        norm === 'KETERANGAN TANAMAN 1' ||
+        norm === 'KET TANAMAN 1' ||
+        norm === 'KETERANGAN 1' ||
+        norm === 'KET 1'
+      );
+    });
+    if (explicitIdx >= 225) {
+      plantKetStartIdx = explicitIdx;
+    } else if (headers.length >= 294 && headers.length <= 305) {
+      plantKetStartIdx = headers.length - 30;
+    }
+  } else if (row.length >= 294 && row.length < 305 && !getVal(adminStartIdx + 50)) {
+    plantKetStartIdx = row.length - 30;
+  }
+
+  for (let i = 0; i < 30; i++) {
+    const ketVal = getVal(plantKetStartIdx + i) || (plantKetStartIdx !== adminStartIdx + 50 ? getVal(adminStartIdx + 50 + i) : "");
+    if (record.plants && record.plants[i]) {
+      record.plants[i].keterangan = ketVal;
+    }
+  }
+
   return record as LandRecord;
 };
 
 export const createEmptyRecord = (): LandRecord => {
   const buildings: BuildingData[] = Array.from({ length: 8 }, () => ({ luas: "", bentuk: "", jenis: "" }));
   const plants: PlantData[] = Array.from({ length: 30 }, () => ({
-    jenis: "", sudah_menghasilkan: "", belum_menghasilkan: "", kecil: "", sedang: "", besar: ""
+    jenis: "", sudah_menghasilkan: "", belum_menghasilkan: "", kecil: "", sedang: "", besar: "", keterangan: ""
   }));
 
   return {

@@ -175,6 +175,12 @@ export default function DaftarNominatifPanel({
           r.ALAMAT_KTP_BARIS_4
         ].filter(Boolean).join(' ').toLowerCase();
 
+        const plantMatch = (r.plants || []).some(
+          p =>
+            (p.jenis || '').toLowerCase().includes(q) ||
+            (p.keterangan || '').toLowerCase().includes(q)
+        );
+
         const match = 
           (r.NAMA || '').toLowerCase().includes(q) ||
           (r.NIK || '').toLowerCase().includes(q) ||
@@ -184,7 +190,8 @@ export default function DaftarNominatifPanel({
           (r.NOMER_HAK || '').toLowerCase().includes(q) ||
           (r.PENUTUP_LAHAN || '').toLowerCase().includes(q) ||
           (r.KETERANGAN || '').toLowerCase().includes(q) ||
-          fullAlamat.includes(q);
+          fullAlamat.includes(q) ||
+          plantMatch;
 
         if (!match) return false;
       }
@@ -232,13 +239,14 @@ export default function DaftarNominatifPanel({
     if (!record.plants || !Array.isArray(record.plants)) return [];
     return record.plants.filter(p => {
       const hasName = Boolean(p.jenis && p.jenis.trim() !== '');
+      const hasKet = Boolean(p.keterangan && p.keterangan.trim() !== '' && p.keterangan.trim() !== '-');
       const sudah = parseInt(p.sudah_menghasilkan || '0') || 0;
       const belum = parseInt(p.belum_menghasilkan || '0') || 0;
       const kecil = parseInt(p.kecil || '0') || 0;
       const sedang = parseInt(p.sedang || '0') || 0;
       const besar = parseInt(p.besar || '0') || 0;
       const total = sudah + belum + kecil + sedang + besar;
-      return hasName || total > 0;
+      return hasName || hasKet || total > 0;
     });
   };
 
@@ -387,21 +395,21 @@ export default function DaftarNominatifPanel({
     const parcelBlocks: { startRow: number; endRow: number }[] = [];
     const spacerRows = new Set<number>();
 
-    // Baris 0, 1, 2: KOP / Judul Daftar Nominatif (Merge kolom 0 s/d 23)
-    aoa.push(['DAFTAR NOMINATIF INVENTARISASI TANAH, BANGUNAN, DAN/ATAU TANAMAN', ...Array(23).fill('')]);
-    merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: 23 } });
+    // Baris 0, 1, 2: KOP / Judul Daftar Nominatif (Merge kolom 0 s/d 24)
+    aoa.push(['DAFTAR NOMINATIF INVENTARISASI TANAH, BANGUNAN, DAN/ATAU TANAMAN', ...Array(24).fill('')]);
+    merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: 24 } });
 
-    aoa.push([(activeProjectName || '').toUpperCase(), ...Array(23).fill('')]);
-    merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: 23 } });
+    aoa.push([(activeProjectName || '').toUpperCase(), ...Array(24).fill('')]);
+    merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: 24 } });
 
     const locationSubtitle = `KABUPATEN: ${activeKabupaten}   |   KECAMATAN: ${activeKecamatan}   |   DESA: ${exportDesaLabel}${
       selectedSpan ? `   |   SPAN: ${selectedSpan}` : ''
     }`;
-    aoa.push([locationSubtitle, ...Array(23).fill('')]);
-    merges.push({ s: { r: 2, c: 0 }, e: { r: 2, c: 23 } });
+    aoa.push([locationSubtitle, ...Array(24).fill('')]);
+    merges.push({ s: { r: 2, c: 0 }, e: { r: 2, c: 24 } });
 
     // Baris 3: Baris kosong pemisah KOP dengan Tabel
-    aoa.push(Array(24).fill(''));
+    aoa.push(Array(25).fill(''));
     spacerRows.add(3);
 
     // Baris 4: HEADER BARIS 1 (Kelompok Utama persis Daftar Nominatif)
@@ -419,6 +427,7 @@ export default function DaftarNominatifPanel({
       '',
       '',
       'TANAMAN',
+      '',
       '',
       '',
       '',
@@ -452,6 +461,7 @@ export default function DaftarNominatifPanel({
       'KECIL',
       'SEDANG',
       'BESAR',
+      'KET. TANAMAN',
       '',
       '',
       '',
@@ -460,17 +470,17 @@ export default function DaftarNominatifPanel({
       ''
     ]);
 
-    const singleValueCols = [0, 1, 2, 3, 6, 7, 8, 18, 19, 20, 21, 22, 23];
+    const singleValueCols = [0, 1, 2, 3, 6, 7, 8, 19, 20, 21, 22, 23, 24];
     const singleValueColsSet = new Set<number>(singleValueCols);
 
     // Merge vertikal untuk kolom tunggal pada Header (Baris 4 s/d 5)
-    [0, 1, 2, 3, 4, 5, 18, 19, 20, 21, 22, 23].forEach(colIdx => {
+    [0, 1, 2, 3, 4, 5, 19, 20, 21, 22, 23, 24].forEach(colIdx => {
       merges.push({ s: { r: 4, c: colIdx }, e: { r: 5, c: colIdx } });
     });
-    // Merge horizontal untuk grup TANAH (6..8), BANGUNAN (9..11), TANAMAN (12..17)
+    // Merge horizontal untuk grup TANAH (6..8), BANGUNAN (9..11), TANAMAN (12..18)
     merges.push({ s: { r: 4, c: 6 }, e: { r: 4, c: 8 } });
     merges.push({ s: { r: 4, c: 9 }, e: { r: 4, c: 11 } });
-    merges.push({ s: { r: 4, c: 12 }, e: { r: 4, c: 17 } });
+    merges.push({ s: { r: 4, c: 12 }, e: { r: 4, c: 18 } });
 
     let currentRowIndex = 6;
 
@@ -538,6 +548,7 @@ export default function DaftarNominatifPanel({
           currentPlant ? (valKecil > 0 ? valKecil : '-') : (isFirstSub && !plantsList ? '-' : ''),
           currentPlant ? (valSedang > 0 ? valSedang : '-') : (isFirstSub && !plantsList ? '-' : ''),
           currentPlant ? (valBesar > 0 ? valBesar : '-') : (isFirstSub && !plantsList ? '-' : ''),
+          currentPlant ? (currentPlant.keterangan?.trim() || '-') : (isFirstSub && !plantsList ? '-' : ''),
           isFirstSub ? (r.JENIS_PERALIHAN_HAK || 'SESUAI') : '',
           isFirstSub ? (r.PROGRES_PEMBERKASAN || 'SELESAI') : '',
           isFirstSub ? (r.KONFIRMASI_BPN || 'TIDAK') : '',
@@ -561,7 +572,7 @@ export default function DaftarNominatifPanel({
 
       // Tambah 1 Baris Kosong sebagai pemisah tegas antar bidang
       if (idx < targetRecords.length - 1) {
-        aoa.push(Array(24).fill(''));
+        aoa.push(Array(25).fill(''));
         spacerRows.add(currentRowIndex);
         currentRowIndex++;
       }
@@ -593,7 +604,7 @@ export default function DaftarNominatifPanel({
 
     // 2. Style Header Tabel (Baris 4 & 5)
     for (let r = 4; r <= 5; r++) {
-      for (let c = 0; c < 24; c++) {
+      for (let c = 0; c < 25; c++) {
         const cellRef = XLSX.utils.encode_cell({ r, c });
         if (!worksheet[cellRef]) {
           worksheet[cellRef] = { t: 's', v: '' };
@@ -606,23 +617,23 @@ export default function DaftarNominatifPanel({
             top: r === 4 ? borderMediumBlack : borderThinDark,
             bottom: r === 5 ? borderMediumBlack : borderThinDark,
             left: c === 0 ? borderMediumBlack : borderThinDark,
-            right: c === 23 ? borderMediumBlack : borderThinDark
+            right: c === 24 ? borderMediumBlack : borderThinDark
           }
         };
       }
     }
 
     // 3. Style Setiap Blok Bidang dengan Garis Tegas (Medium Black Border) mengelilingi tiap bidang
-    const centerCols = new Set([0, 1, 2, 3, 13, 14, 15, 16, 17, 18, 19, 20, 21]);
+    const centerCols = new Set([0, 1, 2, 3, 13, 14, 15, 16, 17, 19, 20, 21, 22]);
     const rightCols = new Set([8, 9]);
-    const groupLeftCols = new Set([0, 4, 5, 6, 9, 12, 18]);
+    const groupLeftCols = new Set([0, 4, 5, 6, 9, 12, 19]);
 
     parcelBlocks.forEach(({ startRow, endRow }) => {
       for (let r = startRow; r <= endRow; r++) {
         const isFirstRowOfParcel = r === startRow;
         const isLastRowOfParcel = r === endRow;
 
-        for (let c = 0; c < 24; c++) {
+        for (let c = 0; c < 25; c++) {
           const cellRef = XLSX.utils.encode_cell({ r, c });
           if (!worksheet[cellRef]) {
             worksheet[cellRef] = { t: 's', v: '' };
@@ -646,7 +657,7 @@ export default function DaftarNominatifPanel({
           const leftBorder =
             c === 0 || groupLeftCols.has(c) ? borderMediumBlack : borderThinDark;
           const rightBorder =
-            c === 23 || groupLeftCols.has(c + 1) ? borderMediumBlack : borderThinDark;
+            c === 24 || groupLeftCols.has(c + 1) ? borderMediumBlack : borderThinDark;
 
           const isBoldRow =
             (c === 4 && isFirstRowOfParcel) ||
@@ -701,6 +712,7 @@ export default function DaftarNominatifPanel({
       { wch: 10 }, // TANAMAN: KECIL
       { wch: 10 }, // TANAMAN: SEDANG
       { wch: 10 }, // TANAMAN: BESAR
+      { wch: 24 }, // TANAMAN: KET. TANAMAN
       { wch: 16 }, // PERALIHAN HAK
       { wch: 15 }, // PROGRES
       { wch: 15 }, // KONFIRMASI BPN
@@ -756,6 +768,7 @@ export default function DaftarNominatifPanel({
       'TANAMAN - KECIL',
       'TANAMAN - SEDANG',
       'TANAMAN - BESAR',
+      'TANAMAN - KETERANGAN',
       'PERALIHAN HAK',
       'PROGRES',
       'KONFIRMASI BPN',
@@ -812,6 +825,7 @@ export default function DaftarNominatifPanel({
           currentPlant ? (valKecil > 0 ? valKecil : '-') : (isFirstSub && !plantsList ? '-' : ''),
           currentPlant ? (valSedang > 0 ? valSedang : '-') : (isFirstSub && !plantsList ? '-' : ''),
           currentPlant ? (valBesar > 0 ? valBesar : '-') : (isFirstSub && !plantsList ? '-' : ''),
+          currentPlant ? (currentPlant.keterangan?.trim() || '-') : (isFirstSub && !plantsList ? '-' : ''),
           isFirstSub ? (r.JENIS_PERALIHAN_HAK || 'SESUAI') : '',
           isFirstSub ? (r.PROGRES_PEMBERKASAN || 'SELESAI') : '',
           isFirstSub ? (r.KONFIRMASI_BPN || 'TIDAK') : '',
@@ -824,7 +838,7 @@ export default function DaftarNominatifPanel({
 
       // Tambah 1 baris kosong antar bidang
       if (idx < targetRecords.length - 1) {
-        csvRows.push(Array(24).fill('').map(csvEscape).join(','));
+        csvRows.push(Array(25).fill('').map(csvEscape).join(','));
       }
     });
 
@@ -1354,7 +1368,7 @@ export default function DaftarNominatifPanel({
                 <th colSpan={3} className="py-1 px-2 border-r border-white/10 bg-sky-950/40 text-sky-300">BANGUNAN</th>
                 
                 {/* TANAMAN GROUP */}
-                <th colSpan={6} className="py-1 px-2 border-r border-white/10 bg-amber-950/40 text-white [html.light_&]:!text-slate-900 [html.light_&]:!bg-slate-200">TANAMAN</th>
+                <th colSpan={7} className="py-1 px-2 border-r border-white/10 bg-amber-950/40 text-white [html.light_&]:!text-slate-900 [html.light_&]:!bg-slate-200">TANAMAN</th>
 
                 <th rowSpan={2} className="py-2.5 px-2 border-r border-white/10 min-w-[90px]">PERALIHAN HAK</th>
                 <th rowSpan={2} className="py-2.5 px-2 border-r border-white/10 min-w-[90px]">PROGRES</th>
@@ -1384,13 +1398,14 @@ export default function DaftarNominatifPanel({
                 <th className="py-1.5 px-1 border-r border-white/10 w-12 bg-amber-950/20 text-white [html.light_&]:!text-slate-900 [html.light_&]:!bg-slate-100">KECIL</th>
                 <th className="py-1.5 px-1 border-r border-white/10 w-12 bg-amber-950/20 text-white [html.light_&]:!text-slate-900 [html.light_&]:!bg-slate-100">SEDANG</th>
                 <th className="py-1.5 px-1 border-r border-white/10 w-12 bg-amber-950/20 text-white [html.light_&]:!text-slate-900 [html.light_&]:!bg-slate-100">BESAR</th>
+                <th className="py-1.5 px-2 border-r border-white/10 min-w-[140px] bg-amber-950/20 text-white [html.light_&]:!text-slate-900 [html.light_&]:!bg-slate-100">KET. TANAMAN</th>
               </tr>
             </thead>
 
             <tbody className="divide-y divide-white/5 font-sans">
               {filteredRecords.length === 0 ? (
                 <tr>
-                  <td colSpan={26} className="py-12 text-center text-slate-400 space-y-2">
+                  <td colSpan={27} className="py-12 text-center text-slate-400 space-y-2">
                     <FileSpreadsheet className="w-8 h-8 text-slate-600 mx-auto" />
                     <p className="text-sm font-semibold text-slate-300">Belum ada data nominatif yang sesuai filter</p>
                     <p className="text-xs text-slate-500">Silakan ubah filter Desa/Span atau masukkan data bidang baru melalui menu Input Lahan.</p>
@@ -1626,6 +1641,15 @@ export default function DaftarNominatifPanel({
                           {valBesar > 0 ? valBesar : '-'}
                         </td>
 
+                        {/* TANAMAN: KETERANGAN TANAMAN */}
+                        <td className={`py-2 px-2 border-r border-white/10 text-[11px] align-middle ${
+                          currentPlant?.keterangan && currentPlant.keterangan.trim() !== '' && currentPlant.keterangan.trim() !== '-'
+                            ? 'text-amber-200 [html.light_&]:!text-slate-900 font-medium'
+                            : 'text-slate-500 [html.light_&]:!text-slate-400 font-normal text-center'
+                        }`}>
+                          {currentPlant?.keterangan && currentPlant.keterangan.trim() !== '' ? currentPlant.keterangan : '-'}
+                        </td>
+
                         {/* TRAILING PARCEL COLUMNS (RowSpan for first sub-row) */}
                         {isFirstSub && (
                           <>
@@ -1738,7 +1762,7 @@ export default function DaftarNominatifPanel({
                   if (idx < filteredRecords.length - 1) {
                     subRows.push(
                       <tr key={`nom-rec-${idx}-sep`} className="bg-slate-950 h-6">
-                        <td colSpan={26} className="py-2.5 px-0 bg-slate-950 border-none" />
+                        <td colSpan={27} className="py-2.5 px-0 bg-slate-950 border-none" />
                       </tr>
                     );
                   }
@@ -1809,10 +1833,33 @@ export default function DaftarNominatifPanel({
                 <span className="text-[10px] font-black uppercase tracking-wider text-white [html.light_&]:!text-slate-900 font-mono block">
                   INVENTARISASI BANGUNAN & TANAMAN
                 </span>
-                <div className="space-y-1 text-slate-300">
+                <div className="space-y-2 text-slate-300">
                   <div>Bangunan: <span className="text-white [html.light_&]:!text-slate-900 font-semibold">{getBuildingDetails(selectedRecordDetail).bentukStr}</span></div>
                   <div>Daftar Tanaman: <span className="text-white [html.light_&]:!text-slate-900 font-semibold">{getPlantTotals(selectedRecordDetail).jenisStr}</span></div>
                   <div>Total Tanaman: <strong className="text-white [html.light_&]:!text-slate-900 font-mono font-bold">{getPlantTotals(selectedRecordDetail).totalTanaman} Batang/Pohon</strong></div>
+                  {getActivePlants(selectedRecordDetail).length > 0 && (
+                    <div className="pt-2 border-t border-white/10 space-y-1.5">
+                      <span className="text-[10px] font-bold text-amber-300 uppercase block font-mono">Rincian Tanaman & Keterangan:</span>
+                      <div className="grid grid-cols-1 gap-1.5 max-h-40 overflow-y-auto pr-1">
+                        {getActivePlants(selectedRecordDetail).map((p, pIdx) => {
+                          const cnt =
+                            (parseInt(p.belum_menghasilkan || '0') || 0) +
+                            (parseInt(p.sudah_menghasilkan || '0') || 0) +
+                            (parseInt(p.kecil || '0') || 0) +
+                            (parseInt(p.sedang || '0') || 0) +
+                            (parseInt(p.besar || '0') || 0);
+                          return (
+                            <div key={pIdx} className="px-2.5 py-1.5 rounded-lg bg-slate-950/80 border border-white/10 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                              <span className="font-bold text-white uppercase">{p.jenis || `Tanaman #${pIdx + 1}`} <span className="text-emerald-400 font-mono">({cnt} phn)</span></span>
+                              <span className="text-amber-300 font-mono text-[10px]">
+                                Ket: {p.keterangan && p.keterangan.trim() !== '' ? p.keterangan : '-'}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
