@@ -1612,29 +1612,7 @@ export default function App() {
       
       // Execute setup & fetch with a 35-second maximum timeout
       const syncPromise = (async () => {
-        // If any is missing, automate creation in Drive under "PROJECT_VENTURA"
-        if (!folderId || !sheetId || !uploadsFolderId) {
-          const setup = await setupProjectDriveStructure(accessToken, activeProj.name);
-          folderId = setup.folderId;
-          sheetId = setup.spreadsheetId;
-          uploadsFolderId = setup.uploadsFolderId;
-          
-          // Save back to projects state and localStorage
-          const updatedProjects = projects.map(p => {
-            if (p.id === projectId) {
-              return { ...p, folderId, spreadsheetId: sheetId, uploadsFolderId };
-            }
-            return p;
-          });
-          setProjects(updatedProjects);
-          localStorage.setItem('project_ventura_projects', JSON.stringify(updatedProjects));
-          saveProjectsToCloud(updatedProjects);
-        }
-        
-        setSpreadsheetId(sheetId);
-        setProjectUploadsFolderId(uploadsFolderId);
-        
-        // Fetch cached Firestore records & check if there is a pending structural mutation (Merge, Split, Delete)
+        // Fetch cached Firestore records FIRST so we know if this project already has shared data
         let cachedCount = records.length;
         let existingCacheList: LandRecord[] = [];
         let hasPendingSheetMutation = false;
@@ -1669,6 +1647,33 @@ export default function App() {
             }
           } catch (e) {}
         }
+
+        // Only auto-create Drive structure if sheetId is completely missing AND project has no existing cloud/CSV data,
+        // or if folderId/uploadsFolderId are missing (without EVER overwriting an existing sheetId!)
+        if (!folderId || !sheetId || !uploadsFolderId) {
+          // If sheetId is missing but cloud cache or publicCsvUrl already exists, do NOT create an empty spreadsheet in another user's Drive!
+          if (!sheetId && (existingCacheList.length > 0 || activeProj.publicCsvUrl)) {
+            throw new Error("Menggunakan data sinkronisasi Cloud / CSV karena Spreadsheet utama berada di akun pemilik database.");
+          }
+          const setup = await setupProjectDriveStructure(accessToken, activeProj.name);
+          folderId = folderId || setup.folderId;
+          sheetId = sheetId || setup.spreadsheetId;
+          uploadsFolderId = uploadsFolderId || setup.uploadsFolderId;
+          
+          // Save back to projects state and localStorage
+          const updatedProjects = projects.map(p => {
+            if (p.id === projectId) {
+              return { ...p, folderId, spreadsheetId: sheetId, uploadsFolderId };
+            }
+            return p;
+          });
+          setProjects(updatedProjects);
+          localStorage.setItem('project_ventura_projects', JSON.stringify(updatedProjects));
+          saveProjectsToCloud(updatedProjects);
+        }
+        
+        setSpreadsheetId(sheetId);
+        setProjectUploadsFolderId(uploadsFolderId);
 
         // If Firestore/localStorage has pending mutations (e.g. Merge, Split, Delete, or offline edits),
         // push them directly to Google Spreadsheet FIRST so the Spreadsheet is updated rather than overwriting our changes!
@@ -1721,6 +1726,46 @@ export default function App() {
         return;
       }
 
+      // Guard: if the connected sheet returned 0 rows (e.g. an empty sheet created by a secondary account)
+      // while Firestore cache or Public CSV actually has data for this jalur, fall back to the populated data!
+      if (sortedItems.length === 0 && !options?.forceDirectSheet) {
+        if (existingCacheList.length > 0) {
+          const sortedCache = [...existingCacheList].sort(compareLandRecords);
+          setRecords(sortedCache);
+          setSheetNameInfo(`${activeProj.name} (Sinkron Cloud Firestore)`);
+          return;
+        }
+        if (activeProj.publicCsvUrl) {
+          try {
+            const csvText = await fetchPublicCsvContent(activeProj.publicCsvUrl);
+            const csvRows = parseCSV(csvText);
+            if (csvRows.length > 1) {
+              const dataRows = csvRows.slice(1);
+              const parsedRecords = dataRows
+                .filter(row => row && row.length > 0 && row.some(cell => cell && String(cell).trim() !== '') && String(row[0]).trim().toUpperCase() !== 'CODE' && String(row[1]).trim().toUpperCase() !== 'DESA')
+                .map((row, idx) => {
+                  const record = rowToRecord(row, idx, csvRows[0]);
+                  record.rowNumber = idx + 2;
+                  if (!record.CODE || record.CODE.trim() === '') {
+                    const cleanDesa = (record.DESA || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
+                    const cleanSpan = (record.SPAN || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
+                    const cleanNobid = (record.NOBID || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
+                    record.CODE = (cleanDesa && cleanSpan && cleanNobid) ? `${cleanDesa}_${cleanSpan}_${cleanNobid}` : `BIDANG_${idx + 2}`;
+                  }
+                  return record;
+                });
+              if (parsedRecords.length > 0) {
+                const sortedCsv = [...parsedRecords].sort(compareLandRecords);
+                setRecords(sortedCsv);
+                saveRecordsToFirestoreCache(projectId, sortedCsv, false);
+                setSheetNameInfo(`${activeProj.name} (Web Publish CSV)`);
+                return;
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
       setRecords(sortedItems);
       setIsLiveGoogleConnected(true);
       
@@ -1731,27 +1776,10 @@ export default function App() {
         console.warn("localStorage quota exceeded, unable to cache records locally:", storageError);
       }
 
-      // Check if there are differences between Firestore cache and Spreadsheet
-      const hasCountDiff = existingCacheList && existingCacheList.length > 0 && Math.abs(sortedItems.length - existingCacheList.length) > 0;
-      
-      const hasFieldEdits = (existingCacheList || []).some(cachedRec => {
-        if (cachedRec._needsSheetSync) return true;
-        const sheetRec = sortedItems.find(s => isSameRecord(s, cachedRec));
-        if (!sheetRec) return true;
-        return cachedRec.NAMA !== sheetRec.NAMA ||
-               cachedRec.NIK !== sheetRec.NIK ||
-               cachedRec.LUAS !== sheetRec.LUAS ||
-               cachedRec.PROGRES_PEMBERKASAN !== sheetRec.PROGRES_PEMBERKASAN ||
-               cachedRec.PROGRES_UPLOAD_TRABAS !== sheetRec.PROGRES_UPLOAD_TRABAS ||
-               cachedRec.QC_STATUS !== sheetRec.QC_STATUS ||
-               JSON.stringify(cachedRec.plants) !== JSON.stringify(sheetRec.plants);
-      });
-
-      const hasInconsistency = hasCountDiff || hasFieldEdits;
-      if (!hasInconsistency || options?.isManualSync) {
+      // Always keep Firestore cache synced with Google Sheets when there are no pending local mutations
+      // so other accounts/emails logging in can immediately view the full Daftar Nominatif!
+      if (!hasPendingSheetMutation || options?.isManualSync) {
         saveRecordsToFirestoreCache(projectId, sortedItems, false);
-      } else {
-        console.warn(`[Integritas Data] Terdeteksi perbedaan data/editan lapangan antara Firestore Cache dan Spreadsheet. Cache tidak ditimpa agar editan tim lapangan aman.`);
       }
       setSheetNameInfo(activeProj.name);
       

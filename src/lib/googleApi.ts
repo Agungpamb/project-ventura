@@ -615,14 +615,16 @@ export async function findOrCreateFolder(
   try {
     const validParentId = parentId && /^[a-zA-Z0-9_-]{15,60}$/.test(parentId.trim()) ? parentId.trim() : undefined;
     const parentQuery = validParentId ? `'${validParentId}' in parents` : "'root' in parents";
-    let query = `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and ${parentQuery} and trashed=false`;
+    const escapedFolderName = folderName.replace(/'/g, "\\'");
+    let query = `name='${escapedFolderName}' and mimeType='application/vnd.google-apps.folder' and ${parentQuery} and trashed=false`;
     
-    // If idUnik is provided, search by idUnik prefix instead of exact name to keep it persistent even after renames!
+    // If idUnik is provided, search by either clean folderName OR legacy idUnik prefix so existing folders are found and healed
     if (idUnik) {
-      query = `name contains '${idUnik}' and mimeType='application/vnd.google-apps.folder' and ${parentQuery} and trashed=false`;
+      const escapedIdUnik = idUnik.replace(/'/g, "\\'");
+      query = `(name='${escapedFolderName}' or name contains '${escapedIdUnik}') and mimeType='application/vnd.google-apps.folder' and ${parentQuery} and trashed=false`;
     }
     
-    const response = await fetchWithTimeout(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)`, {
+    const response = await fetchWithTimeout(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name, description, appProperties)`, {
       headers: { Authorization: `Bearer ${accessToken}` }
     });
     
@@ -634,10 +636,10 @@ export async function findOrCreateFolder(
     if (data.files && data.files.length > 0) {
       const folderId = data.files[0].id;
       const currentName = data.files[0].name || "";
-      const expectedName = idUnik ? `${idUnik}_${folderName}` : folderName;
+      const expectedName = folderName;
       
-      // If the folder name is outdated (e.g. they changed the display CODE), rename it on the fly!
-      if (idUnik && currentName !== expectedName) {
+      // If the folder name is outdated or still has a legacy ID-..._ prefix, rename it on the fly to the clean name!
+      if (currentName !== expectedName) {
         try {
           await fetchWithTimeout(`https://www.googleapis.com/drive/v3/files/${folderId}`, {
             method: 'PATCH',
@@ -654,8 +656,8 @@ export async function findOrCreateFolder(
       return folderId;
     }
     
-    // Create the folder
-    const finalFolderName = idUnik ? `${idUnik}_${folderName}` : folderName;
+    // Create the folder using the clean folderName directly (without ID prefix)
+    const finalFolderName = folderName;
     const createResponse = await fetchWithTimeout('https://www.googleapis.com/drive/v3/files', {
       method: 'POST',
       headers: {
@@ -665,7 +667,8 @@ export async function findOrCreateFolder(
       body: JSON.stringify({
         name: finalFolderName,
         mimeType: 'application/vnd.google-apps.folder',
-        parents: validParentId ? [validParentId] : ['root']
+        parents: validParentId ? [validParentId] : ['root'],
+        ...(idUnik ? { appProperties: { idUnik } } : {})
       })
     });
     
@@ -722,7 +725,7 @@ export function buildSanitizedFileName(
   }
 
   // Fallback if only string code is provided (e.g. "BURU_T.12-T.14_12")
-  const rawCode = String(recordOrCode || 'BIDANG_001');
+  const rawCode = String(recordOrCode || 'BIDANG_001').replace(/^ID[-_][A-Za-z0-9]+_/i, '');
   const cleanCode = sanitizeTextForDrive(rawCode);
   return `${cleanTag}_${cleanCode}.${cleanExt}`;
 }
@@ -744,7 +747,8 @@ export function buildSanitizedParcelFolderName(
   if (cleanDesa && cleanSpan && cleanNobid) {
     codeBase = `${cleanDesa}_${cleanSpan}_${cleanNobid}`;
   } else if (record.CODE) {
-    codeBase = sanitizeTextForDrive(record.CODE);
+    const strippedCode = record.CODE.replace(/^ID[-_][A-Za-z0-9]+_/i, '');
+    codeBase = sanitizeTextForDrive(strippedCode);
   } else {
     codeBase = `BIDANG_${cleanNobid || '001'}`;
   }
