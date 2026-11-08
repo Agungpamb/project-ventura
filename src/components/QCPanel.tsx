@@ -2,9 +2,10 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { 
   CheckCircle, XCircle, AlertCircle, FileText, ExternalLink, 
   Search, ShieldCheck, UserCheck, Eye, Calendar, MapPin, 
-  Home, Sprout, Landmark, Save, X, Info, Loader2, Check, GitCompare, Briefcase
+  Home, Sprout, Landmark, Save, X, Info, Loader2, Check, GitCompare, Briefcase, GitMerge, AlertTriangle
 } from 'lucide-react';
 import { type LandRecord, type ProjectConfig } from '../types';
+import { analyzeRecordPlantRepetition, consolidateRepeatedPlantsInRecord } from '../lib/parcelManagement';
 
 interface QCPanelProps {
   records: LandRecord[];
@@ -12,6 +13,7 @@ interface QCPanelProps {
   onSaveQC: (record: LandRecord) => Promise<void>;
   onNavigateToSanding?: () => void;
   onNavigateToSandingEsdm?: () => void;
+  onNavigateToPlantQC?: () => void;
   projects?: ProjectConfig[];
   activeProjectId?: string;
   activeProjectName?: string;
@@ -24,6 +26,7 @@ export default function QCPanel({
   onSaveQC, 
   onNavigateToSanding, 
   onNavigateToSandingEsdm,
+  onNavigateToPlantQC,
   projects,
   activeProjectId,
   activeProjectName,
@@ -62,6 +65,10 @@ export default function QCPanel({
   const uniqueDesas = useMemo(() => {
     const desas = records.map(r => r.DESA?.trim()).filter(Boolean);
     return Array.from(new Set(desas)).sort();
+  }, [records]);
+
+  const plantRepetitionTotalCount = useMemo(() => {
+    return records.filter(r => analyzeRecordPlantRepetition(r, true).repetitionGroups.length > 0).length;
   }, [records]);
 
   const uniqueSpansForDesa = useMemo(() => {
@@ -220,6 +227,22 @@ export default function QCPanel({
             >
               <FileText className="w-4 h-4 text-emerald-300" />
               Menu 3.2: Sanding ESDM (PDF)
+            </button>
+          )}
+
+          {onNavigateToPlantQC && (
+            <button
+              onClick={onNavigateToPlantQC}
+              className="px-3.5 py-1.5 bg-purple-600/90 hover:bg-purple-500 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-purple-600/20 flex items-center gap-1.5 cursor-pointer border border-purple-400/30"
+              title="Cek ada tidaknya repetisi / duplikasi jenis tanaman per bidang"
+            >
+              <Sprout className="w-4 h-4 text-purple-200" />
+              <span>Menu 3.3: QC Repetisi Tanaman</span>
+              {plantRepetitionTotalCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black">
+                  {plantRepetitionTotalCount}
+                </span>
+              )}
             </button>
           )}
 
@@ -458,13 +481,21 @@ export default function QCPanel({
                         <p className="truncate max-w-[150px] text-[10px] text-slate-400">Tim: {r.nama_tim_1 || '-'}</p>
                       </td>
                       <td className="px-6 py-4">
-                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                          docCount === 4 
-                            ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20' 
-                            : 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
-                        }`}>
-                          {docCount}/4 Berkas PDF
-                        </span>
+                        <div className="flex flex-col items-start gap-1">
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                            docCount === 4 
+                              ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20' 
+                              : 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                          }`}>
+                            {docCount}/4 Berkas PDF
+                          </span>
+                          {analyzeRecordPlantRepetition(r, true).repetitionGroups.length > 0 && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-500/15 text-rose-300 border border-rose-500/30">
+                              <AlertTriangle className="w-3 h-3 text-amber-400" />
+                              Repetisi Tanaman ({analyzeRecordPlantRepetition(r, true).repetitionGroups.length})
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4">
                         {r.QC_STATUS === 'APPROVED' ? (
@@ -629,10 +660,56 @@ export default function QCPanel({
 
                 {/* 3. Plants List */}
                 <div className="p-4 rounded-2xl border border-white/5 space-y-3 bg-white/5 md:col-span-2 shadow-inner">
-                  <h4 className="text-xs font-extrabold text-white uppercase tracking-wider flex items-center gap-1.5 border-b border-white/10 pb-2">
-                    <Sprout className="w-4 h-4 text-amber-400" />
-                    Pohon & Tanaman Produktif Terdata
-                  </h4>
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2">
+                    <h4 className="text-xs font-extrabold text-white uppercase tracking-wider flex items-center gap-1.5">
+                      <Sprout className="w-4 h-4 text-amber-400" />
+                      Pohon & Tanaman Produktif Terdata
+                    </h4>
+                    {analyzeRecordPlantRepetition(selectedRecord, true).repetitionGroups.length > 0 && (
+                      <button
+                        type="button"
+                        disabled={isSaving}
+                        onClick={async () => {
+                          setIsSaving(true);
+                          try {
+                            const { updatedRecord, mergedSlotsCount } = consolidateRepeatedPlantsInRecord(selectedRecord, true);
+                            await onSaveQC(updatedRecord);
+                            setSelectedRecord(updatedRecord);
+                            setActionMessage(`Berhasil menggabungkan ${mergedSlotsCount} slot tanaman yang berulang (Auto-Sum) pada bidang ini!`);
+                          } catch (err: any) {
+                            setActionMessage(`Gagal menggabungkan tanaman: ${err?.message || 'Error'}`);
+                          } finally {
+                            setIsSaving(false);
+                          }
+                        }}
+                        className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[11px] rounded-lg flex items-center gap-1.5 cursor-pointer shadow-sm"
+                      >
+                        <GitMerge className="w-3.5 h-3.5" />
+                        <span>Gabungkan {analyzeRecordPlantRepetition(selectedRecord, true).duplicateSlotCount} Slot Tanaman Berulang</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {analyzeRecordPlantRepetition(selectedRecord, true).repetitionGroups.length > 0 && (
+                    <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-200 text-xs flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="font-bold text-amber-300">
+                          Terdeteksi Repetisi Inputan Tanaman pada Bidang Ini:
+                        </p>
+                        <ul className="list-disc list-inside text-[11px] space-y-0.5">
+                          {analyzeRecordPlantRepetition(selectedRecord, true).repetitionGroups.map((grp, gIdx) => (
+                            <li key={gIdx}>
+                              <strong className="text-white">{grp.displayJenis}</strong> terinput {grp.occurrences.length} kali (pada{' '}
+                              {grp.occurrences.map(o => `Tanaman #${o.slotNumber}`).join(' & ')}) ➔ Total Seharusnya:{' '}
+                              <strong className="text-emerald-300">{grp.mergedPreview.totalBatang} Pohon</strong>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+
                   {selectedRecord.plants?.filter(p => p.jenis).length === 0 ? (
                     <p className="text-xs text-slate-400 italic py-2 text-center">Tidak ada tanaman terdata di atas lahan ini</p>
                   ) : (

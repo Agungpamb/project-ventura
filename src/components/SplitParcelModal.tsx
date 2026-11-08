@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
-  Scissors, X, AlertTriangle, CheckCircle2, 
-  Plus, Trash2, ShieldAlert, ArrowRight
+  Scissors, X, AlertTriangle, 
+  Plus, Trash2, ShieldAlert, Trees, Building2
 } from 'lucide-react';
 import { LandRecord } from '../types';
 import { 
@@ -33,6 +33,14 @@ export default function SplitParcelModal({
   const pTarget = useMemo(() => parseNobid(targetRecord.NOBID), [targetRecord.NOBID]);
   const splitNum = pTarget.num;
 
+  const activePlantsCount = useMemo(() => {
+    return (targetRecord.plants || []).filter(p => (p.jenis || '').trim() !== '').length;
+  }, [targetRecord.plants]);
+
+  const activeBuildingsCount = useMemo(() => {
+    return (targetRecord.buildings || []).filter(b => (b.luas || '').trim() || (b.bentuk || '').trim() || (b.jenis || '').trim()).length;
+  }, [targetRecord.buildings]);
+
   // Initial 2 parts
   const halfLuas = Math.round((originalLuas / 2) * 100) / 100;
   const remLuas = Math.round((originalLuas - halfLuas) * 100) / 100;
@@ -52,8 +60,32 @@ export default function SplitParcelModal({
     }
   ]);
 
+  const [plantAllocationMode, setPlantAllocationMode] = useState<'KEEP_ON_PART_1' | 'COPY_TO_ALL_PARTS'>('KEEP_ON_PART_1');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Reset parts whenever targetRecord changes
+  useEffect(() => {
+    const orig = parseFloat((targetRecord.LUAS || '0').replace(',', '.')) || 0;
+    const hLuas = Math.round((orig / 2) * 100) / 100;
+    const rLuas = Math.round((orig - hLuas) * 100) / 100;
+    setParts([
+      {
+        luas: hLuas,
+        nama: targetRecord.NAMA || '',
+        nik: targetRecord.NIK || '',
+        keterangan: 'Bagian 1 yang dipertahankan pemilik asal'
+      },
+      {
+        luas: rLuas,
+        nama: '',
+        nik: '',
+        keterangan: 'Bagian pecahan baru (dapat dilengkapi tim lapangan)'
+      }
+    ]);
+    setPlantAllocationMode('KEEP_ON_PART_1');
+    setErrorMessage(null);
+  }, [targetRecord]);
 
   // Total allocated luas
   const totalAllocatedLuas = useMemo(() => {
@@ -110,7 +142,9 @@ export default function SplitParcelModal({
         }
       }
 
-      const { updatedRecords, logSummary } = executeSplitParcel(allRecords, targetRecord, parts);
+      const { updatedRecords, logSummary } = executeSplitParcel(allRecords, targetRecord, parts, {
+        plantAllocationMode
+      });
 
       await onConfirmSplit(updatedRecords, logSummary);
       onClose();
@@ -170,6 +204,14 @@ export default function SplitParcelModal({
               <p className="text-xs text-slate-400 font-mono">
                 NIK: {targetRecord.NIK || '-'} · Hak: {targetRecord.JENIS_ALAS_HAK || '-'} ({targetRecord.NOMER_HAK || '-'})
               </p>
+              <div className="flex items-center gap-3 mt-1.5 text-[11px]">
+                <span className="inline-flex items-center gap-1 text-emerald-400 font-semibold">
+                  <Trees className="w-3.5 h-3.5" /> {activePlantsCount} Jenis Tanaman
+                </span>
+                <span className="inline-flex items-center gap-1 text-sky-400 font-semibold">
+                  <Building2 className="w-3.5 h-3.5" /> {activeBuildingsCount} Bangunan
+                </span>
+              </div>
             </div>
 
             <div className="flex items-center gap-4 text-right">
@@ -188,6 +230,53 @@ export default function SplitParcelModal({
               </div>
             </div>
           </div>
+
+          {/* Opsi Perlakuan Tanaman & Bangunan saat Pecah Bidang */}
+          {(activePlantsCount > 0 || activeBuildingsCount > 0) && (
+            <div className="p-3.5 bg-slate-950/70 rounded-xl border border-emerald-500/25 space-y-2">
+              <div className="text-[11px] font-bold text-emerald-300 uppercase flex items-center gap-1.5">
+                <Trees className="w-3.5 h-3.5" />
+                <span>Perlakuan Data Tanaman ({activePlantsCount}) & Bangunan ({activeBuildingsCount}) pada Pecahan:</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <label className={`p-2.5 rounded-lg border cursor-pointer flex items-start gap-2 transition-all ${
+                  plantAllocationMode === 'KEEP_ON_PART_1'
+                    ? 'bg-emerald-950/40 border-emerald-500 text-white'
+                    : 'bg-slate-900/50 border-white/10 text-slate-400'
+                }`}>
+                  <input
+                    type="radio"
+                    name="split_plant_mode"
+                    checked={plantAllocationMode === 'KEEP_ON_PART_1'}
+                    onChange={() => setPlantAllocationMode('KEEP_ON_PART_1')}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <span className="font-bold block text-xs text-emerald-300">Tetap di Bagian 1 (Default)</span>
+                    <span className="text-[10px] text-slate-400">Tanaman & bangunan tetap berada pada Bidang Induk (No. {splitNum}), bagian pecahan baru mulai dari kosong.</span>
+                  </div>
+                </label>
+
+                <label className={`p-2.5 rounded-lg border cursor-pointer flex items-start gap-2 transition-all ${
+                  plantAllocationMode === 'COPY_TO_ALL_PARTS'
+                    ? 'bg-amber-950/40 border-amber-500 text-white'
+                    : 'bg-slate-900/50 border-white/10 text-slate-400'
+                }`}>
+                  <input
+                    type="radio"
+                    name="split_plant_mode"
+                    checked={plantAllocationMode === 'COPY_TO_ALL_PARTS'}
+                    onChange={() => setPlantAllocationMode('COPY_TO_ALL_PARTS')}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <span className="font-bold block text-xs text-amber-300">Salin ke Semua Bagian Pecahan</span>
+                    <span className="text-[10px] text-slate-400">Menyalin daftar tanaman & bangunan asal ke bagian pecahan agar mudah disesuaikan tim di lapangan.</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+          )}
 
           {/* Section 1: Parts Allocation */}
           <div className="space-y-3">
@@ -223,7 +312,7 @@ export default function SplitParcelModal({
                         </span>
                         {isPart1 && (
                           <span className="text-[10px] text-slate-400 italic">
-                            (Menyimpan identitas & alas hak asal)
+                            (Menyimpan identitas, folder Drive & alas hak asal)
                           </span>
                         )}
                       </div>
@@ -232,7 +321,7 @@ export default function SplitParcelModal({
                         <button
                           type="button"
                           onClick={() => handleRemovePart(idx)}
-                          className="p-1 text-slate-500 hover:text-rose-400 transition-colors"
+                          className="p-1 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
                           title="Hapus bagian ini"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -249,8 +338,12 @@ export default function SplitParcelModal({
                         <input
                           type="number"
                           step="0.01"
-                          value={part.luas || ''}
-                          onChange={(e) => handleUpdatePart(idx, 'luas', parseFloat(e.target.value) || 0)}
+                          min="0"
+                          value={part.luas ?? 0}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            handleUpdatePart(idx, 'luas', raw === '' ? 0 : parseFloat(raw));
+                          }}
                           placeholder="0"
                           className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-1.5 text-white font-mono text-xs focus:border-amber-500 focus:outline-none"
                         />
@@ -309,7 +402,6 @@ export default function SplitParcelModal({
                 <button
                   type="button"
                   onClick={() => {
-                    // Automatically balance last part
                     setParts(prev => {
                       const next = [...prev];
                       const lastIdx = next.length - 1;
@@ -319,7 +411,7 @@ export default function SplitParcelModal({
                       return next;
                     });
                   }}
-                  className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 rounded text-[11px] font-bold"
+                  className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 rounded text-[11px] font-bold cursor-pointer"
                 >
                   Sesuaikan Otomatis
                 </button>

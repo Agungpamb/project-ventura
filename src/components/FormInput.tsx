@@ -2,13 +2,14 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Search, Plus, Trash2, Check, ArrowRight, ArrowLeft, Save, 
   MapPin, Landmark, Home, Sprout, ShieldAlert, Edit3, X, FileText, Key, RefreshCw, ExternalLink,
-  PenTool, CheckCircle2, Briefcase, Lock, Upload
+  PenTool, CheckCircle2, Briefcase, Lock, Upload, GitMerge
 } from 'lucide-react';
 import { type LandRecord, createEmptyRecord, type ProjectConfig } from '../types';
 import DocUpload from './DocUpload';
 import DeleteParcelModal from './DeleteParcelModal';
 import { type SignatureType } from './SignatureModal';
 import { getOrCreateParcelFolderHierarchy, uploadBase64ImageToDrive } from '../lib/googleApi';
+import { analyzeRecordPlantRepetition, consolidateRepeatedPlantsInRecord } from '../lib/parcelManagement';
 
 const PREDEFINED_PENUTUP_LAHAN = [
   'SAWAH',
@@ -1620,13 +1621,51 @@ export default function FormInput({
           {/* Form Content - TAB 3: PLANTS (30 plants slots) */}
           {activeTab === 'tanaman' && (
             <div className="space-y-6 animate-fadeIn">
-              <div className="border-b border-white/10 pb-2">
-                <h3 className="text-sm font-bold text-slate-100 tracking-tight flex items-center gap-1.5">
-                  <Sprout className="w-4 h-4 text-emerald-400" />
-                  Pohon & Tanaman Produktif Di Atas Lahan (Hingga 30 Jenis)
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">Isi jenis tanaman serta rincian usia produktif dan ukuran tanaman di bawah ini.</p>
+              <div className="border-b border-white/10 pb-2 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-100 tracking-tight flex items-center gap-1.5">
+                    <Sprout className="w-4 h-4 text-emerald-400" />
+                    Pohon & Tanaman Produktif Di Atas Lahan (Hingga 30 Jenis)
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">Isi jenis tanaman serta rincian usia produktif dan ukuran tanaman di bawah ini.</p>
+                </div>
               </div>
+
+              {/* Real-time Plant Repetition Warning & 1-Click Auto-Sum */}
+              {analyzeRecordPlantRepetition(formData, true).repetitionGroups.length > 0 && (
+                <div className="p-4 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-amber-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="font-black text-amber-300 uppercase">
+                        Terdeteksi Repetisi Jenis Tanaman pada Bidang Ini!
+                      </p>
+                      <ul className="list-disc list-inside text-[11px] space-y-0.5">
+                        {analyzeRecordPlantRepetition(formData, true).repetitionGroups.map((grp, gIdx) => (
+                          <li key={gIdx}>
+                            <strong className="text-white">{grp.displayJenis}</strong> terinput {grp.occurrences.length} kali ({grp.occurrences.map(o => `Tanaman #${o.slotNumber}`).join(' & ')}) ➔ Total Gabungan: <strong className="text-emerald-300">{grp.mergedPreview.totalBatang} Pohon</strong>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const { updatedRecord } = consolidateRepeatedPlantsInRecord(formData, true);
+                      setFormData(updatedRecord);
+                      const popCount = (updatedRecord.plants || []).filter(
+                        p => (p.jenis || '').trim() !== '' || Boolean(p.keterangan && p.keterangan.trim() !== '')
+                      ).length;
+                      setActivePlantsCount(Math.max(1, popCount));
+                    }}
+                    className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 shrink-0 cursor-pointer shadow-md"
+                  >
+                    <GitMerge className="w-4 h-4" />
+                    <span>Gabungkan Otomatis (Auto-Sum)</span>
+                  </button>
+                </div>
+              )}
 
               <div className="space-y-4">
                 {Array.from({ length: activePlantsCount }).map((_, i) => {

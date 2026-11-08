@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { GitMerge, Scissors, X, ArrowRight, AlertCircle } from 'lucide-react';
 import { LandRecord } from '../types';
+import { getRecordUniqueKey } from '../lib/parcelManagement';
 
 interface QuickParcelPickerModalProps {
   isOpen: boolean;
@@ -32,14 +33,16 @@ export default function QuickParcelPickerModal({
     return Array.from(set).sort();
   }, [allRecords]);
 
-  const [selectedDesa, setSelectedDesa] = useState<string>(initialDesa || (availableDesas[0] || ''));
+  const [selectedDesa, setSelectedDesa] = useState<string>(
+    initialDesa ? initialDesa.trim().toUpperCase() : (availableDesas[0] || '')
+  );
 
   // Available Spans for selected Desa
   const availableSpans = useMemo(() => {
     const set = new Set<string>();
     allRecords.forEach(r => {
-      if (r.DESA?.trim().toUpperCase() === selectedDesa && r.SPAN?.trim()) {
-        set.add(r.SPAN.trim());
+      if ((r.DESA || '').trim().toUpperCase() === selectedDesa && r.SPAN && r.SPAN.trim()) {
+        set.add(r.SPAN.trim().toUpperCase());
       }
     });
     return Array.from(set).sort((a, b) => {
@@ -50,7 +53,9 @@ export default function QuickParcelPickerModal({
     });
   }, [allRecords, selectedDesa]);
 
-  const [selectedSpan, setSelectedSpan] = useState<string>(initialSpan || (availableSpans[0] || ''));
+  const [selectedSpan, setSelectedSpan] = useState<string>(
+    initialSpan ? initialSpan.trim().toUpperCase() : (availableSpans[0] || '')
+  );
 
   // When desa changes, reset or pick first span
   React.useEffect(() => {
@@ -61,32 +66,35 @@ export default function QuickParcelPickerModal({
 
   // Parcels in this Desa & Span
   const availableParcels = useMemo(() => {
-    return allRecords.filter(r => 
-      r.DESA?.trim().toUpperCase() === selectedDesa &&
-      r.SPAN?.trim() === selectedSpan
-    ).sort((a, b) => {
-      const numA = parseInt((a.NOBID || '').replace(/\D/g, '')) || 0;
-      const numB = parseInt((b.NOBID || '').replace(/\D/g, '')) || 0;
-      if (numA !== numB) return numA - numB;
-      return (a.NOBID || '').localeCompare(b.NOBID || '');
-    });
+    return allRecords
+      .filter(
+        r =>
+          (r.DESA || '').trim().toUpperCase() === selectedDesa &&
+          (r.SPAN || '').trim().toUpperCase() === selectedSpan
+      )
+      .sort((a, b) => {
+        const numA = parseInt((a.NOBID || '').replace(/\D/g, '')) || 0;
+        const numB = parseInt((b.NOBID || '').replace(/\D/g, '')) || 0;
+        if (numA !== numB) return numA - numB;
+        return (a.NOBID || '').localeCompare(b.NOBID || '');
+      });
   }, [allRecords, selectedDesa, selectedSpan]);
 
-  const [parcelCodeA, setParcelCodeA] = useState<string>('');
-  const [parcelCodeB, setParcelCodeB] = useState<string>('');
-  const [targetSplitCode, setTargetSplitCode] = useState<string>('');
+  const [parcelKeyA, setParcelKeyA] = useState<string>('');
+  const [parcelKeyB, setParcelKeyB] = useState<string>('');
+  const [targetSplitKey, setTargetSplitKey] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   React.useEffect(() => {
     setErrorMsg(null);
     if (availableParcels.length > 0) {
-      setParcelCodeA(availableParcels[0]?.CODE || '');
-      setParcelCodeB(availableParcels[1]?.CODE || '');
-      setTargetSplitCode(availableParcels[0]?.CODE || '');
+      setParcelKeyA(getRecordUniqueKey(availableParcels[0]));
+      setParcelKeyB(availableParcels[1] ? getRecordUniqueKey(availableParcels[1]) : getRecordUniqueKey(availableParcels[0]));
+      setTargetSplitKey(getRecordUniqueKey(availableParcels[0]));
     } else {
-      setParcelCodeA('');
-      setParcelCodeB('');
-      setTargetSplitCode('');
+      setParcelKeyA('');
+      setParcelKeyB('');
+      setTargetSplitKey('');
     }
   }, [availableParcels]);
 
@@ -95,29 +103,33 @@ export default function QuickParcelPickerModal({
   const handleProceed = () => {
     setErrorMsg(null);
     if (mode === 'MERGE') {
-      if (!parcelCodeA || !parcelCodeB) {
+      if (!parcelKeyA || !parcelKeyB) {
         setErrorMsg('Silakan pilih kedua bidang yang ingin digabungkan.');
         return;
       }
-      if (parcelCodeA === parcelCodeB) {
+      if (parcelKeyA === parcelKeyB) {
         setErrorMsg('Bidang yang digabungkan tidak boleh sama! Pilih 2 nomor bidang berbeda.');
         return;
       }
-      const recA = availableParcels.find(r => r.CODE === parcelCodeA);
-      const recB = availableParcels.find(r => r.CODE === parcelCodeB);
+      const recA = availableParcels.find(r => getRecordUniqueKey(r) === parcelKeyA);
+      const recB = availableParcels.find(r => getRecordUniqueKey(r) === parcelKeyB);
       if (recA && recB) {
         onClose();
         onSelectForMerge(recA, recB);
+      } else {
+        setErrorMsg('Data bidang tidak ditemukan. Silakan pilih ulang.');
       }
     } else {
-      if (!targetSplitCode) {
+      if (!targetSplitKey) {
         setErrorMsg('Silakan pilih bidang yang ingin dipecah.');
         return;
       }
-      const target = availableParcels.find(r => r.CODE === targetSplitCode);
+      const target = availableParcels.find(r => getRecordUniqueKey(r) === targetSplitKey);
       if (target) {
         onClose();
         onSelectForSplit(target);
+      } else {
+        setErrorMsg('Data bidang tidak ditemukan. Silakan pilih ulang.');
       }
     }
   };
@@ -148,7 +160,7 @@ export default function QuickParcelPickerModal({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-white/10"
+            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -208,15 +220,18 @@ export default function QuickParcelPickerModal({
                   Bidang Pertama (A)
                 </label>
                 <select
-                  value={parcelCodeA}
-                  onChange={(e) => setParcelCodeA(e.target.value)}
+                  value={parcelKeyA}
+                  onChange={(e) => setParcelKeyA(e.target.value)}
                   className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-emerald-500 font-mono"
                 >
-                  {availableParcels.map(p => (
-                    <option key={p.CODE} value={p.CODE}>
-                      No. {p.NOBID} — {p.NAMA || '(Tanpa Nama)'} ({p.LUAS || 0} m²)
-                    </option>
-                  ))}
+                  {availableParcels.map(p => {
+                    const key = getRecordUniqueKey(p);
+                    return (
+                      <option key={key} value={key}>
+                        No. {p.NOBID} — {p.NAMA || '(Tanpa Nama)'} ({p.LUAS || 0} m²)
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 
@@ -225,20 +240,23 @@ export default function QuickParcelPickerModal({
                   Bidang Kedua (B)
                 </label>
                 <select
-                  value={parcelCodeB}
-                  onChange={(e) => setParcelCodeB(e.target.value)}
+                  value={parcelKeyB}
+                  onChange={(e) => setParcelKeyB(e.target.value)}
                   className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-emerald-500 font-mono"
                 >
-                  {availableParcels.map(p => (
-                    <option key={p.CODE} value={p.CODE}>
-                      No. {p.NOBID} — {p.NAMA || '(Tanpa Nama)'} ({p.LUAS || 0} m²)
-                    </option>
-                  ))}
+                  {availableParcels.map(p => {
+                    const key = getRecordUniqueKey(p);
+                    return (
+                      <option key={key} value={key}>
+                        No. {p.NOBID} — {p.NAMA || '(Tanpa Nama)'} ({p.LUAS || 0} m²)
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 
               <p className="text-[11px] text-slate-400">
-                Bidang dengan nomor terkecil akan dipertahankan sebagai nomor induk, dan urutan nomor di atasnya otomatis disesuaikan <strong>n+1</strong>.
+                Bidang dengan nomor terkecil akan dipertahankan sebagai nomor induk, dan urutan nomor di atasnya otomatis disesuaikan <strong>n-1</strong>.
               </p>
             </div>
           ) : (
@@ -249,20 +267,23 @@ export default function QuickParcelPickerModal({
                   Pilih Bidang yang Ingin Dipecah
                 </label>
                 <select
-                  value={targetSplitCode}
-                  onChange={(e) => setTargetSplitCode(e.target.value)}
+                  value={targetSplitKey}
+                  onChange={(e) => setTargetSplitKey(e.target.value)}
                   className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500 font-mono"
                 >
-                  {availableParcels.map(p => (
-                    <option key={p.CODE} value={p.CODE}>
-                      No. {p.NOBID} — {p.NAMA || '(Tanpa Nama)'} ({p.LUAS || 0} m²)
-                    </option>
-                  ))}
+                  {availableParcels.map(p => {
+                    const key = getRecordUniqueKey(p);
+                    return (
+                      <option key={key} value={key}>
+                        No. {p.NOBID} — {p.NAMA || '(Tanpa Nama)'} ({p.LUAS || 0} m²)
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 
               <p className="text-[11px] text-slate-400">
-                Bidang ini akan dipecah menjadi beberapa nomor berurutan murni (contoh No. 3 menjadi 3, 4, dst), dan bidang seterusnya otomatis digeser maju <strong>n+1</strong>.
+                Bidang ini akan dipecah menjadi beberapa nomor berurutan murni (contoh No. 3 menjadi 3, 4, dst), dan bidang seterusnya otomatis digeser maju <strong>+N</strong>.
               </p>
             </div>
           )}
@@ -273,7 +294,7 @@ export default function QuickParcelPickerModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold text-xs"
+            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold text-xs cursor-pointer"
           >
             Batal
           </button>
@@ -281,7 +302,7 @@ export default function QuickParcelPickerModal({
             type="button"
             onClick={handleProceed}
             disabled={availableParcels.length === 0}
-            className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 disabled:opacity-40 text-white ${
+            className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 disabled:opacity-40 text-white cursor-pointer ${
               mode === 'MERGE' 
                 ? 'bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-600/20' 
                 : 'bg-amber-600 hover:bg-amber-500 shadow-lg shadow-amber-600/20'

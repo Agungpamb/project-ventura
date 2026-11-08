@@ -12,6 +12,7 @@ import SplitParcelModal from './SplitParcelModal';
 import QuickParcelPickerModal from './QuickParcelPickerModal';
 import DeleteParcelModal from './DeleteParcelModal';
 import DriveFolderSyncModal from './DriveFolderSyncModal';
+import { getRecordUniqueKey } from '../lib/parcelManagement';
 
 interface DaftarNominatifPanelProps {
   records: LandRecord[];
@@ -72,42 +73,48 @@ export default function DaftarNominatifPanel({
 
   // Toggle selection for a record
   const toggleSelectRecord = (record: LandRecord) => {
+    const key = getRecordUniqueKey(record);
     setSelectedRecordCodes(prev => {
       const next = new Set(prev);
-      if (next.has(record.CODE)) {
-        next.delete(record.CODE);
+      if (next.has(key)) {
+        next.delete(key);
       } else {
         // Max 2 items can be selected at a time
         if (next.size >= 2) {
           const first = Array.from(next)[0];
           next.delete(first);
         }
-        next.add(record.CODE);
+        next.add(key);
       }
       return next;
     });
   };
 
   const handleQuickMergeClick = (record: LandRecord) => {
+    const key = getRecordUniqueKey(record);
     if (selectedRecordCodes.size === 0) {
-      setSelectedRecordCodes(new Set([record.CODE]));
+      setSelectedRecordCodes(new Set([key]));
     } else if (selectedRecordCodes.size === 1) {
-      const existingCode = Array.from(selectedRecordCodes)[0];
-      if (existingCode === record.CODE) {
+      const existingKey = Array.from(selectedRecordCodes)[0];
+      if (existingKey === key) {
         setSelectedRecordCodes(new Set());
         return;
       }
-      const existingRec = records.find(r => r.CODE === existingCode);
+      const existingRec = records.find(r => getRecordUniqueKey(r) === existingKey);
       if (existingRec) {
-        if (existingRec.DESA !== record.DESA || existingRec.SPAN !== record.SPAN) {
-          alert('Kedua bidang yang digabung harus berada di Desa dan Span yang sama!');
+        const desaA = (existingRec.DESA || '').trim().toUpperCase();
+        const desaB = (record.DESA || '').trim().toUpperCase();
+        const spanA = (existingRec.SPAN || '').trim().toUpperCase();
+        const spanB = (record.SPAN || '').trim().toUpperCase();
+        if (desaA !== desaB || spanA !== spanB) {
+          setSelectedRecordCodes(new Set([key]));
           return;
         }
         setMergePair([existingRec, record]);
         setIsMergeModalOpen(true);
       }
     } else {
-      setSelectedRecordCodes(new Set([record.CODE]));
+      setSelectedRecordCodes(new Set([key]));
     }
   };
 
@@ -989,24 +996,26 @@ export default function DaftarNominatifPanel({
             <button
               onClick={() => {
                 if (selectedRecordCodes.size === 2) {
-                  const codes = Array.from(selectedRecordCodes);
-                  const recA = records.find(r => r.CODE === codes[0]);
-                  const recB = records.find(r => r.CODE === codes[1]);
+                  const keys = Array.from(selectedRecordCodes);
+                  const recA = records.find(r => getRecordUniqueKey(r) === keys[0]);
+                  const recB = records.find(r => getRecordUniqueKey(r) === keys[1]);
                   if (recA && recB) {
-                    if (recA.DESA !== recB.DESA || recA.SPAN !== recB.SPAN) {
-                      alert('Kedua bidang yang digabung harus berada di Desa dan Span yang sama!');
+                    const desaA = (recA.DESA || '').trim().toUpperCase();
+                    const desaB = (recB.DESA || '').trim().toUpperCase();
+                    const spanA = (recA.SPAN || '').trim().toUpperCase();
+                    const spanB = (recB.SPAN || '').trim().toUpperCase();
+                    if (desaA === desaB && spanA === spanB) {
+                      setMergePair([recA, recB]);
+                      setIsMergeModalOpen(true);
                       return;
                     }
-                    setMergePair([recA, recB]);
-                    setIsMergeModalOpen(true);
-                    return;
                   }
                 }
                 setQuickPickerMode('MERGE');
                 setIsQuickPickerOpen(true);
               }}
               className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-emerald-700/20 border border-emerald-500/30 flex items-center gap-2 cursor-pointer"
-              title="Gabung 2 Bidang Tanah dan sesuaikan nomor urut n+1"
+              title="Gabung 2 Bidang Tanah dan sesuaikan nomor urut n-1"
             >
               <GitMerge className="w-4 h-4" />
               <span>Gabung Bidang</span>
@@ -1021,8 +1030,8 @@ export default function DaftarNominatifPanel({
             <button
               onClick={() => {
                 if (selectedRecordCodes.size === 1) {
-                  const code = Array.from(selectedRecordCodes)[0];
-                  const rec = records.find(r => r.CODE === code);
+                  const key = Array.from(selectedRecordCodes)[0];
+                  const rec = records.find(r => getRecordUniqueKey(r) === key);
                   if (rec) {
                     setSplitTarget(rec);
                     setIsSplitModalOpen(true);
@@ -1473,7 +1482,7 @@ export default function DaftarNominatifPanel({
                             ? 'border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900'
                             : 'border-b border-white/10'
                         } ${
-                          selectedRecordCodes.has(r.CODE) ? 'bg-emerald-950/20' : ''
+                          selectedRecordCodes.has(getRecordUniqueKey(r)) ? 'bg-emerald-950/20' : ''
                         }`}
                       >
                         {/* MAIN PARCEL COLUMNS (RowSpan for first sub-row) */}
@@ -1485,17 +1494,17 @@ export default function DaftarNominatifPanel({
                                 type="button"
                                 onClick={() => toggleSelectRecord(r)}
                                 className={`p-1 rounded-md transition-all cursor-pointer inline-flex items-center justify-center ${
-                                  selectedRecordCodes.has(r.CODE)
+                                  selectedRecordCodes.has(getRecordUniqueKey(r))
                                     ? 'text-emerald-300 bg-emerald-500/20 ring-1 ring-emerald-500/50 scale-105'
                                     : 'text-slate-600 hover:text-slate-300 hover:bg-white/5'
                                 }`}
                                 title={
-                                  selectedRecordCodes.has(r.CODE)
+                                  selectedRecordCodes.has(getRecordUniqueKey(r))
                                     ? 'Batalkan pilihan bidang ini'
                                     : 'Pilih bidang ini untuk digabung atau dipecah'
                                 }
                               >
-                                {selectedRecordCodes.has(r.CODE) ? (
+                                {selectedRecordCodes.has(getRecordUniqueKey(r)) ? (
                                   <CheckSquare className="w-4 h-4 text-emerald-400" />
                                 ) : (
                                   <Square className="w-4 h-4" />
@@ -1736,12 +1745,12 @@ export default function DaftarNominatifPanel({
                                   type="button"
                                   onClick={() => handleQuickMergeClick(r)}
                                   className={`p-1.5 rounded-lg transition-all cursor-pointer border ${
-                                    selectedRecordCodes.has(r.CODE)
+                                    selectedRecordCodes.has(getRecordUniqueKey(r))
                                       ? 'bg-emerald-600 text-white border-emerald-400 ring-2 ring-emerald-500/50'
                                       : 'bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border-emerald-500/30'
                                   }`}
                                   title={
-                                    selectedRecordCodes.has(r.CODE)
+                                    selectedRecordCodes.has(getRecordUniqueKey(r))
                                       ? `Bidang No. ${r.NOBID} sedang dipilih. Klik bidang lain untuk digabung.`
                                       : `Pilih Bidang No. ${r.NOBID} untuk digabung`
                                   }
@@ -1932,7 +1941,7 @@ export default function DaftarNominatifPanel({
               <div className="font-bold flex items-center gap-1.5">
                 <span>{selectedRecordCodes.size === 1 ? '1 Bidang Dipilih' : '2 Bidang Dipilih'}</span>
                 <span className="text-slate-400 font-mono text-[11px]">
-                  ({Array.from(selectedRecordCodes).map(c => records.find(r => r.CODE === c)?.NOBID).filter(Boolean).map(n => `No. ${n}`).join(' & ')})
+                  ({Array.from(selectedRecordCodes).map(k => records.find(r => getRecordUniqueKey(r) === k)?.NOBID).filter(Boolean).map(n => `No. ${n}`).join(' & ')})
                 </span>
               </div>
               <p className="text-[10px] text-slate-400">
@@ -1950,8 +1959,8 @@ export default function DaftarNominatifPanel({
               <button
                 type="button"
                 onClick={() => {
-                  const code = Array.from(selectedRecordCodes)[0];
-                  const rec = records.find(r => r.CODE === code);
+                  const key = Array.from(selectedRecordCodes)[0];
+                  const rec = records.find(r => getRecordUniqueKey(r) === key);
                   if (rec) {
                     setSplitTarget(rec);
                     setIsSplitModalOpen(true);
@@ -1968,8 +1977,8 @@ export default function DaftarNominatifPanel({
               <button
                 type="button"
                 onClick={() => {
-                  const code = Array.from(selectedRecordCodes)[0];
-                  const rec = records.find(r => r.CODE === code);
+                  const key = Array.from(selectedRecordCodes)[0];
+                  const rec = records.find(r => getRecordUniqueKey(r) === key);
                   if (rec) setRecordToDelete(rec);
                 }}
                 className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-md shadow-rose-600/20 cursor-pointer"
@@ -1983,12 +1992,17 @@ export default function DaftarNominatifPanel({
               <button
                 type="button"
                 onClick={() => {
-                  const codes = Array.from(selectedRecordCodes);
-                  const recA = records.find(r => r.CODE === codes[0]);
-                  const recB = records.find(r => r.CODE === codes[1]);
+                  const keys = Array.from(selectedRecordCodes);
+                  const recA = records.find(r => getRecordUniqueKey(r) === keys[0]);
+                  const recB = records.find(r => getRecordUniqueKey(r) === keys[1]);
                   if (recA && recB) {
-                    if (recA.DESA !== recB.DESA || recA.SPAN !== recB.SPAN) {
-                      alert('Penggabungan bidang harus berada dalam Desa dan Span yang sama!');
+                    const desaA = (recA.DESA || '').trim().toUpperCase();
+                    const desaB = (recB.DESA || '').trim().toUpperCase();
+                    const spanA = (recA.SPAN || '').trim().toUpperCase();
+                    const spanB = (recB.SPAN || '').trim().toUpperCase();
+                    if (desaA !== desaB || spanA !== spanB) {
+                      setQuickPickerMode('MERGE');
+                      setIsQuickPickerOpen(true);
                       return;
                     }
                     setMergePair([recA, recB]);

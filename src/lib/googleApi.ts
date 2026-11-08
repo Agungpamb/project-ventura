@@ -1153,7 +1153,14 @@ export async function overwriteSpreadsheetRecords(
   spreadsheetId: string,
   records: LandRecord[]
 ): Promise<LandRecord[]> {
-  if (!accessToken || accessToken === 'GUEST_BYPASS' || !spreadsheetId || spreadsheetId === 'guest_bypass') {
+  const cleanSpreadsheetId = extractDriveFolderId(spreadsheetId);
+  if (
+    !accessToken ||
+    accessToken === 'GUEST_BYPASS' ||
+    accessToken === 'IFRAME_OPERATOR_BYPASS' ||
+    !cleanSpreadsheetId ||
+    cleanSpreadsheetId === 'guest_bypass'
+  ) {
     throw new Error('Token Google OAuth atau ID Spreadsheet belum terhubung.');
   }
 
@@ -1183,7 +1190,7 @@ export async function overwriteSpreadsheetRecords(
 
   // 1. Write header + all current records starting at A1
   const putRes = await fetchWithTimeout(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1?valueInputOption=USER_ENTERED`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${cleanSpreadsheetId}/values/A1?valueInputOption=USER_ENTERED`,
     {
       method: 'PUT',
       headers: {
@@ -1207,7 +1214,7 @@ export async function overwriteSpreadsheetRecords(
   const lastTrailingRow = firstTrailingRow + 500;
   try {
     await fetchWithTimeout(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A${firstTrailingRow}:ZZ${lastTrailingRow}:clear`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${cleanSpreadsheetId}/values/A${firstTrailingRow}:ZZ${lastTrailingRow}:clear`,
       {
         method: 'POST',
         headers: {

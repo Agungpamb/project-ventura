@@ -54,6 +54,7 @@ const InteractiveMap = lazy(() => import('./components/InteractiveMap'));
 const PetaBidangTanah = lazy(() => import('./components/PetaBidangTanah'));
 const SandingDataPanel = lazy(() => import('./components/SandingDataPanel'));
 const SandingEsdmPanel = lazy(() => import('./components/SandingEsdmPanel'));
+const QCPlantRepetitionPanel = lazy(() => import('./components/QCPlantRepetitionPanel'));
 const DaftarNominatifPanel = lazy(() => import('./components/DaftarNominatifPanel'));
 const ResumeProjectPanel = lazy(() => import('./components/ResumeProjectPanel'));
 const SuratInstansiPanel = lazy(() => import('./components/SuratInstansiPanel'));
@@ -62,7 +63,7 @@ import {
   RefreshCw, FileSpreadsheet, KeyRound, CheckSquare,
   Plus, User, UserCheck, Settings, Folder, Key, Eye, EyeOff, Lock, Unlock, Info, ShieldCheck, HelpCircle, Briefcase, Filter,
   Pin, Menu, Clock, LayoutGrid, Sun, Moon, Copy, Users, ExternalLink, Layers, Trash2, X, Globe, GitCompare,
-  CheckCircle2, AlertCircle, FileText, Landmark, Mail, Sparkles, BookOpen, Save, Download, Table, Edit3
+  CheckCircle2, AlertCircle, FileText, Landmark, Mail, Sparkles, BookOpen, Save, Download, Table, Edit3, Sprout
 } from 'lucide-react';
 
 const DEFAULT_PROJECTS: ProjectConfig[] = [
@@ -190,7 +191,7 @@ export default function App() {
   const location = useLocation();
 
   // Helper to map pathname to activeMenu
-  const getMenuFromPath = (pathname: string): 'dashboard' | 'nominatif' | 'input' | 'qc' | 'qc_sanding' | 'qc_sanding_esdm' | 'map' | 'map_span' | 'resume_project' | 'surat_instansi' | 'logs' | 'project' => {
+  const getMenuFromPath = (pathname: string): 'dashboard' | 'nominatif' | 'input' | 'qc' | 'qc_sanding' | 'qc_sanding_esdm' | 'qc_tanaman' | 'map' | 'map_span' | 'resume_project' | 'surat_instansi' | 'logs' | 'project' => {
     const cleanPath = pathname.replace(/^\/+/, '').split('/')[0] || '';
     switch (cleanPath) {
       case 'nominatif': return 'nominatif';
@@ -198,6 +199,7 @@ export default function App() {
       case 'qc': return 'qc';
       case 'sanding': return 'qc_sanding';
       case 'sanding-esdm': return 'qc_sanding_esdm';
+      case 'qc-tanaman': return 'qc_tanaman';
       case 'map': return 'map';
       case 'peta-bidang': return 'map_span';
       case 'resume-project':
@@ -219,6 +221,7 @@ export default function App() {
       case 'qc': return '/qc';
       case 'qc_sanding': return '/sanding';
       case 'qc_sanding_esdm': return '/sanding-esdm';
+      case 'qc_tanaman': return '/qc-tanaman';
       case 'map': return '/map';
       case 'map_span': return '/peta-bidang';
       case 'resume_project': return '/resume-project';
@@ -398,12 +401,12 @@ export default function App() {
   const [records, setRecords] = useState<LandRecord[]>([]);
   const [spreadsheetId, setSpreadsheetId] = useState<string | null>(null);
   const [projectUploadsFolderId, setProjectUploadsFolderId] = useState<string | null>(null);
-  const [activeMenu, setActiveMenuState] = useState<'dashboard' | 'nominatif' | 'input' | 'qc' | 'qc_sanding' | 'qc_sanding_esdm' | 'map' | 'map_span' | 'resume_project' | 'surat_instansi' | 'logs' | 'project'>(() => {
+  const [activeMenu, setActiveMenuState] = useState<'dashboard' | 'nominatif' | 'input' | 'qc' | 'qc_sanding' | 'qc_sanding_esdm' | 'qc_tanaman' | 'map' | 'map_span' | 'resume_project' | 'surat_instansi' | 'logs' | 'project'>(() => {
     return getMenuFromPath(window.location.pathname);
   });
 
   // Navigate function that syncs activeMenu state and URL
-  const setActiveMenu = useCallback((menu: 'dashboard' | 'nominatif' | 'input' | 'qc' | 'qc_sanding' | 'qc_sanding_esdm' | 'map' | 'map_span' | 'resume_project' | 'surat_instansi' | 'logs' | 'project') => {
+  const setActiveMenu = useCallback((menu: 'dashboard' | 'nominatif' | 'input' | 'qc' | 'qc_sanding' | 'qc_sanding_esdm' | 'qc_tanaman' | 'map' | 'map_span' | 'resume_project' | 'surat_instansi' | 'logs' | 'project') => {
     setActiveMenuState(menu);
     const targetPath = getPathFromMenu(menu);
     if (location.pathname !== targetPath) {
@@ -2654,9 +2657,9 @@ export default function App() {
   // Handle Batch Update of Records (e.g. from Merge / Gabung Bidang, Split / Pecah Bidang, or Delete / Hapus Bidang)
   const handleBatchUpdateRecords = async (newRecords: LandRecord[], logDetails: string) => {
     let activeToken = token;
-    if (!activeToken || activeToken === 'GUEST_BYPASS') {
+    if (!activeToken || activeToken === 'GUEST_BYPASS' || activeToken === 'IFRAME_OPERATOR_BYPASS') {
       const stored = typeof window !== 'undefined' ? sessionStorage.getItem('project_ventura_oauth_token') : null;
-      if (stored && stored !== 'GUEST_BYPASS') {
+      if (stored && stored !== 'GUEST_BYPASS' && stored !== 'IFRAME_OPERATOR_BYPASS') {
         activeToken = stored;
         setToken(stored);
       }
@@ -2666,7 +2669,12 @@ export default function App() {
       ? spreadsheetId
       : projects.find(p => p.id === activeProjectId)?.spreadsheetId;
 
-    const isOfflineOrGuest = !activeToken || activeToken === 'GUEST_BYPASS' || !targetSpreadsheetId || targetSpreadsheetId === 'guest_bypass';
+    const isOfflineOrGuest =
+      !activeToken ||
+      activeToken === 'GUEST_BYPASS' ||
+      activeToken === 'IFRAME_OPERATOR_BYPASS' ||
+      !targetSpreadsheetId ||
+      targetSpreadsheetId === 'guest_bypass';
 
     // Sort and assign clean sequential rowNumber (idx + 2)
     const sorted = [...newRecords].sort(compareLandRecords).map((r, idx) => ({
@@ -4442,7 +4450,41 @@ export default function App() {
                   <FileText className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
                   3.2. Sanding Data ESDM (PDF)
                 </button>
+
+                {/* Menu 3.3. QC Repetisi Tanaman Per Bidang */}
+                <button
+                  onClick={() => {
+                    setActiveMenu('qc_tanaman');
+                    if (!isSidebarPinned) setIsSidebarHovered(false);
+                  }}
+                  className={`w-full text-left pl-7 pr-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
+                    activeMenu === 'qc_tanaman' 
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-inner' 
+                      : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
+                  }`}
+                >
+                  <Sprout className="w-3.5 h-3.5 shrink-0 text-purple-400" />
+                  3.3. QC Repetisi Tanaman
+                </button>
               </>
+            )}
+
+            {/* Menu 3.3. QC Repetisi Tanaman (For FIELD role too) */}
+            {role === 'FIELD' && (
+              <button
+                onClick={() => {
+                  setActiveMenu('qc_tanaman');
+                  if (!isSidebarPinned) setIsSidebarHovered(false);
+                }}
+                className={`w-full text-left px-4 py-3 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 cursor-pointer ${
+                  activeMenu === 'qc_tanaman' 
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-inner' 
+                    : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
+                }`}
+              >
+                <Sprout className="w-4 h-4 shrink-0 text-purple-400" />
+                3.3. QC Repetisi Tanaman
+              </button>
             )}
 
             {/* Menu 4. Log Aktivitas - Admin only */}
@@ -5337,6 +5379,37 @@ export default function App() {
                     onSaveQC={handleUpdateRecord} 
                     onNavigateToSanding={() => setActiveMenu('qc_sanding')}
                     onNavigateToSandingEsdm={() => setActiveMenu('qc_sanding_esdm')}
+                    onNavigateToPlantQC={() => setActiveMenu('qc_tanaman')}
+                    projects={projects}
+                    activeProjectId={activeProjectId}
+                    activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
+                    onSwitchProject={(newId) => {
+                      setActiveProjectId(newId);
+                      localStorage.setItem('project_ventura_active_project_id', newId);
+                    }}
+                  />
+                )}
+
+                {activeMenu === 'qc_tanaman' && (role === 'ADMIN' || role === 'QC' || role === 'FIELD') && (
+                  <QCPlantRepetitionPanel
+                    records={records}
+                    role={role}
+                    activeProjectId={activeProjectId}
+                    activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
+                    projects={projects}
+                    onSwitchProject={(newId) => {
+                      setActiveProjectId(newId);
+                      localStorage.setItem('project_ventura_active_project_id', newId);
+                    }}
+                    onNavigateToQC={() => setActiveMenu('qc')}
+                    onNavigateToSanding={() => setActiveMenu('qc_sanding')}
+                    onNavigateToSandingEsdm={() => setActiveMenu('qc_sanding_esdm')}
+                    onNavigateToInput={(rec) => {
+                      setSelectedRecordForEdit(rec);
+                      setActiveMenu('input');
+                    }}
+                    onUpdateRecord={handleUpdateRecord}
+                    onBatchUpdateRecords={handleBatchUpdateRecords}
                   />
                 )}
 
