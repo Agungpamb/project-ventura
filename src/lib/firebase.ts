@@ -21,11 +21,16 @@ export const db = firestoreDb;
 
 export const provider = new GoogleAuthProvider();
 
-// Request scopes requested by the user
+// Request scopes requested by the user (including full drive scope so existing folders created via Android/Drive are accessible)
 provider.addScope('https://www.googleapis.com/auth/spreadsheets');
+provider.addScope('https://www.googleapis.com/auth/drive');
 provider.addScope('https://www.googleapis.com/auth/drive.file');
 provider.addScope('https://www.googleapis.com/auth/userinfo.email');
 provider.addScope('https://www.googleapis.com/auth/userinfo.profile');
+
+export const basicProvider = new GoogleAuthProvider();
+basicProvider.addScope('https://www.googleapis.com/auth/userinfo.email');
+basicProvider.addScope('https://www.googleapis.com/auth/userinfo.profile');
 
 // Flag to indicate if we are in the middle of a sign-in flow.
 let isSigningIn = false;
@@ -58,6 +63,21 @@ export const initAuth = (
       if (onAuthFailure) onAuthFailure();
     }
   });
+};
+
+// Standard Firebase Google Sign-In (Email & Profile only - works for ANY Gmail account without Google Cloud Console OAuth Test Users)
+export const basicGoogleSignIn = async (): Promise<{ user: User; accessToken: string }> => {
+  try {
+    isSigningIn = true;
+    const result = await signInWithPopup(auth, basicProvider);
+    cachedAccessToken = 'GUEST_BYPASS';
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('project_ventura_oauth_token', 'GUEST_BYPASS');
+    }
+    return { user: result.user, accessToken: 'GUEST_BYPASS' };
+  } finally {
+    isSigningIn = false;
+  }
 };
 
 // Must be called from a button click or user interaction

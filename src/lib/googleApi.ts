@@ -59,6 +59,13 @@ export async function fetchWithTimeout(
   timeoutMs: number = 30000,
   retryAuthCount: number = 0
 ): Promise<Response> {
+  // Auto-normalize if a full Google Sheets URL was accidentally passed as spreadsheetId
+  if (url.includes('sheets.googleapis.com/v4/spreadsheets/http')) {
+    url = url.replace(
+      /sheets\.googleapis\.com\/v4\/spreadsheets\/https?:\/\/[^/]+\/spreadsheets\/d\/(?!e\/)([a-zA-Z0-9_-]+)[^/]*(?:\/[^/?#]*)?/,
+      'sheets.googleapis.com/v4/spreadsheets/$1'
+    );
+  }
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -2662,5 +2669,942 @@ export async function fetchDriveGeoJSONFiles(
 
   return results;
 }
+
+export type ParcelFolderAuditStatus =
+  | 'SYNCED'             // DRIVE_FOLDER_ID sudah ada, folder valid di Drive, struktur & nama sudah pas, tidak ada duplikat
+  | 'NAME_MISMATCH'      // Folder ditemukan di Drive (dari ID DB atau di dalam Span), tetapi namanya belum sesuai <DESA>_<SPAN>_<NOBID>_<NAMA>
+  | 'DUPLICATE_FOLDERS'  // Ditemukan >1 folder kembar untuk bidang/Desa/Span yang sama di dalam jalur -> perlu digabungkan (merge)
+  | 'MISSING_DB_LINK'    // Folder sudah ada di Drive di dalam struktur Desa/Span, tetapi kolom DRIVE_FOLDER_ID di DB masih kosong
+  | 'MISSING_FOLDER'     // Kolom DRIVE_FOLDER_ID kosong dan belum ada folder untuk bidang ini -> perlu dibuat dari 0 ke dalam Desa/Span
+  | 'BROKEN_LINK';       // Kolom DRIVE_FOLDER_ID di DB ada isinya, tetapi tidak terbaca / terhapus di Drive (atau butuh izin akses penuh Drive)
+
+export interface ParcelFolderAuditItem {
+  record: LandRecord;
+  code: string;
+  desa: string;
+  span: string;
+  nobid: string;
+  nama: string;
+  expectedFolderName: string;
+  currentDriveFolderId: string;
+  currentDriveFolderName: string;
+  duplicateFolderIds: string[];
+  duplicateFolderNames: string[];
+  dbFolderValue: string;
+  status: ParcelFolderAuditStatus;
+  reason: string;
+}
+
+/**
+ * Normalizes a Desa folder name so "DESA KEBRAON", "KEBRAON", "DESA_KEBRAON" all match "KEBRAON".
+ */
+export function normalizeDesaFolderKey(folderOrDesaName: string): string {
+  const clean = sanitizeTextForDrive(folderOrDesaName || '');
+  return clean.replace(/^DESA_+/i, '').trim() || 'DESA_LAIN';
+}
+
+/**
+ * Normalizes a Span folder name so "SPAN T.23 - LLG1", "T.23 - LLG1", "SPAN T23_LLG1", "T23_LLG1" all match "T23_LLG1".
+ */
+export function normalizeSpanFolderKey(folderOrSpanName: string): string {
+  const clean = sanitizeTextForDrive(folderOrSpanName || '');
+  return clean.replace(/^SPAN_+/i, '').trim() || 'SPAN_LAIN';
+}
+
+/**
+ * Helper to list all non-trashed subfolders inside a specific Google Drive parent folder.
+ */
+async function listDriveSubfoldersInParent(
+  accessToken: string,
+  parentId: string
+): Promise<Array<{ id: string; name: string; parents?: string[]; appProperties?: Record<string, string> }>> {
+  const cleanParent = extractDriveFolderId(parentId);
+  if (!cleanParent) return [];
+  const allFolders: Array<{ id: string; name: string; parents?: string[]; appProperties?: Record<string, string> }> = [];
+  let pageToken = '';
+
+  do {
+    const query = `'${cleanParent}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=nextPageToken,files(id,name,parents,appProperties)&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+    const res = await fetchWithTimeout(url, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    if (!res.ok) {
+      await handleResponseError(res, 'Gagal membaca daftar subfolder di Google Drive');
+    }
+    const data = await res.json();
+    if (Array.isArray(data.files)) {
+      allFolders.push(...data.files);
+    }
+    pageToken = data.nextPageToken || '';
+  } while (pageToken);
+
+  return allFolders;
+}
+
+/**
+ * Helper to list ALL non-trashed children (both files and subfolders) inside a Drive folder.
+ */
+async function listAllDriveChildren(
+  accessToken: string,
+  parentId: string
+): Promise<Array<{ id: string; name: string; mimeType: string }>> {
+  const cleanParent = extractDriveFolderId(parentId);
+  if (!cleanParent) return [];
+  const items: Array<{ id: string; name: string; mimeType: string }> = [];
+  let pageToken = '';
+
+  do {
+    const query = `'${cleanParent}' in parents and trashed=false`;
+    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=nextPageToken,files(id,name,mimeType)&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+    const res = await fetchWithTimeout(url, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    if (!res.ok) break;
+    const data = await res.json();
+    if (Array.isArray(data.files)) {
+      items.push(...data.files);
+    }
+    pageToken = data.nextPageToken || '';
+  } while (pageToken);
+
+  return items;
+}
+
+/**
+ * Recursively merges all contents (files and subfolders) from `duplicateFolderId` into `primaryFolderId`,
+ * and moves the emptied `duplicateFolderId` to Trash so no duplicate folders remain in Google Drive.
+ */
+export async function mergeDriveFoldersRecursively(
+  accessToken: string,
+  primaryFolderId: string,
+  duplicateFolderId: string
+): Promise<boolean> {
+  if (!primaryFolderId || !duplicateFolderId || primaryFolderId === duplicateFolderId) return false;
+  try {
+    const dupChildren = await listAllDriveChildren(accessToken, duplicateFolderId);
+    const primChildren = await listAllDriveChildren(accessToken, primaryFolderId);
+
+    const primSubfolderMap = new Map<string, string>();
+    for (const pc of primChildren) {
+      if (pc.mimeType === 'application/vnd.google-apps.folder') {
+        primSubfolderMap.set(sanitizeTextForDrive(pc.name), pc.id);
+      }
+    }
+
+    for (const child of dupChildren) {
+      if (child.mimeType === 'application/vnd.google-apps.folder') {
+        const normKey = sanitizeTextForDrive(child.name);
+        const existingTargetSubId = primSubfolderMap.get(normKey);
+        if (existingTargetSubId && existingTargetSubId !== child.id) {
+          // Recursively merge matching subfolders (e.g. "1. Dokumentasi...", "2. Berkas", or Span folders)
+          await mergeDriveFoldersRecursively(accessToken, existingTargetSubId, child.id);
+          continue;
+        }
+      }
+
+      // Move file or non-colliding subfolder from duplicateFolderId into primaryFolderId
+      try {
+        await fetchWithTimeout(
+          `https://www.googleapis.com/drive/v3/files/${child.id}?addParents=${encodeURIComponent(primaryFolderId)}&removeParents=${encodeURIComponent(duplicateFolderId)}&supportsAllDrives=true`,
+          {
+            method: 'PATCH',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({})
+          },
+          15000
+        );
+      } catch (moveErr) {
+        console.warn(`Gagal memindahkan item ${child.name} saat penggabungan folder:`, moveErr);
+      }
+    }
+
+    // Trash the emptied duplicate folder
+    await fetchWithTimeout(
+      `https://www.googleapis.com/drive/v3/files/${duplicateFolderId}?supportsAllDrives=true`,
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ trashed: true })
+      },
+      10000
+    );
+    return true;
+  } catch (err) {
+    console.warn(`Gagal menggabungkan folder duplikat ${duplicateFolderId} ke ${primaryFolderId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Checks if a parcel folder name in Google Drive belongs to a given record (either by exact expected name,
+ * legacy ID-xxx_ prefix, or matching <DESA>_<SPAN>_<NOBID>_ prefix).
+ */
+function doesFolderMatchRecord(
+  folder: { id: string; name: string; appProperties?: Record<string, string> },
+  record: LandRecord,
+  expectedFolderName: string,
+  codePrefix: string,
+  exactCodeOnly: string
+): boolean {
+  const pfNameUpper = (folder.name || '').trim().toUpperCase();
+  if (pfNameUpper === expectedFolderName.toUpperCase()) return true;
+
+  const idUnikUpper = (record.ID_UNIK || '').trim().toUpperCase();
+  if (idUnikUpper && folder.appProperties?.idUnik?.toUpperCase() === idUnikUpper) return true;
+
+  const strippedRaw = pfNameUpper.replace(/^ID[-_][A-Z0-9]+_/i, '').replace(/^R\d+_/i, '');
+  const sanitizedStripped = sanitizeTextForDrive(strippedRaw);
+  if (sanitizedStripped === expectedFolderName.toUpperCase()) return true;
+  if (sanitizedStripped === exactCodeOnly.toUpperCase() || sanitizedStripped.startsWith(codePrefix.toUpperCase())) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Audits all target records following the exact 4-step workflow:
+ * 1. Check if DRIVE_FOLDER_ID already exists in DB -> inspect its actual Drive folder & parent Span/Desa structure.
+ * 2. Compare folder name with <DESA>_<SPAN>_<NOBID>_<NAMA>.
+ * 3. Detect duplicate folders with the same name/parcel in the Span/Jalur so they can be merged.
+ * 4. If DRIVE_FOLDER_ID is empty, check existing Desa & Span structure to see if the folder already exists or needs creation from 0.
+ */
+export async function auditProjectDriveFolders(
+  accessToken: string,
+  uploadsFolderId: string,
+  records: LandRecord[],
+  onProgress?: (current: number, total: number, message: string) => void
+): Promise<ParcelFolderAuditItem[]> {
+  let cleanUploadsRootId = extractDriveFolderId(uploadsFolderId);
+
+  // Maps to store discovered Desa, Span, and Parcel folders
+  const desaFoldersByNormKey = new Map<string, Array<{ id: string; name: string }>>();
+  const spanFoldersByDesaAndSpanKey = new Map<string, Array<{ id: string; name: string }>>();
+  const parcelFoldersBySpanId = new Map<string, Array<{ id: string; name: string; appProperties?: Record<string, string> }>>();
+  const directFolderMetaById = new Map<string, { id: string; name: string; parents?: string[]; trashed?: boolean }>();
+
+  // Step A: For records that ALREADY have DRIVE_FOLDER_ID in the database, inspect their folder directly first!
+  // This also discovers the true Span & Desa parent folders even if uploadsFolderId wasn't set or used custom Desa/Span names.
+  const recordsWithDbId = records.filter(r => (r.DRIVE_FOLDER_ID || '').trim() !== '');
+  for (let i = 0; i < recordsWithDbId.length; i++) {
+    const r = recordsWithDbId[i];
+    const cleanDbId = extractDriveFolderId((r.DRIVE_FOLDER_ID || '').trim());
+    if (!cleanDbId || directFolderMetaById.has(cleanDbId)) continue;
+
+    if (i % 5 === 0 || i === recordsWithDbId.length - 1) {
+      onProgress?.(
+        i + 1,
+        records.length,
+        `Memeriksa ID folder existing di Google Drive (${i + 1}/${recordsWithDbId.length})...`
+      );
+    }
+
+    try {
+      const checkRes = await fetchWithTimeout(
+        `https://www.googleapis.com/drive/v3/files/${cleanDbId}?fields=id,name,parents,trashed&supportsAllDrives=true`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        10000
+      );
+      if (checkRes.ok) {
+        const meta = await checkRes.json();
+        if (meta && meta.id && !meta.trashed) {
+          directFolderMetaById.set(cleanDbId, meta);
+          const parentSpanId = meta.parents?.[0];
+          if (parentSpanId && !parcelFoldersBySpanId.has(parentSpanId)) {
+            try {
+              const siblings = await listDriveSubfoldersInParent(accessToken, parentSpanId);
+              parcelFoldersBySpanId.set(parentSpanId, siblings);
+              for (const sib of siblings) {
+                if (!directFolderMetaById.has(sib.id)) {
+                  directFolderMetaById.set(sib.id, { id: sib.id, name: sib.name, parents: [parentSpanId] });
+                }
+              }
+              const desaKey = normalizeDesaFolderKey(r.DESA || 'DESA_LAIN');
+              const spanKey = normalizeSpanFolderKey(r.SPAN || 'SPAN_LAIN');
+              const compositeKey = `${desaKey}__${spanKey}`;
+              const existingSpans = spanFoldersByDesaAndSpanKey.get(compositeKey) || [];
+              if (!existingSpans.some(s => s.id === parentSpanId)) {
+                existingSpans.push({ id: parentSpanId, name: `SPAN ${spanKey}` });
+                spanFoldersByDesaAndSpanKey.set(compositeKey, existingSpans);
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // Step B: Scan uploadsFolderId hierarchy (Desa -> Span -> Parcel folders) using normalized Desa & Span keys
+  if (cleanUploadsRootId && cleanUploadsRootId !== 'guest_bypass') {
+    try {
+      onProgress?.(0, records.length, 'Memindai struktur folder Desa & Span di Google Drive...');
+      const desaFolders = await listDriveSubfoldersInParent(accessToken, cleanUploadsRootId);
+      for (const df of desaFolders) {
+        const normDesa = normalizeDesaFolderKey(df.name);
+        const list = desaFoldersByNormKey.get(normDesa) || [];
+        list.push({ id: df.id, name: df.name });
+        desaFoldersByNormKey.set(normDesa, list);
+      }
+
+      const targetDesaKeys = Array.from(new Set(records.map(r => normalizeDesaFolderKey(r.DESA || 'DESA_LAIN'))));
+      for (const desaKey of targetDesaKeys) {
+        const matchingDesaFolders = desaFoldersByNormKey.get(desaKey) || [];
+        for (const df of matchingDesaFolders) {
+          const spanFolders = await listDriveSubfoldersInParent(accessToken, df.id);
+          for (const sf of spanFolders) {
+            const normSpan = normalizeSpanFolderKey(sf.name);
+            const compositeKey = `${desaKey}__${normSpan}`;
+            const list = spanFoldersByDesaAndSpanKey.get(compositeKey) || [];
+            if (!list.some(existing => existing.id === sf.id)) {
+              list.push({ id: sf.id, name: sf.name });
+              spanFoldersByDesaAndSpanKey.set(compositeKey, list);
+            }
+          }
+        }
+      }
+
+      const targetCompositeKeys = Array.from(
+        new Set(
+          records.map(r => `${normalizeDesaFolderKey(r.DESA || 'DESA_LAIN')}__${normalizeSpanFolderKey(r.SPAN || 'SPAN_LAIN')}`)
+        )
+      );
+
+      for (const compKey of targetCompositeKeys) {
+        const matchingSpanFolders = spanFoldersByDesaAndSpanKey.get(compKey) || [];
+        for (const sf of matchingSpanFolders) {
+          if (!parcelFoldersBySpanId.has(sf.id)) {
+            const pFolders = await listDriveSubfoldersInParent(accessToken, sf.id);
+            parcelFoldersBySpanId.set(sf.id, pFolders);
+            for (const pf of pFolders) {
+              if (!directFolderMetaById.has(pf.id)) {
+                directFolderMetaById.set(pf.id, { id: pf.id, name: pf.name, parents: [sf.id] });
+              }
+            }
+          }
+        }
+      }
+    } catch (scanErr) {
+      console.warn('Peringatan saat memindai root folder proyek:', scanErr);
+    }
+  }
+
+  // Step C: Evaluate each record according to the 4-stage workflow
+  const auditResults: ParcelFolderAuditItem[] = [];
+
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
+    const expectedFolderName = buildSanitizedParcelFolderName(r);
+    const cleanDesa = normalizeDesaFolderKey(r.DESA || 'DESA_LAIN');
+    const cleanSpan = normalizeSpanFolderKey(r.SPAN || 'SPAN_LAIN');
+    const cleanNobid = sanitizeTextForDrive(r.NOBID || '001');
+    const codePrefix = `${cleanDesa}_${cleanSpan}_${cleanNobid}_`;
+    const exactCodeOnly = `${cleanDesa}_${cleanSpan}_${cleanNobid}`;
+    const compKey = `${cleanDesa}__${cleanSpan}`;
+
+    const rawDbVal = (r.DRIVE_FOLDER_ID || '').trim();
+    const cleanDbFolderId = rawDbVal ? extractDriveFolderId(rawDbVal) : '';
+
+    // Gather all candidate parcel folders in all Span folders for this Desa+Span
+    const candidateSpanFolders = spanFoldersByDesaAndSpanKey.get(compKey) || [];
+    const allSpanParcelFolders: Array<{ id: string; name: string; appProperties?: Record<string, string> }> = [];
+    const seenFolderIds = new Set<string>();
+
+    for (const sf of candidateSpanFolders) {
+      const pList = parcelFoldersBySpanId.get(sf.id) || [];
+      for (const pf of pList) {
+        if (!seenFolderIds.has(pf.id)) {
+          seenFolderIds.add(pf.id);
+          allSpanParcelFolders.push(pf);
+        }
+      }
+    }
+
+    // Find all folders in the Span that match this parcel (to detect duplicates!)
+    const matchingFoldersInSpan = allSpanParcelFolders.filter(pf =>
+      doesFolderMatchRecord(pf, r, expectedFolderName, codePrefix, exactCodeOnly)
+    );
+
+    let primaryFolder: { id: string; name: string } | null = null;
+    let duplicateFolders: Array<{ id: string; name: string }> = [];
+    let dbIdBroken = false;
+
+    if (cleanDbFolderId) {
+      const directMeta = directFolderMetaById.get(cleanDbFolderId);
+      if (directMeta && !directMeta.trashed) {
+        primaryFolder = { id: directMeta.id, name: directMeta.name };
+        duplicateFolders = matchingFoldersInSpan.filter(mf => mf.id !== primaryFolder!.id);
+      } else if (matchingFoldersInSpan.length > 0) {
+        // DB ID was old/moved, but we found the parcel's folder inside the Span!
+        primaryFolder = matchingFoldersInSpan[0];
+        duplicateFolders = matchingFoldersInSpan.slice(1);
+      } else {
+        dbIdBroken = true;
+      }
+    } else if (matchingFoldersInSpan.length > 0) {
+      // No DB ID yet, but folder(s) already exist in the Span!
+      const exactMatch = matchingFoldersInSpan.find(mf => mf.name.trim() === expectedFolderName);
+      primaryFolder = exactMatch || matchingFoldersInSpan[0];
+      duplicateFolders = matchingFoldersInSpan.filter(mf => mf.id !== primaryFolder!.id);
+    }
+
+    const dupIds = duplicateFolders.map(d => d.id);
+    const dupNames = duplicateFolders.map(d => d.name);
+
+    if (primaryFolder) {
+      const isNameExact = primaryFolder.name.trim() === expectedFolderName;
+      const isDbIdSynced = cleanDbFolderId === primaryFolder.id;
+
+      if (dupIds.length > 0) {
+        auditResults.push({
+          record: r,
+          code: r.CODE || exactCodeOnly,
+          desa: r.DESA || '-',
+          span: r.SPAN || '-',
+          nobid: r.NOBID || '-',
+          nama: r.NAMA || '-',
+          expectedFolderName,
+          currentDriveFolderId: primaryFolder.id,
+          currentDriveFolderName: primaryFolder.name,
+          duplicateFolderIds: dupIds,
+          duplicateFolderNames: dupNames,
+          dbFolderValue: rawDbVal,
+          status: 'DUPLICATE_FOLDERS',
+          reason: `Ditemukan ${dupIds.length + 1} folder kembar di jalur ini (${[primaryFolder.name, ...dupNames].join(', ')}). Akan digabungkan menjadi 1 folder "${expectedFolderName}".`
+        });
+      } else if (!isNameExact) {
+        auditResults.push({
+          record: r,
+          code: r.CODE || exactCodeOnly,
+          desa: r.DESA || '-',
+          span: r.SPAN || '-',
+          nobid: r.NOBID || '-',
+          nama: r.NAMA || '-',
+          expectedFolderName,
+          currentDriveFolderId: primaryFolder.id,
+          currentDriveFolderName: primaryFolder.name,
+          duplicateFolderIds: [],
+          duplicateFolderNames: [],
+          dbFolderValue: rawDbVal,
+          status: 'NAME_MISMATCH',
+          reason: `Nama folder di Drive ("${primaryFolder.name}") berbeda dengan data database ("${expectedFolderName}").`
+        });
+      } else if (!isDbIdSynced) {
+        auditResults.push({
+          record: r,
+          code: r.CODE || exactCodeOnly,
+          desa: r.DESA || '-',
+          span: r.SPAN || '-',
+          nobid: r.NOBID || '-',
+          nama: r.NAMA || '-',
+          expectedFolderName,
+          currentDriveFolderId: primaryFolder.id,
+          currentDriveFolderName: primaryFolder.name,
+          duplicateFolderIds: [],
+          duplicateFolderNames: [],
+          dbFolderValue: rawDbVal,
+          status: 'MISSING_DB_LINK',
+          reason: 'Folder sudah ada di struktur Desa & Span Google Drive, tinggal menautkan ID/Link ke database.'
+        });
+      } else {
+        auditResults.push({
+          record: r,
+          code: r.CODE || exactCodeOnly,
+          desa: r.DESA || '-',
+          span: r.SPAN || '-',
+          nobid: r.NOBID || '-',
+          nama: r.NAMA || '-',
+          expectedFolderName,
+          currentDriveFolderId: primaryFolder.id,
+          currentDriveFolderName: primaryFolder.name,
+          duplicateFolderIds: [],
+          duplicateFolderNames: [],
+          dbFolderValue: rawDbVal,
+          status: 'SYNCED',
+          reason: 'ID Folder di database, struktur folder, dan nama <DESA>_<SPAN>_<NOBID>_<NAMA> sudah 100% sesuai.'
+        });
+      }
+    } else if (dbIdBroken) {
+      auditResults.push({
+        record: r,
+        code: r.CODE || exactCodeOnly,
+        desa: r.DESA || '-',
+        span: r.SPAN || '-',
+        nobid: r.NOBID || '-',
+        nama: r.NAMA || '-',
+        expectedFolderName,
+        currentDriveFolderId: cleanDbFolderId,
+        currentDriveFolderName: `ID: ${cleanDbFolderId.slice(0, 12)}... (Tidak Terbaca / Terhapus)`,
+        duplicateFolderIds: [],
+        duplicateFolderNames: [],
+        dbFolderValue: rawDbVal,
+        status: 'BROKEN_LINK',
+        reason: 'ID Folder ada di database, tetapi belum terbaca (klik "Perbarui Izin Akses Penuh Drive" jika folder dibuat dari luar web app, atau proses untuk buat/gabung ke Desa & Span).'
+      });
+    } else {
+      auditResults.push({
+        record: r,
+        code: r.CODE || exactCodeOnly,
+        desa: r.DESA || '-',
+        span: r.SPAN || '-',
+        nobid: r.NOBID || '-',
+        nama: r.NAMA || '-',
+        expectedFolderName,
+        currentDriveFolderId: '',
+        currentDriveFolderName: '(Belum Ada ID Folder)',
+        duplicateFolderIds: [],
+        duplicateFolderNames: [],
+        dbFolderValue: '',
+        status: 'MISSING_FOLDER',
+        reason: 'Belum ada ID Folder di database. Akan dicek struktur Desa & Span yang sudah ada lalu dibuatkan/digabungkan otomatis.'
+      });
+    }
+  }
+
+  return auditResults;
+}
+
+/**
+ * Ensures the Desa and Span folder hierarchy exists under `uploadsRootId`,
+ * automatically merging any duplicate Desa or Span folders with the same normalized name!
+ */
+export async function consolidateAndResolveDesaSpanHierarchy(
+  accessToken: string,
+  uploadsRootId: string,
+  desaRaw: string,
+  spanRaw: string,
+  knownSpanFolderId?: string
+): Promise<{
+  desaFolderId: string;
+  spanFolderId: string;
+  mergedDesaFolders: number;
+  mergedSpanFolders: number;
+}> {
+  const cleanDesaKey = normalizeDesaFolderKey(desaRaw || 'DESA_LAIN');
+  const cleanSpanKey = normalizeSpanFolderKey(spanRaw || 'SPAN_LAIN');
+  const targetDesaFolderName = `DESA ${cleanDesaKey}`;
+  const targetSpanFolderName = `SPAN ${cleanSpanKey}`;
+
+  let mergedDesaFolders = 0;
+  let mergedSpanFolders = 0;
+
+  // If we already know the exact Span folder ID from an existing record in the same Desa+Span and uploadsRootId is missing
+  const cleanRoot = extractDriveFolderId(uploadsRootId);
+  if (!cleanRoot || cleanRoot === 'guest_bypass') {
+    if (knownSpanFolderId) {
+      return {
+        desaFolderId: '',
+        spanFolderId: knownSpanFolderId,
+        mergedDesaFolders: 0,
+        mergedSpanFolders: 0
+      };
+    }
+    throw new Error('ID Folder Utama Berkas Proyek (uploadsFolderId) belum diatur di Manajemen Proyek.');
+  }
+
+  // 1. Check all existing Desa folders in cleanRoot and merge duplicates for cleanDesaKey
+  const allDesaFolders = await listDriveSubfoldersInParent(accessToken, cleanRoot);
+  const matchingDesas = allDesaFolders.filter(df => normalizeDesaFolderKey(df.name) === cleanDesaKey);
+
+  let desaFolderId = '';
+  if (matchingDesas.length === 0) {
+    desaFolderId = await findOrCreateFolder(accessToken, targetDesaFolderName, cleanRoot);
+  } else {
+    // Pick the one already named "DESA <DESA>" if present, else first
+    const primaryDesa = matchingDesas.find(d => d.name.trim().toUpperCase() === targetDesaFolderName) || matchingDesas[0];
+    desaFolderId = primaryDesa.id;
+    if (primaryDesa.name.trim() !== targetDesaFolderName) {
+      await renameFolderInDrive(accessToken, desaFolderId, targetDesaFolderName);
+    }
+    // Merge any duplicate Desa folders into primaryDesa
+    for (const dupDesa of matchingDesas) {
+      if (dupDesa.id !== desaFolderId) {
+        const merged = await mergeDriveFoldersRecursively(accessToken, desaFolderId, dupDesa.id);
+        if (merged) mergedDesaFolders++;
+      }
+    }
+  }
+
+  // 2. Check all existing Span folders inside desaFolderId and merge duplicates for cleanSpanKey
+  const allSpanFolders = await listDriveSubfoldersInParent(accessToken, desaFolderId);
+  const matchingSpans = allSpanFolders.filter(sf => normalizeSpanFolderKey(sf.name) === cleanSpanKey);
+
+  let spanFolderId = '';
+  if (matchingSpans.length === 0) {
+    spanFolderId = await findOrCreateFolder(accessToken, targetSpanFolderName, desaFolderId);
+  } else {
+    const primarySpan = matchingSpans.find(s => s.name.trim().toUpperCase() === targetSpanFolderName) || matchingSpans[0];
+    spanFolderId = primarySpan.id;
+    if (primarySpan.name.trim() !== targetSpanFolderName) {
+      await renameFolderInDrive(accessToken, spanFolderId, targetSpanFolderName);
+    }
+    // Merge any duplicate Span folders into primarySpan
+    for (const dupSpan of matchingSpans) {
+      if (dupSpan.id !== spanFolderId) {
+        const merged = await mergeDriveFoldersRecursively(accessToken, spanFolderId, dupSpan.id);
+        if (merged) mergedSpanFolders++;
+      }
+    }
+  }
+
+  return {
+    desaFolderId,
+    spanFolderId,
+    mergedDesaFolders,
+    mergedSpanFolders
+  };
+}
+
+/**
+ * Executes the complete 4-stage unified workflow on the selected (checked) records:
+ * 1. Check if DB already has DRIVE_FOLDER_ID -> verify folder structure & compare name against <DESA>_<SPAN>_<NOBID>_<NAMA>.
+ * 2. If name differs, rename it automatically.
+ * 3. If duplicate folders exist in the same Desa/Span/Parcel, merge their contents into 1 folder and trash the empty duplicate.
+ * 4. If DB does NOT have DRIVE_FOLDER_ID, check existing Desa & Span structure (join/merge if already existing), then create from 0 if needed and save ID/Link to DB.
+ */
+export async function executeUnifiedDriveFolderWorkflow(
+  accessToken: string,
+  uploadsFolderId: string,
+  allRecords: LandRecord[],
+  selectedCodes: Set<string>,
+  options?: {
+    createSubfolders?: boolean;
+    linkFormat?: 'URL' | 'ID';
+    auditCache?: ParcelFolderAuditItem[] | null;
+    onProgress?: (current: number, total: number, message: string) => void;
+  }
+): Promise<{
+  updatedRecords: LandRecord[];
+  renamedCount: number;
+  mergedFolderCount: number;
+  createdFromZeroCount: number;
+  linkedExistingCount: number;
+  verifiedSyncedCount: number;
+  failedCount: number;
+}> {
+  const createSubfolders = options?.createSubfolders ?? true;
+  const linkFormat = options?.linkFormat ?? 'ID';
+  const cleanUploadsRootId = extractDriveFolderId(uploadsFolderId);
+
+  const updatedRecords = [...allRecords];
+  const targetIndices: number[] = [];
+
+  updatedRecords.forEach((r, idx) => {
+    const codeKey = r.CODE || `${normalizeDesaFolderKey(r.DESA)}_${normalizeSpanFolderKey(r.SPAN)}_${sanitizeTextForDrive(r.NOBID)}`;
+    if (selectedCodes.has(codeKey) || selectedCodes.has(r.ID_UNIK)) {
+      targetIndices.push(idx);
+    }
+  });
+
+  let renamedCount = 0;
+  let mergedFolderCount = 0;
+  let createdFromZeroCount = 0;
+  let linkedExistingCount = 0;
+  let verifiedSyncedCount = 0;
+  let failedCount = 0;
+
+  // Cache consolidated Desa+Span folder IDs so each Desa+Span is consolidated once per batch
+  const resolvedSpanCache = new Map<string, string>();
+
+  // Also discover any known parent Span folder IDs from auditCache or records with existing DRIVE_FOLDER_ID
+  const auditByCode = new Map<string, ParcelFolderAuditItem>();
+  if (options?.auditCache) {
+    for (const item of options.auditCache) {
+      auditByCode.set(item.code, item);
+      if (item.record.CODE) auditByCode.set(item.record.CODE, item);
+    }
+  }
+
+  for (let step = 0; step < targetIndices.length; step++) {
+    const recIdx = targetIndices[step];
+    const r = updatedRecords[recIdx];
+    const expectedFolderName = buildSanitizedParcelFolderName(r);
+    const cleanDesa = normalizeDesaFolderKey(r.DESA || 'DESA_LAIN');
+    const cleanSpan = normalizeSpanFolderKey(r.SPAN || 'SPAN_LAIN');
+    const cleanNobid = sanitizeTextForDrive(r.NOBID || '001');
+    const codePrefix = `${cleanDesa}_${cleanSpan}_${cleanNobid}_`;
+    const exactCodeOnly = `${cleanDesa}_${cleanSpan}_${cleanNobid}`;
+    const compKey = `${cleanDesa}__${cleanSpan}`;
+
+    options?.onProgress?.(
+      step + 1,
+      targetIndices.length,
+      `Memproses (${step + 1}/${targetIndices.length}): ${expectedFolderName}...`
+    );
+
+    try {
+      const rawDbVal = (r.DRIVE_FOLDER_ID || '').trim();
+      const cleanDbId = rawDbVal ? extractDriveFolderId(rawDbVal) : '';
+
+      // 1. First, if the record ALREADY has a DRIVE_FOLDER_ID in the database, check it directly in Google Drive!
+      let existingDirectMeta: { id: string; name: string; parents?: string[]; trashed?: boolean } | null = null;
+      if (cleanDbId) {
+        try {
+          const checkRes = await fetchWithTimeout(
+            `https://www.googleapis.com/drive/v3/files/${cleanDbId}?fields=id,name,parents,trashed&supportsAllDrives=true`,
+            { headers: { Authorization: `Bearer ${accessToken}` } },
+            10000
+          );
+          if (checkRes.ok) {
+            const meta = await checkRes.json();
+            if (meta && meta.id && !meta.trashed) {
+              existingDirectMeta = meta;
+            }
+          }
+        } catch {}
+      }
+
+      // 2. Resolve & Consolidate Desa -> Span structure (merging any duplicate Desa/Span folders if uploadsRootId is available)
+      let spanFolderId = resolvedSpanCache.get(compKey) || '';
+      if (!spanFolderId) {
+        const knownParentSpanId = existingDirectMeta?.parents?.[0];
+        if (cleanUploadsRootId && cleanUploadsRootId !== 'guest_bypass') {
+          const hierarchy = await consolidateAndResolveDesaSpanHierarchy(
+            accessToken,
+            cleanUploadsRootId,
+            r.DESA,
+            r.SPAN,
+            knownParentSpanId
+          );
+          spanFolderId = hierarchy.spanFolderId;
+          mergedFolderCount += hierarchy.mergedDesaFolders + hierarchy.mergedSpanFolders;
+          resolvedSpanCache.set(compKey, spanFolderId);
+        } else if (knownParentSpanId) {
+          spanFolderId = knownParentSpanId;
+          resolvedSpanCache.set(compKey, spanFolderId);
+        }
+      }
+
+      // 3. List all parcel folders inside spanFolderId to check for existing or duplicate parcel folders
+      const spanParcelFolders = spanFolderId
+        ? await listDriveSubfoldersInParent(accessToken, spanFolderId)
+        : [];
+
+      const matchingInSpan = spanParcelFolders.filter(pf =>
+        doesFolderMatchRecord(pf, r, expectedFolderName, codePrefix, exactCodeOnly)
+      );
+
+      // CASE A: Database ALREADY has a valid DRIVE_FOLDER_ID (existingDirectMeta != null)
+      if (existingDirectMeta) {
+        const primaryId = existingDirectMeta.id;
+        let currentName = existingDirectMeta.name || '';
+
+        // If the folder is not inside our consolidated spanFolderId yet, move it into spanFolderId
+        if (spanFolderId && existingDirectMeta.parents && !existingDirectMeta.parents.includes(spanFolderId)) {
+          try {
+            const oldParent = existingDirectMeta.parents[0];
+            await fetchWithTimeout(
+              `https://www.googleapis.com/drive/v3/files/${primaryId}?addParents=${encodeURIComponent(spanFolderId)}&removeParents=${encodeURIComponent(oldParent)}&supportsAllDrives=true`,
+              {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+              },
+              12000
+            );
+          } catch {}
+        }
+
+        // Merge any duplicate parcel folders found in the Span into primaryId
+        const duplicates = matchingInSpan.filter(mf => mf.id !== primaryId);
+        for (const dup of duplicates) {
+          const merged = await mergeDriveFoldersRecursively(accessToken, primaryId, dup.id);
+          if (merged) mergedFolderCount++;
+        }
+
+        // Compare folder name with <DESA>_<SPAN>_<NOBID>_<NAMA> and rename if different
+        if (currentName.trim() !== expectedFolderName) {
+          const ok = await renameFolderInDrive(accessToken, primaryId, expectedFolderName);
+          if (ok) renamedCount++;
+        } else if (duplicates.length === 0) {
+          verifiedSyncedCount++;
+        }
+
+        // Ensure 4 standard subfolders exist inside primaryId
+        if (createSubfolders) {
+          for (const subCat of PARCEL_SUBFOLDERS) {
+            await findOrCreateFolder(accessToken, subCat, primaryId);
+          }
+        }
+
+        const finalDbVal =
+          rawDbVal ||
+          (linkFormat === 'URL' ? `https://drive.google.com/drive/folders/${primaryId}` : primaryId);
+
+        updatedRecords[recIdx] = {
+          ...r,
+          DRIVE_FOLDER_ID: finalDbVal,
+          _lastModified: Date.now()
+        };
+        continue;
+      }
+
+      // CASE B: Database does NOT have a valid DRIVE_FOLDER_ID (or old ID was broken),
+      // BUT matching folder(s) ALREADY exist inside the Desa -> Span structure!
+      if (matchingInSpan.length > 0) {
+        const exactMatch = matchingInSpan.find(mf => mf.name.trim() === expectedFolderName);
+        const primaryFolder = exactMatch || matchingInSpan[0];
+        const primaryId = primaryFolder.id;
+
+        // Merge any duplicates in the Span into primaryId
+        const duplicates = matchingInSpan.filter(mf => mf.id !== primaryId);
+        for (const dup of duplicates) {
+          const merged = await mergeDriveFoldersRecursively(accessToken, primaryId, dup.id);
+          if (merged) mergedFolderCount++;
+        }
+
+        // Rename if name does not match expected <DESA>_<SPAN>_<NOBID>_<NAMA>
+        if (primaryFolder.name.trim() !== expectedFolderName) {
+          const ok = await renameFolderInDrive(accessToken, primaryId, expectedFolderName);
+          if (ok) renamedCount++;
+        }
+
+        // Ensure 4 standard subfolders exist inside primaryId
+        if (createSubfolders) {
+          for (const subCat of PARCEL_SUBFOLDERS) {
+            await findOrCreateFolder(accessToken, subCat, primaryId);
+          }
+        }
+
+        const finalDbVal =
+          linkFormat === 'URL' ? `https://drive.google.com/drive/folders/${primaryId}` : primaryId;
+
+        updatedRecords[recIdx] = {
+          ...r,
+          DRIVE_FOLDER_ID: finalDbVal,
+          _lastModified: Date.now()
+        };
+        linkedExistingCount++;
+        continue;
+      }
+
+      // CASE C: Workflow Terakhir — No folder exists yet -> Create from 0 inside the consolidated Desa -> Span structure!
+      if (!spanFolderId) {
+        throw new Error('Folder Span tidak dapat ditemukan atau dibuat. Pastikan ID Folder Utama Berkas Proyek sudah diisi.');
+      }
+
+      const newParcelFolderId = await findOrCreateFolder(accessToken, expectedFolderName, spanFolderId, r.ID_UNIK);
+      if (createSubfolders) {
+        for (const subCat of PARCEL_SUBFOLDERS) {
+          await findOrCreateFolder(accessToken, subCat, newParcelFolderId);
+        }
+      }
+
+      const finalDbVal =
+        linkFormat === 'URL' ? `https://drive.google.com/drive/folders/${newParcelFolderId}` : newParcelFolderId;
+
+      updatedRecords[recIdx] = {
+        ...r,
+        DRIVE_FOLDER_ID: finalDbVal,
+        _lastModified: Date.now()
+      };
+      createdFromZeroCount++;
+    } catch (err) {
+      console.error(`Gagal memproses workflow folder untuk ${expectedFolderName}:`, err);
+      failedCount++;
+    }
+  }
+
+  return {
+    updatedRecords,
+    renamedCount,
+    mergedFolderCount,
+    createdFromZeroCount,
+    linkedExistingCount,
+    verifiedSyncedCount,
+    failedCount
+  };
+}
+
+/**
+ * Legacy wrapper for batch provisioning missing folders
+ */
+export async function batchProvisionMissingParcelFolders(
+  accessToken: string,
+  uploadsFolderId: string,
+  allRecords: LandRecord[],
+  options?: {
+    targetSubsetCodes?: Set<string>;
+    createSubfolders?: boolean;
+    linkFormat?: 'URL' | 'ID';
+    onlyEmptyDb?: boolean;
+    onProgress?: (current: number, total: number, message: string) => void;
+  }
+): Promise<{
+  updatedRecords: LandRecord[];
+  createdCount: number;
+  SkippedExistingCount: number;
+  failedCount: number;
+}> {
+  const onlyEmptyDb = options?.onlyEmptyDb ?? true;
+  const selectedCodes = new Set<string>();
+  let skippedExistingCount = 0;
+
+  allRecords.forEach(r => {
+    if (options?.targetSubsetCodes && !options.targetSubsetCodes.has(r.CODE)) return;
+    if (onlyEmptyDb && (r.DRIVE_FOLDER_ID || '').trim() !== '') {
+      skippedExistingCount++;
+      return;
+    }
+    selectedCodes.add(r.CODE || r.ID_UNIK);
+  });
+
+  const res = await executeUnifiedDriveFolderWorkflow(accessToken, uploadsFolderId, allRecords, selectedCodes, {
+    createSubfolders: options?.createSubfolders,
+    linkFormat: options?.linkFormat,
+    onProgress: options?.onProgress
+  });
+
+  return {
+    updatedRecords: res.updatedRecords,
+    createdCount: res.createdFromZeroCount + res.linkedExistingCount,
+    SkippedExistingCount: skippedExistingCount,
+    failedCount: res.failedCount
+  };
+}
+
+/**
+ * Legacy wrapper for batch syncing mismatched folders
+ */
+export async function batchSyncMismatchedParcelFolders(
+  accessToken: string,
+  uploadsFolderId: string,
+  allRecords: LandRecord[],
+  itemsToFix: ParcelFolderAuditItem[],
+  options?: {
+    linkFormat?: 'URL' | 'ID';
+    createSubfoldersForBroken?: boolean;
+    onProgress?: (current: number, total: number, message: string) => void;
+  }
+): Promise<{
+  updatedRecords: LandRecord[];
+  renamedCount: number;
+  linkedCount: number;
+  recreatedCount: number;
+  failedCount: number;
+}> {
+  const selectedCodes = new Set<string>(itemsToFix.map(i => i.record.CODE || i.code));
+  const res = await executeUnifiedDriveFolderWorkflow(accessToken, uploadsFolderId, allRecords, selectedCodes, {
+    createSubfolders: options?.createSubfoldersForBroken,
+    linkFormat: options?.linkFormat,
+    auditCache: itemsToFix,
+    onProgress: options?.onProgress
+  });
+
+  return {
+    updatedRecords: res.updatedRecords,
+    renamedCount: res.renamedCount + res.mergedFolderCount,
+    linkedCount: res.linkedExistingCount,
+    recreatedCount: res.createdFromZeroCount,
+    failedCount: res.failedCount
+  };
+}
+
+
 
 

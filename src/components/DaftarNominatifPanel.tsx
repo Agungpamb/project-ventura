@@ -3,7 +3,7 @@ import {
   FileSpreadsheet, Printer, Download, Filter, Search, 
   FileText, Edit3, Layers, User, MapPin, CheckCircle2, 
   Clock, AlertCircle, Building2, Trees, RefreshCw, X, ChevronRight, Eye,
-  ArrowRight, Zap, GitMerge, Scissors, CheckSquare, Square, ShieldAlert, Trash2, Briefcase
+  ArrowRight, Zap, GitMerge, Scissors, CheckSquare, Square, ShieldAlert, Trash2, Briefcase, FolderSync
 } from 'lucide-react';
 import { type LandRecord, type ProjectConfig } from '../types';
 import XLSX from 'xlsx-js-style';
@@ -11,6 +11,7 @@ import MergeParcelModal from './MergeParcelModal';
 import SplitParcelModal from './SplitParcelModal';
 import QuickParcelPickerModal from './QuickParcelPickerModal';
 import DeleteParcelModal from './DeleteParcelModal';
+import DriveFolderSyncModal from './DriveFolderSyncModal';
 
 interface DaftarNominatifPanelProps {
   records: LandRecord[];
@@ -18,6 +19,9 @@ interface DaftarNominatifPanelProps {
   activeProjectName?: string;
   projects?: ProjectConfig[];
   activeProjectId?: string;
+  uploadsFolderId?: string;
+  accessToken?: string | null;
+  onRequestGoogleAuth?: () => Promise<string | null>;
   onSwitchProject?: (newId: string) => void;
   onNavigateToInput?: (record: LandRecord) => void;
   onBatchUpdateRecords?: (newRecords: LandRecord[], logDetails: string) => Promise<void>;
@@ -30,6 +34,9 @@ export default function DaftarNominatifPanel({
   activeProjectName = 'SUTT 150 KV JELOK - SANGGRAHAN',
   projects,
   activeProjectId,
+  uploadsFolderId,
+  accessToken,
+  onRequestGoogleAuth,
   onSwitchProject,
   onNavigateToInput,
   onBatchUpdateRecords,
@@ -61,6 +68,7 @@ export default function DaftarNominatifPanel({
   const [mergePair, setMergePair] = useState<[LandRecord, LandRecord] | null>(null);
   const [splitTarget, setSplitTarget] = useState<LandRecord | null>(null);
   const [recordToDelete, setRecordToDelete] = useState<LandRecord | null>(null);
+  const [isDriveSyncModalOpen, setIsDriveSyncModalOpen] = useState<boolean>(false);
 
   // Toggle selection for a record
   const toggleSelectRecord = (record: LandRecord) => {
@@ -959,6 +967,24 @@ export default function DaftarNominatifPanel({
 
           {/* Top Action Buttons */}
           <div className="flex flex-wrap items-center gap-2 self-start md:self-auto shrink-0">
+            {/* Tombol Khusus Admin: Generate Folder Inject & Cek Sinkronisasi Folder Drive */}
+            {role === 'ADMIN' && (
+              <button
+                type="button"
+                onClick={() => setIsDriveSyncModalOpen(true)}
+                className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 text-xs font-black rounded-xl transition-all shadow-md shadow-amber-500/20 border border-amber-300/40 flex items-center gap-2 cursor-pointer"
+                title="Khusus Admin: Buat otomatis folder Drive untuk data inject yang masih kosong & cek kesesuaian nama folder Drive dengan Database"
+              >
+                <FolderSync className="w-4 h-4 text-slate-950" />
+                <span>Otomatisasi & Cek Folder Drive</span>
+                {records.filter(r => !(r.DRIVE_FOLDER_ID || '').trim()).length > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-slate-950 text-amber-300 text-[10px] font-black">
+                    {records.filter(r => !(r.DRIVE_FOLDER_ID || '').trim()).length} Kosong
+                  </span>
+                )}
+              </button>
+            )}
+
             {/* Tombol Gabung Bidang (Merge) */}
             <button
               onClick={() => {
@@ -2071,6 +2097,31 @@ export default function DaftarNominatifPanel({
               return next;
             });
             setRecordToDelete(null);
+          }}
+        />
+      )}
+
+      {/* MODAL OTOMATISASI & SINKRONISASI FOLDER GOOGLE DRIVE (KHUSUS ADMIN) */}
+      {role === 'ADMIN' && isDriveSyncModalOpen && (
+        <DriveFolderSyncModal
+          isOpen={isDriveSyncModalOpen}
+          onClose={() => setIsDriveSyncModalOpen(false)}
+          records={records}
+          activeProjectName={activeProjectName}
+          uploadsFolderId={
+            uploadsFolderId ||
+            projects?.find(p => p.id === activeProjectId)?.uploadsFolderId ||
+            projects?.find(p => p.id === activeProjectId)?.folderId ||
+            ''
+          }
+          accessToken={accessToken || null}
+          initialDesa={selectedDesa && selectedDesa !== '__ALL__' ? selectedDesa : ''}
+          initialSpan={selectedSpan && selectedSpan !== '__ALL__' ? selectedSpan : ''}
+          onRequestGoogleAuth={onRequestGoogleAuth}
+          onSaveUpdatedRecords={async (newRecords, logSummary) => {
+            if (onBatchUpdateRecords) {
+              await onBatchUpdateRecords(newRecords, logSummary);
+            }
           }}
         />
       )}

@@ -18,6 +18,12 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+  // Allow Firebase OAuth popups to communicate cleanly back to the main window
+  app.use((req, res, next) => {
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+    next();
+  });
+
   // CORS headers for all API routes
   app.use('/api', (req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');

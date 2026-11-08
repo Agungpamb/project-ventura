@@ -319,6 +319,22 @@ export default function App() {
     loadProjectsFromCloud();
   };
 
+  // Direct Operator / Admin PIN Bypass Login (for Iframe Preview where Google OAuth Popup is blocked by browser storage partitioning)
+  const handleDirectOperatorBypassLogin = () => {
+    localStorage.setItem('project_ventura_guest_bypass', 'true');
+    setUser({
+      uid: 'operator-iframe-user',
+      displayName: 'Operator / Admin',
+      email: 'operator@projectventura.com',
+      photoURL: '',
+      emailVerified: true,
+    } as any);
+    setToken('IFRAME_OPERATOR_BYPASS');
+    setLoginRole('ADMIN');
+    loadProjectsFromCloud();
+    loadOperatorsFromCloud();
+  };
+
   // Role based access control (RBAC) states
   const [role, setRole] = useState<'ADMIN' | 'FIELD' | 'QC' | 'GUEST' | null>(() => {
     return (localStorage.getItem('project_ventura_role') as any) || null;
@@ -1086,7 +1102,11 @@ export default function App() {
       console.warn("Login attempt completed with status:", err?.code || err?.message || err);
       const errStr = err.message || String(err);
       const isPopupBlocked = errStr.includes('popup-blocked') || err.code === 'auth/popup-blocked';
-      const isPopupCancelled = errStr.includes('cancelled-popup-request') || err.code === 'auth/cancelled-popup-request';
+      const isPopupCancelled =
+        errStr.includes('cancelled-popup-request') ||
+        errStr.includes('popup-closed-by-user') ||
+        err.code === 'auth/cancelled-popup-request' ||
+        err.code === 'auth/popup-closed-by-user';
       const isUnauthorizedDomain = errStr.includes('unauthorized-domain') || err.code === 'auth/unauthorized-domain';
       
       if (isUnauthorizedDomain) {
@@ -1113,51 +1133,70 @@ export default function App() {
                 Salin Domain
               </button>
             </div>
-            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+            <div className="flex flex-col gap-2 pt-1">
               <button
                 type="button"
-                onClick={handleGuestBypassLogin}
-                className="inline-flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] px-3.5 py-2 rounded-xl transition-all w-full cursor-pointer shadow-md"
+                onClick={handleDirectOperatorBypassLogin}
+                className="inline-flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[11px] px-3.5 py-2.5 rounded-xl transition-all w-full cursor-pointer shadow-md"
               >
-                <UserCheck className="w-3.5 h-3.5" /> Masuk via Mode Tamu
+                <Key className="w-3.5 h-3.5" /> Masuk Langsung via PIN Operator / Admin (Tanpa Popup)
               </button>
-              <a 
-                href={window.location.href} 
-                target="_blank" 
-                rel="noopener noreferrer" 
-                className="inline-flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-bold text-[11px] px-3.5 py-2 rounded-xl transition-all w-full"
-              >
-                <ExternalLink className="w-3.5 h-3.5" /> Buka di Tab Baru
-              </a>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                  type="button"
+                  onClick={handleGuestBypassLogin}
+                  className="inline-flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] px-3.5 py-2 rounded-xl transition-all w-full cursor-pointer shadow-md"
+                >
+                  <UserCheck className="w-3.5 h-3.5" /> Masuk via Mode Tamu
+                </button>
+                <a 
+                  href={window.location.href} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="inline-flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30 font-bold text-[11px] px-3.5 py-2 rounded-xl transition-all w-full"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" /> Buka di Tab Baru
+                </a>
+              </div>
             </div>
           </div>
         );
       } else if (isPopupBlocked || isPopupCancelled) {
+        const currentDomain = window.location.hostname;
         setAuthError(
           <div className="space-y-2.5">
             <div className="flex items-center gap-2 text-amber-400 font-bold">
               <ShieldAlert className="w-4 h-4 shrink-0 text-amber-400" />
-              <span>Google Sign-In Popup Terblokir / Dibatalkan</span>
+              <span>Popup Google Sign-In Terputus di Dalam Frame Preview (auth/popup-closed-by-user)</span>
             </div>
             <p className="text-slate-300 font-normal text-[11px] leading-relaxed">
-              Browser memblokir jendela popup karena aplikasi berjalan di dalam frame web. Silakan buka aplikasi langsung di tab baru atau lanjutkan via Mode Tamu:
+              Karena panel preview ini berjalan di dalam <strong>iframe</strong> (atau domain preview <code className="text-amber-300">{currentDomain}</code> belum ditambahkan ke <em>Authorized Domains</em> Firebase), browser otomatis memutus komunikasi popup Google. Pilih salah satu cara di bawah ini:
             </p>
-            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+            <div className="flex flex-col gap-2 pt-1">
               <button
                 type="button"
-                onClick={handleGuestBypassLogin}
-                className="inline-flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] px-3.5 py-2 rounded-xl transition-all w-full cursor-pointer shadow-md"
+                onClick={handleDirectOperatorBypassLogin}
+                className="inline-flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[11px] px-3.5 py-2.5 rounded-xl transition-all w-full cursor-pointer shadow-md"
               >
-                <UserCheck className="w-3.5 h-3.5" /> Masuk via Mode Tamu
+                <Key className="w-3.5 h-3.5" /> Masuk Langsung via PIN Operator / Admin di Sini (Tanpa Popup)
               </button>
-              <a 
-                href={window.location.href} 
-                target="_blank" 
-                rel="noopener noreferrer" 
-                className="inline-flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-bold text-[11px] px-3.5 py-2 rounded-xl transition-all w-full"
-              >
-                <ExternalLink className="w-3.5 h-3.5" /> Buka di Tab Baru
-              </a>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <a 
+                  href={window.location.href} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="inline-flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] px-3.5 py-2 rounded-xl transition-all w-full"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" /> Buka di Tab Browser Biasa
+                </a>
+                <button
+                  type="button"
+                  onClick={handleGuestBypassLogin}
+                  className="inline-flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-bold text-[11px] px-3.5 py-2 rounded-xl transition-all w-full cursor-pointer shadow-md"
+                >
+                  <UserCheck className="w-3.5 h-3.5" /> Masuk via Mode Tamu
+                </button>
+              </div>
             </div>
           </div>
         );
@@ -1503,7 +1542,7 @@ export default function App() {
         setRecords([]);
       }
 
-      if (!accessToken || accessToken === 'GUEST_BYPASS' || accessToken === 'null' || accessToken === 'undefined' || accessToken.trim() === '') {
+      if (!accessToken || accessToken === 'GUEST_BYPASS' || accessToken === 'IFRAME_OPERATOR_BYPASS' || accessToken === 'null' || accessToken === 'undefined' || accessToken.trim() === '') {
         setIsLiveGoogleConnected(false);
         setSpreadsheetId(activeProj.spreadsheetId || 'guest_bypass');
         setProjectUploadsFolderId(activeProj.uploadsFolderId || 'guest_bypass');
@@ -1606,9 +1645,9 @@ export default function App() {
         return;
       }
       
-      let folderId = activeProj.folderId;
-      let sheetId = activeProj.spreadsheetId;
-      let uploadsFolderId = activeProj.uploadsFolderId;
+      let folderId = activeProj.folderId ? extractDriveFolderId(activeProj.folderId) : null;
+      let sheetId = activeProj.spreadsheetId ? extractDriveFolderId(activeProj.spreadsheetId) : null;
+      let uploadsFolderId = activeProj.uploadsFolderId ? extractDriveFolderId(activeProj.uploadsFolderId) : null;
       
       // Execute setup & fetch with a 35-second maximum timeout
       const syncPromise = (async () => {
@@ -3015,28 +3054,38 @@ export default function App() {
     setEditAgencyLetterPublicCsvUrl('');
   };
 
-  // Save manual Spreadsheet & Folder IDs
+  // Save manual Spreadsheet & Folder IDs (supports both bare IDs and full Google URLs!)
   const handleSaveProjectIDs = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingProjectId) return;
+
+    const cleanFolder = extractDriveFolderId(editFolderId) || null;
+    const cleanUploadsFolder = extractDriveFolderId(editUploadsFolderId) || null;
+    const cleanGeojsonFolder = extractDriveFolderId(editGeojsonFolderId) || null;
+    const cleanResumeUploadsFolder = extractDriveFolderId(editResumeUploadsFolderId) || null;
+    const cleanAgencyUploadsFolder = extractDriveFolderId(editAgencyLetterUploadsFolderId) || null;
+
+    const cleanSpreadsheetId = extractDriveFolderId(editSpreadsheetId) || null;
+    const cleanResumeSpreadsheetId = extractDriveFolderId(editResumeSpreadsheetId) || null;
+    const cleanAgencySpreadsheetId = extractDriveFolderId(editAgencyLetterSpreadsheetId) || null;
 
     const updated = projects.map(p => {
       if (p.id === editingProjectId) {
         return {
           ...p,
-          folderId: editFolderId.trim() || null,
-          uploadsFolderId: editUploadsFolderId.trim() || null,
-          geojsonFolderId: editGeojsonFolderId.trim() || null,
-          resumeUploadsFolderId: editResumeUploadsFolderId.trim() || null,
-          agencyLetterUploadsFolderId: editAgencyLetterUploadsFolderId.trim() || null,
+          folderId: cleanFolder,
+          uploadsFolderId: cleanUploadsFolder,
+          geojsonFolderId: cleanGeojsonFolder,
+          resumeUploadsFolderId: cleanResumeUploadsFolder,
+          agencyLetterUploadsFolderId: cleanAgencyUploadsFolder,
           // File 1: Data Lahan
-          spreadsheetId: editSpreadsheetId.trim() || null,
+          spreadsheetId: cleanSpreadsheetId,
           publicCsvUrl: editPublicCsvUrl.trim() || null,
           // File 2: Resume Project
-          resumeSpreadsheetId: editResumeSpreadsheetId.trim() || null,
+          resumeSpreadsheetId: cleanResumeSpreadsheetId,
           resumePublicCsvUrl: editResumePublicCsvUrl.trim() || null,
           // File 3: Surat Instansi
-          agencyLetterSpreadsheetId: editAgencyLetterSpreadsheetId.trim() || null,
+          agencyLetterSpreadsheetId: cleanAgencySpreadsheetId,
           agencyLetterPublicCsvUrl: editAgencyLetterPublicCsvUrl.trim() || null
         };
       }
@@ -3049,8 +3098,8 @@ export default function App() {
 
     // Force data reload if we just edited the active project
     if (activeProjectId === editingProjectId) {
-      setSpreadsheetId(editSpreadsheetId.trim() || null);
-      setProjectUploadsFolderId(editUploadsFolderId.trim() || null);
+      setSpreadsheetId(cleanSpreadsheetId);
+      setProjectUploadsFolderId(cleanUploadsFolder);
       if (token) {
         loadProjectData(token, activeProjectId);
       }
@@ -3926,6 +3975,15 @@ export default function App() {
                   <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">ATAU</span>
                   <span className="h-px bg-white/10 flex-1"></span>
                 </div>
+
+                <button 
+                  type="button"
+                  onClick={handleDirectOperatorBypassLogin}
+                  className="w-full flex items-center justify-center gap-2.5 bg-slate-900 hover:bg-slate-800 border border-amber-500/40 hover:border-amber-400 rounded-xl px-5 py-3 text-xs font-extrabold text-amber-300 hover:text-amber-200 transition-all cursor-pointer shadow-md"
+                >
+                  <Key className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>MASUK VIA USERNAME & PIN OPERATOR / ADMIN (TANPA POPUP)</span>
+                </button>
 
                 <button 
                   type="button"
@@ -5149,6 +5207,21 @@ export default function App() {
                     records={records}
                     role={role}
                     activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
+                    projects={projects}
+                    activeProjectId={activeProjectId}
+                    uploadsFolderId={
+                      projectUploadsFolderId && projectUploadsFolderId !== 'guest_bypass'
+                        ? projectUploadsFolderId
+                        : projects.find(p => p.id === activeProjectId)?.uploadsFolderId ||
+                          projects.find(p => p.id === activeProjectId)?.folderId ||
+                          ''
+                    }
+                    accessToken={token}
+                    onRequestGoogleAuth={handleRefreshGoogleAuth}
+                    onSwitchProject={(newId) => {
+                      setActiveProjectId(newId);
+                      localStorage.setItem('project_ventura_active_project_id', newId);
+                    }}
                     onNavigateToInput={(rec) => {
                       setSelectedRecordForEdit(rec);
                       setActiveMenu('input');

@@ -671,7 +671,7 @@ export default function DocUpload({
 
                 {selectedRecord.DRIVE_FOLDER_ID && (
                   <a
-                    href={`https://drive.google.com/drive/folders/${selectedRecord.DRIVE_FOLDER_ID}`}
+                    href={selectedRecord.DRIVE_FOLDER_ID.trim().startsWith('http') ? selectedRecord.DRIVE_FOLDER_ID.trim() : `https://drive.google.com/drive/folders/${selectedRecord.DRIVE_FOLDER_ID.trim()}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer border border-amber-400/30 shrink-0 self-start sm:self-center"
