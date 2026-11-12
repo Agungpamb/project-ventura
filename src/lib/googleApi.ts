@@ -6,7 +6,9 @@ import {
   getSheetHeaders, 
   getAgencyLetterSheetHeaders, 
   recordToRow, 
-  rowToRecord 
+  rowToRecord,
+  compactPlantsArray,
+  compactBuildingsArray
 } from '../types';
 
 // Constants
@@ -463,31 +465,39 @@ export async function saveRecordToSpreadsheet(
       }
     }
 
-    // 3. Locate Target Row in Google Sheets
-    // Priority:
-    // A. originalRecord.rowNumber or record.rowNumber (if valid > 1)
-    // B. Match in existingRecords (by original ID_UNIK, original CODE, current ID_UNIK, current CODE, or Desa/Span/Nobid)
+    // Always compact plants and buildings left so empty gaps are eliminated before saving
+    record.plants = compactPlantsArray(record.plants);
+    record.buildings = compactBuildingsArray(record.buildings);
+
+    // 3. Locate Candidate Target Row in Memory
     let targetRowIndex: number | undefined = isEdit ? (originalRecord?.rowNumber || record.rowNumber) : undefined;
     
-    if (isEdit && (!targetRowIndex || targetRowIndex <= 1)) {
-      const origId = originalRecord?.ID_UNIK?.trim();
-      const origCode = originalRecord?.CODE?.trim().toUpperCase();
-      const currId = record.ID_UNIK?.trim();
-      const currCode = record.CODE?.trim().toUpperCase();
+    const origId = originalRecord?.ID_UNIK?.trim();
+    const origCode = originalRecord?.CODE?.trim().toUpperCase();
+    const origDesa = originalRecord?.DESA?.trim().toUpperCase();
+    const origSpan = originalRecord?.SPAN?.trim().toUpperCase();
+    const origNobid = originalRecord?.NOBID?.trim().toUpperCase();
 
+    const currId = record.ID_UNIK?.trim();
+    const currCode = record.CODE?.trim().toUpperCase();
+    const currDesa = record.DESA?.trim().toUpperCase();
+    const currSpan = record.SPAN?.trim().toUpperCase();
+    const currNobid = record.NOBID?.trim().toUpperCase();
+
+    if (isEdit && (!targetRowIndex || targetRowIndex <= 1)) {
       const match = existingRecords.find(r => 
-        (origId && r.ID_UNIK && r.ID_UNIK === origId) ||
+        (origId && r.ID_UNIK && r.ID_UNIK.trim() === origId) ||
         (origCode && r.CODE && r.CODE.trim().toUpperCase() === origCode) ||
-        (currId && r.ID_UNIK && r.ID_UNIK === currId) ||
+        (origDesa && origSpan && origNobid && 
+         r.DESA?.trim().toUpperCase() === origDesa && 
+         r.SPAN?.trim().toUpperCase() === origSpan && 
+         r.NOBID?.trim().toUpperCase() === origNobid) ||
+        (currId && r.ID_UNIK && r.ID_UNIK.trim() === currId) ||
         (currCode && r.CODE && r.CODE.trim().toUpperCase() === currCode) ||
-        (originalRecord?.DESA && originalRecord?.SPAN && originalRecord?.NOBID && 
-         r.DESA?.toUpperCase() === originalRecord.DESA.toUpperCase() && 
-         r.SPAN?.toUpperCase() === originalRecord.SPAN.toUpperCase() && 
-         r.NOBID?.toUpperCase() === originalRecord.NOBID.toUpperCase()) ||
-        (record.DESA && record.SPAN && record.NOBID && 
-         r.DESA?.toUpperCase() === record.DESA.toUpperCase() && 
-         r.SPAN?.toUpperCase() === record.SPAN.toUpperCase() && 
-         r.NOBID?.toUpperCase() === record.NOBID.toUpperCase())
+        (currDesa && currSpan && currNobid && 
+         r.DESA?.trim().toUpperCase() === currDesa && 
+         r.SPAN?.trim().toUpperCase() === currSpan && 
+         r.NOBID?.trim().toUpperCase() === currNobid)
       );
       
       if (match && match.rowNumber && match.rowNumber > 1) {
@@ -495,12 +505,13 @@ export async function saveRecordToSpreadsheet(
       }
     }
 
-    // 4. Live Idempotency Verification directly in Google Sheets Database
-    // Query columns A (CODE) and IO (ID_UNIK) before executing an append/update if row is still unknown
-    if (!targetRowIndex && isEdit) {
+    // 4. Live Idempotency & Row-Identity Verification directly in Google Sheets Database
+    // Always verify against live columns A:D (CODE, DESA, SPAN, NOBID) and IP (ID_UNIK, col 249) when editing
+    // so a stale or sorted rowNumber NEVER overwrites the parcel above or below it!
+    if (isEdit) {
       try {
         const checkResponse = await fetchWithTimeout(
-          `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?ranges=A:A&ranges=IO:IO`,
+          `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?ranges=A:D&ranges=IP:IP`,
           {
             headers: {
               Authorization: `Bearer ${accessToken}`,
@@ -512,33 +523,86 @@ export async function saveRecordToSpreadsheet(
 
         if (checkResponse.ok) {
           const checkData = await checkResponse.json();
-          const codeRows: string[][] = checkData.valueRanges?.[0]?.values || [];
+          const abcdRows: string[][] = checkData.valueRanges?.[0]?.values || [];
           const idUnikRows: string[][] = checkData.valueRanges?.[1]?.values || [];
-          const maxRows = Math.max(codeRows.length, idUnikRows.length);
+          const maxRows = Math.max(abcdRows.length, idUnikRows.length);
 
-          const searchCodes = [
-            originalRecord?.CODE?.trim().toUpperCase(),
-            record.CODE?.trim().toUpperCase()
-          ].filter(Boolean) as string[];
+          const isRowMatch = (rIdx: number): boolean => {
+            if (rIdx <= 0 || rIdx >= maxRows) return false;
+            const rCode = (abcdRows[rIdx]?.[0] || '').trim().toUpperCase();
+            const rDesa = (abcdRows[rIdx]?.[1] || '').trim().toUpperCase();
+            const rSpan = (abcdRows[rIdx]?.[2] || '').trim().toUpperCase();
+            const rNobid = (abcdRows[rIdx]?.[3] || '').trim().toUpperCase();
+            const rIdUnik = (idUnikRows[rIdx]?.[0] || '').trim();
 
-          const searchIds = [
-            originalRecord?.ID_UNIK?.trim(),
-            record.ID_UNIK?.trim()
-          ].filter(Boolean) as string[];
+            if (origId && rIdUnik && rIdUnik === origId) return true;
+            if (origCode && rCode && rCode === origCode) return true;
+            if (origDesa && origSpan && origNobid && rDesa === origDesa && rSpan === origSpan && rNobid === origNobid) return true;
+            if (currId && rIdUnik && rIdUnik === currId) return true;
+            if (currCode && rCode && rCode === currCode) return true;
+            if (currDesa && currSpan && currNobid && rDesa === currDesa && rSpan === currSpan && rNobid === currNobid) return true;
+            return false;
+          };
 
-          // Row 0 is the header (Row 1 in spreadsheet) -> check data rows starting at index 1
-          for (let r = 1; r < maxRows; r++) {
-            const sheetRow = r + 1; // 1-based spreadsheet row index
-            const currentCode = (codeRows[r]?.[0] || '').trim().toUpperCase();
-            const currentIdUnik = (idUnikRows[r]?.[0] || '').trim();
+          // First verify if candidate targetRowIndex actually matches this record in the live sheet
+          const candidateArrayIdx = targetRowIndex && targetRowIndex > 1 ? targetRowIndex - 1 : -1;
+          if (candidateArrayIdx > 0 && isRowMatch(candidateArrayIdx)) {
+            // Verified! Candidate row in Google Sheets is indeed our target parcel.
+          } else {
+            // Candidate row did NOT match (or was undefined) — scan live sheet to locate the exact row!
+            let foundSheetRow: number | undefined = undefined;
 
-            const idMatch = currentIdUnik && searchIds.includes(currentIdUnik);
-            const codeMatch = currentCode && searchCodes.includes(currentCode);
+            // Priority pass 1: Match originalRecord identity (ID_UNIK, CODE, or DESA+SPAN+NOBID)
+            for (let r = 1; r < maxRows; r++) {
+              const rCode = (abcdRows[r]?.[0] || '').trim().toUpperCase();
+              const rDesa = (abcdRows[r]?.[1] || '').trim().toUpperCase();
+              const rSpan = (abcdRows[r]?.[2] || '').trim().toUpperCase();
+              const rNobid = (abcdRows[r]?.[3] || '').trim().toUpperCase();
+              const rIdUnik = (idUnikRows[r]?.[0] || '').trim();
 
-            if (idMatch || codeMatch) {
-              targetRowIndex = sheetRow;
-              console.log(`[Idempotency Key] Ditemukan baris existing ke-${sheetRow} (CODE: ${currentCode}, ID: ${currentIdUnik}). Target overwrite update.`);
-              break;
+              if (
+                (origId && rIdUnik && rIdUnik === origId) ||
+                (origCode && rCode && rCode === origCode) ||
+                (origDesa && origSpan && origNobid && rDesa === origDesa && rSpan === origSpan && rNobid === origNobid)
+              ) {
+                foundSheetRow = r + 1;
+                break;
+              }
+            }
+
+            // Priority pass 2: Match current record identity (ID_UNIK, CODE, or DESA+SPAN+NOBID)
+            if (!foundSheetRow) {
+              for (let r = 1; r < maxRows; r++) {
+                const rCode = (abcdRows[r]?.[0] || '').trim().toUpperCase();
+                const rDesa = (abcdRows[r]?.[1] || '').trim().toUpperCase();
+                const rSpan = (abcdRows[r]?.[2] || '').trim().toUpperCase();
+                const rNobid = (abcdRows[r]?.[3] || '').trim().toUpperCase();
+                const rIdUnik = (idUnikRows[r]?.[0] || '').trim();
+
+                if (
+                  (currId && rIdUnik && rIdUnik === currId) ||
+                  (currCode && rCode && rCode === currCode) ||
+                  (currDesa && currSpan && currNobid && rDesa === currDesa && rSpan === currSpan && rNobid === currNobid)
+                ) {
+                  foundSheetRow = r + 1;
+                  break;
+                }
+              }
+            }
+
+            if (foundSheetRow) {
+              if (targetRowIndex && targetRowIndex !== foundSheetRow) {
+                console.log(`[Row Guard] Mengoreksi baris target dari ${targetRowIndex} ke baris asli ${foundSheetRow} untuk mencegah tertimpanya bidang lain.`);
+              }
+              targetRowIndex = foundSheetRow;
+            } else if (candidateArrayIdx > 0 && candidateArrayIdx < maxRows) {
+              // Candidate row in live sheet belongs to a DIFFERENT parcel and our parcel wasn't found -> append safely instead of overwriting neighbor!
+              const occupantCode = (abcdRows[candidateArrayIdx]?.[0] || '').trim();
+              const occupantNobid = (abcdRows[candidateArrayIdx]?.[3] || '').trim();
+              if (occupantCode || occupantNobid) {
+                console.warn(`[Row Guard] Baris ${targetRowIndex} di Google Sheets ditempati oleh bidang lain (${occupantCode || occupantNobid}). Mencegah penimpaan baris tetangga.`);
+                targetRowIndex = undefined;
+              }
             }
           }
         }

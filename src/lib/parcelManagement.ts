@@ -85,10 +85,8 @@ export function isSameRecord(a: LandRecord, b: LandRecord): boolean {
 
   const codeA = (a.CODE || '').trim().toUpperCase();
   const codeB = (b.CODE || '').trim().toUpperCase();
-  if (codeA && codeB && codeA === codeB) return true;
-
-  if (a.rowNumber && b.rowNumber && a.rowNumber > 1 && a.rowNumber === b.rowNumber) {
-    return true;
+  if (codeA && codeB) {
+    return codeA === codeB;
   }
 
   const desaA = (a.DESA || '').trim().toUpperCase();
@@ -98,7 +96,11 @@ export function isSameRecord(a: LandRecord, b: LandRecord): boolean {
   const nobidA = (a.NOBID || '').trim().toUpperCase();
   const nobidB = (b.NOBID || '').trim().toUpperCase();
 
-  if (desaA && spanA && nobidA && desaA === desaB && spanA === spanB && nobidA === nobidB) {
+  if (desaA && spanA && nobidA && desaB && spanB && nobidB) {
+    return desaA === desaB && spanA === spanB && nobidA === nobidB;
+  }
+
+  if (!idA && !idB && !codeA && !codeB && a.rowNumber && b.rowNumber && a.rowNumber > 1 && a.rowNumber === b.rowNumber) {
     return true;
   }
 
@@ -369,6 +371,107 @@ export function consolidateRepeatedPlantsInRecord(
     },
     mergedSlotsCount
   };
+}
+
+/**
+ * Parses pasted text (from Excel/Google Sheets or manual entry) into an array of occupied PlantData items.
+ * Supports:
+ * 1. Horizontal Database Row format (a single tab-separated row where every 6 columns are [JENIS, SM, BM, KECIL, SEDANG, BESAR],
+ *    automatically skipping any empty 6-column gaps in between!)
+ * 2. Vertical Per-Plant format (1 plant per line: JENIS [tab/;/,/|] SM [tab/;/,/|] BM [tab/;/,/|] KECIL [tab/;/,/|] SEDANG [tab/;/,/|] BESAR [tab/;/,/|] KETERANGAN)
+ */
+export function parseInjectedPlantsText(rawText: string): PlantData[] {
+  const result: PlantData[] = [];
+  if (!rawText || !rawText.trim()) return result;
+
+  const sanitizeNum = (v?: string): string => {
+    const clean = (v || '').trim();
+    if (!clean || clean === '-' || clean === '0') return '';
+    const num = parseInt(clean.replace(/[^\d-]/g, ''), 10);
+    return !isNaN(num) && num > 0 ? String(num) : '';
+  };
+
+  const lines = rawText
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map(l => l.trimEnd())
+    .filter(l => l.trim() !== '');
+
+  for (const line of lines) {
+    const tabCols = line.split('\t').map(c => c.trim());
+
+    // Detect if this line is a Horizontal Master Spreadsheet row (6 columns per plant: [Jenis, SM, BM, K, S, B] x N)
+    // A line with >= 7 tab-separated columns where column 6 (7th item) or later has another plant name or 6-tuple pattern
+    const looksLikeHorizontalRow =
+      tabCols.length > 7 ||
+      (tabCols.length === 7 && tabCols[6] !== '' && isNaN(Number(tabCols[6])) && tabCols.slice(1, 6).every(c => c === '' || c === '-' || !isNaN(Number(c))));
+
+    if (looksLikeHorizontalRow && tabCols.length >= 6) {
+      for (let offset = 0; offset < tabCols.length; offset += 6) {
+        const jenisRaw = (tabCols[offset] || '').trim();
+        if (!jenisRaw || /^JENIS\s*TANAMAN/i.test(jenisRaw)) continue;
+        const sm = sanitizeNum(tabCols[offset + 1]);
+        const bm = sanitizeNum(tabCols[offset + 2]);
+        const kc = sanitizeNum(tabCols[offset + 3]);
+        const sd = sanitizeNum(tabCols[offset + 4]);
+        const bs = sanitizeNum(tabCols[offset + 5]);
+        result.push({
+          jenis: jenisRaw.toUpperCase(),
+          sudah_menghasilkan: sm,
+          belum_menghasilkan: bm,
+          kecil: kc,
+          sedang: sd,
+          besar: bs,
+          keterangan: ''
+        });
+      }
+      continue;
+    }
+
+    // Otherwise parse as Vertical Per-Plant row (separated by Tab, '|', ';', or ',')
+    let cols: string[];
+    if (line.includes('\t')) {
+      cols = line.split('\t').map(c => c.trim());
+    } else if (line.includes('|')) {
+      cols = line.split('|').map(c => c.trim());
+    } else if (line.includes(';')) {
+      cols = line.split(';').map(c => c.trim());
+    } else if (line.includes(',')) {
+      cols = line.split(',').map(c => c.trim());
+    } else {
+      // Single space-separated fallback like "KELAPA 12" or "JATI 5 10"
+      const match = line.trim().match(/^([a-zA-Z\s./()-]+?)(?:\s+(\d+)(?:\s+(\d+))?(?:\s+(\d+))?(?:\s+(\d+))?(?:\s+(\d+))?)?$/);
+      if (match && match[1]) {
+        cols = [
+          match[1].trim(),
+          match[2] || '',
+          match[3] || '',
+          match[4] || '',
+          match[5] || '',
+          match[6] || ''
+        ];
+      } else {
+        cols = [line.trim()];
+      }
+    }
+
+    // Strip leading numbering like "1. KELAPA" -> "KELAPA"
+    const cleanJenis = (cols[0] || '').replace(/^\d+[\s.)-]*/, '').trim();
+    if (!cleanJenis || /^JENIS(\s+TANAMAN)?$/i.test(cleanJenis)) continue;
+
+    result.push({
+      jenis: cleanJenis.toUpperCase(),
+      sudah_menghasilkan: sanitizeNum(cols[1]),
+      belum_menghasilkan: sanitizeNum(cols[2]),
+      kecil: sanitizeNum(cols[3]),
+      sedang: sanitizeNum(cols[4]),
+      besar: sanitizeNum(cols[5]),
+      keterangan: (cols.slice(6).join(' ') || '').trim()
+    });
+  }
+
+  return result.slice(0, 30);
 }
 
 /**

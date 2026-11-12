@@ -2,14 +2,23 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Search, Plus, Trash2, Check, ArrowRight, ArrowLeft, Save, 
   MapPin, Landmark, Home, Sprout, ShieldAlert, Edit3, X, FileText, Key, RefreshCw, ExternalLink,
-  PenTool, CheckCircle2, Briefcase, Lock, Upload, GitMerge
+  PenTool, CheckCircle2, Briefcase, Lock, Upload, GitMerge, ClipboardPaste, ArrowUp, ArrowDown
 } from 'lucide-react';
-import { type LandRecord, createEmptyRecord, type ProjectConfig } from '../types';
+import { 
+  type LandRecord, 
+  type PlantData,
+  createEmptyRecord, 
+  type ProjectConfig,
+  compactPlantsArray,
+  compactBuildingsArray,
+  isPlantSlotOccupied,
+  isBuildingSlotOccupied
+} from '../types';
 import DocUpload from './DocUpload';
 import DeleteParcelModal from './DeleteParcelModal';
 import { type SignatureType } from './SignatureModal';
 import { getOrCreateParcelFolderHierarchy, uploadBase64ImageToDrive } from '../lib/googleApi';
-import { analyzeRecordPlantRepetition, consolidateRepeatedPlantsInRecord } from '../lib/parcelManagement';
+import { analyzeRecordPlantRepetition, consolidateRepeatedPlantsInRecord, parseInjectedPlantsText } from '../lib/parcelManagement';
 
 const PREDEFINED_PENUTUP_LAHAN = [
   'SAWAH',
@@ -204,9 +213,11 @@ export default function FormInput({
 
   // Handle Edit Action from search
   const handleSelectForEdit = (record: LandRecord) => {
-    setSelectedEditRecord(record);
-    // Deep copy record to avoid mutating parent state
-    setFormData(JSON.parse(JSON.stringify(record)));
+    const deepCopy: LandRecord = JSON.parse(JSON.stringify(record));
+    deepCopy.plants = compactPlantsArray(deepCopy.plants);
+    deepCopy.buildings = compactBuildingsArray(deepCopy.buildings);
+    setSelectedEditRecord(deepCopy);
+    setFormData(deepCopy);
     setSearchQuery('');
     setSubmitMessage({ type: 'success', text: `Berhasil memuat No. Bidang ${record.NOBID || record.CODE} (${record.NAMA || 'Tanpa Nama'}) untuk diedit` });
     setTimeout(() => setSubmitMessage(null), 4000);
@@ -261,8 +272,11 @@ export default function FormInput({
   // Sync count of active buildings with populated ones from record when editing
   useEffect(() => {
     if (formData.buildings) {
-      const populatedCount = formData.buildings.filter(b => b.luas.trim() !== '' || b.bentuk.trim() !== '' || b.jenis.trim() !== '').length;
-      setActiveBuildingsCount(Math.max(1, populatedCount));
+      let lastOccupiedIdx = -1;
+      formData.buildings.forEach((b, idx) => {
+        if (isBuildingSlotOccupied(b)) lastOccupiedIdx = idx;
+      });
+      setActiveBuildingsCount(Math.max(1, lastOccupiedIdx + 1));
     }
   }, [selectedEditRecord, formData.CODE]);
 
@@ -272,32 +286,39 @@ export default function FormInput({
     if (!updatedBuildings[index]) {
       updatedBuildings[index] = { luas: '', bentuk: '', jenis: '' };
     }
-    updatedBuildings[index][field] = value;
+    updatedBuildings[index] = { ...updatedBuildings[index], [field]: value };
     setFormData(prev => ({ ...prev, buildings: updatedBuildings }));
   };
 
+  // Shift-left removal for buildings so there is never an empty hole in the middle
   const removeBuildingAt = (index: number) => {
-    const updatedBuildings = [...formData.buildings];
-    // Reset fields in the 8 slots
-    updatedBuildings[index] = { luas: '', bentuk: '', jenis: '' };
-    setFormData(prev => ({ ...prev, buildings: updatedBuildings }));
-    if (activeBuildingsCount > 1) {
-      setActiveBuildingsCount(prev => prev - 1);
+    const updatedBuildings = [...(formData.buildings || [])];
+    updatedBuildings.splice(index, 1);
+    while (updatedBuildings.length < 8) {
+      updatedBuildings.push({ luas: '', bentuk: '', jenis: '' });
     }
+    const compacted = compactBuildingsArray(updatedBuildings);
+    setFormData(prev => ({ ...prev, buildings: compacted }));
+    const occupiedCount = compacted.filter(isBuildingSlotOccupied).length;
+    setActiveBuildingsCount(prev => Math.max(1, occupiedCount, prev - 1));
   };
 
   // Plants Dynamic Management
-  // Filter active plants (non-empty jenis) for UI display and input editing.
-  // We'll map them back to the 30 elements of `formData.plants` on save.
   const [activePlantsCount, setActivePlantsCount] = useState<number>(1);
+  const [isBulkPlantInjectOpen, setIsBulkPlantInjectOpen] = useState<boolean>(false);
+  const [bulkPlantInjectText, setBulkPlantInjectText] = useState<string>('');
+  const [slotInjectIndex, setSlotInjectIndex] = useState<number | null>(null);
+  const [slotInjectText, setSlotInjectText] = useState<string>('');
 
   // Sync count of active plants with populated ones from record when editing
+  // Uses highest occupied index + 1 so no populated plant slot is ever hidden behind activePlantsCount
   useEffect(() => {
     if (formData.plants) {
-      const populatedCount = formData.plants.filter(
-        p => p.jenis.trim() !== '' || Boolean(p.keterangan && p.keterangan.trim() !== '')
-      ).length;
-      setActivePlantsCount(Math.max(1, populatedCount));
+      let lastOccupiedIdx = -1;
+      formData.plants.forEach((p, idx) => {
+        if (isPlantSlotOccupied(p)) lastOccupiedIdx = idx;
+      });
+      setActivePlantsCount(Math.max(1, lastOccupiedIdx + 1));
     }
   }, [selectedEditRecord, formData.CODE]);
 
@@ -318,14 +339,67 @@ export default function FormInput({
         keterangan: ''
       };
     }
-    updatedPlants[index][field] = value;
+    updatedPlants[index] = {
+      ...updatedPlants[index],
+      [field]: value
+    };
     setFormData(prev => ({ ...prev, plants: updatedPlants }));
   };
 
+  // Hapus tanaman pada baris `index` dan OTOMATIS GESER KIRI (Shift-Left) seluruh tanaman di sebelah kanannya
+  // sehingga tidak pernah ada jarak/slot kosong di tengah yang memicu bug repetisi atau tanaman tersembunyi!
   const removePlantAt = (index: number) => {
-    const updatedPlants = [...formData.plants];
-    // Reset fields in the 30 slots
-    updatedPlants[index] = {
+    const updatedPlants = [...(formData.plants || [])];
+    updatedPlants.splice(index, 1);
+    while (updatedPlants.length < 30) {
+      updatedPlants.push({
+        jenis: '',
+        sudah_menghasilkan: '',
+        belum_menghasilkan: '',
+        kecil: '',
+        sedang: '',
+        besar: '',
+        keterangan: ''
+      });
+    }
+    const compacted = compactPlantsArray(updatedPlants);
+    setFormData(prev => ({ ...prev, plants: compacted }));
+    const occupiedCount = compacted.filter(isPlantSlotOccupied).length;
+    setActivePlantsCount(Math.max(1, occupiedCount));
+    if (slotInjectIndex === index) {
+      setSlotInjectIndex(null);
+      setSlotInjectText('');
+    }
+  };
+
+  // Rapatkan / Geser Kiri semua slot tanaman yang kosong di tengah
+  const handleCompactPlantsNow = () => {
+    const compacted = compactPlantsArray(formData.plants);
+    const occupiedCount = compacted.filter(isPlantSlotOccupied).length;
+    setFormData(prev => ({ ...prev, plants: compacted }));
+    setActivePlantsCount(Math.max(1, occupiedCount));
+    setSubmitMessage({
+      type: 'success',
+      text: `✅ Slot tanaman berhasil dirapatkan ke kiri (${occupiedCount} tanaman aktif tanpa celah kosong).`
+    });
+    setTimeout(() => setSubmitMessage(null), 3500);
+  };
+
+  // Geser posisi tanaman naik/kiri (-1) atau turun/kanan (+1)
+  const movePlantSlot = (index: number, direction: -1 | 1) => {
+    const targetIdx = index + direction;
+    if (targetIdx < 0 || targetIdx >= activePlantsCount || targetIdx >= 30) return;
+    const updatedPlants = [...(formData.plants || [])];
+    const temp = updatedPlants[index];
+    updatedPlants[index] = updatedPlants[targetIdx];
+    updatedPlants[targetIdx] = temp;
+    setFormData(prev => ({ ...prev, plants: updatedPlants }));
+  };
+
+  // Sisipkan 1 baris tanaman kosong tepat di posisi `index` (menggeser tanaman di bawahnya ke kanan)
+  const insertEmptyPlantAt = (index: number) => {
+    const updatedPlants = [...(formData.plants || [])];
+    updatedPlants.splice(index, 0, {
       jenis: '',
       sudah_menghasilkan: '',
       belum_menghasilkan: '',
@@ -333,11 +407,77 @@ export default function FormInput({
       sedang: '',
       besar: '',
       keterangan: ''
-    };
-    setFormData(prev => ({ ...prev, plants: updatedPlants }));
-    if (activePlantsCount > 1) {
-      setActivePlantsCount(prev => prev - 1);
+    });
+    const trimmed = updatedPlants.slice(0, 30);
+    setFormData(prev => ({ ...prev, plants: trimmed }));
+    setActivePlantsCount(prev => Math.min(30, prev + 1));
+  };
+
+  // Inject tanaman langsung pada slot `index` (bisa timpa baris itu atau sisipkan mulai baris itu)
+  const handleApplySlotInject = (index: number, mode: 'REPLACE_AT_SLOT' | 'INSERT_BEFORE_SLOT') => {
+    const parsed = parseInjectedPlantsText(slotInjectText);
+    if (parsed.length === 0) return;
+
+    const current = [...(formData.plants || [])];
+    while (current.length < 30) {
+      current.push({
+        jenis: '',
+        sudah_menghasilkan: '',
+        belum_menghasilkan: '',
+        kecil: '',
+        sedang: '',
+        besar: '',
+        keterangan: ''
+      });
     }
+
+    if (mode === 'REPLACE_AT_SLOT') {
+      current.splice(index, 1, ...parsed);
+    } else {
+      current.splice(index, 0, ...parsed);
+    }
+
+    const compacted = compactPlantsArray(current.slice(0, 30));
+    const occupiedCount = compacted.filter(isPlantSlotOccupied).length;
+    setFormData(prev => ({ ...prev, plants: compacted }));
+    setActivePlantsCount(Math.max(1, occupiedCount));
+    setSlotInjectIndex(null);
+    setSlotInjectText('');
+  };
+
+  // Inject daftar tanaman sekaligus untuk bidang ini (Replace All / Append / Auto-Sum)
+  const handleApplyBulkPlantInject = (mode: 'REPLACE_ALL' | 'APPEND' | 'AUTO_SUM') => {
+    const parsed = parseInjectedPlantsText(bulkPlantInjectText);
+    if (parsed.length === 0) return;
+
+    let nextPlants: PlantData[];
+    if (mode === 'REPLACE_ALL') {
+      nextPlants = compactPlantsArray(parsed);
+    } else {
+      const existingOccupied = (formData.plants || []).filter(isPlantSlotOccupied);
+      nextPlants = compactPlantsArray([...existingOccupied, ...parsed]);
+    }
+
+    let nextRecord: LandRecord = {
+      ...formData,
+      plants: nextPlants
+    };
+
+    if (mode === 'AUTO_SUM') {
+      nextRecord = consolidateRepeatedPlantsInRecord(nextRecord, true).updatedRecord;
+    }
+
+    const finalCompacted = compactPlantsArray(nextRecord.plants);
+    const occupiedCount = finalCompacted.filter(isPlantSlotOccupied).length;
+    setFormData({ ...nextRecord, plants: finalCompacted });
+    setActivePlantsCount(Math.max(1, occupiedCount));
+    setBulkPlantInjectText('');
+    setIsBulkPlantInjectOpen(false);
+    setSubmitMessage({
+      type: 'success',
+      text: `✅ Berhasil meng-inject ${parsed.length} tanaman ke bidang ${formData.CODE || formData.NOBID || 'ini'} (Total aktif: ${occupiedCount} slot tanaman tanpa celah kosong).`
+    });
+    setTimeout(() => setSubmitMessage(null), 4000);
   };
 
   // Form Validation
@@ -416,8 +556,15 @@ export default function FormInput({
         }
       }
 
+      // Always compact plants & buildings left before saving so there are never empty gaps in the database
+      const compactedFormData: LandRecord = {
+        ...formData,
+        plants: compactPlantsArray(formData.plants),
+        buildings: compactBuildingsArray(formData.buildings)
+      };
+
       try {
-        await onSave(formData, isEdit, selectedEditRecord);
+        await onSave(compactedFormData, isEdit, selectedEditRecord);
       } catch (saveErr: any) {
         const errStr = saveErr?.message || String(saveErr);
         const isAuthIssue = saveErr?.isAuthError || 
@@ -436,7 +583,7 @@ export default function FormInput({
             setIsRefreshingAuth(true);
             const freshToken = await onRefreshGoogleToken();
             if (freshToken) {
-              await onSave(formData, isEdit, selectedEditRecord);
+              await onSave(compactedFormData, isEdit, selectedEditRecord);
             } else {
               throw saveErr;
             }
@@ -449,10 +596,10 @@ export default function FormInput({
       }
       
       // Keep the saved record loaded so they can print/upload immediately
-      const savedRecord = JSON.parse(JSON.stringify(formData));
+      const savedRecord: LandRecord = JSON.parse(JSON.stringify(compactedFormData));
       if (!savedRecord.ID_UNIK) {
         const origId = selectedEditRecord?.ID_UNIK;
-        const found = records.find(r => r.CODE === formData.CODE);
+        const found = records.find(r => r.CODE === compactedFormData.CODE);
         savedRecord.ID_UNIK = origId || found?.ID_UNIK || `LOCAL_${Date.now()}`;
       }
       if (selectedEditRecord?.rowNumber && !savedRecord.rowNumber) {
@@ -464,16 +611,20 @@ export default function FormInput({
         type: 'success',
         text: isEdit 
           ? (isLiveConnected 
-              ? `✅ Data dengan CODE ${formData.CODE} berhasil diperbarui di Google Sheets & Database Cloud!`
-              : `✅ Data dengan CODE ${formData.CODE} berhasil diperbarui dan tersimpan aman di Database Cloud Firestore & Cache Lokal!`)
+              ? `✅ Data dengan CODE ${compactedFormData.CODE} berhasil diperbarui di Google Sheets & Database Cloud!`
+              : `✅ Data dengan CODE ${compactedFormData.CODE} berhasil diperbarui dan tersimpan aman di Database Cloud Firestore & Cache Lokal!`)
           : (isLiveConnected 
-              ? `✅ Data baru dengan CODE ${formData.CODE} berhasil ditambahkan ke Google Sheets & Database Cloud!`
-              : `✅ Data baru dengan CODE ${formData.CODE} berhasil disimpan di Database Cloud Firestore & Cache Lokal!`)
+              ? `✅ Data baru dengan CODE ${compactedFormData.CODE} berhasil ditambahkan ke Google Sheets & Database Cloud!`
+              : `✅ Data baru dengan CODE ${compactedFormData.CODE} berhasil disimpan di Database Cloud Firestore & Cache Lokal!`)
       });
 
       setSelectedEditRecord(savedRecord);
       setFormData(JSON.parse(JSON.stringify(savedRecord)));
-      setActiveTab('cetak_unggah');
+      const occupiedPlants = savedRecord.plants.filter(isPlantSlotOccupied).length;
+      setActivePlantsCount(Math.max(1, occupiedPlants));
+      if (activeTab === 'administrasi') {
+        setActiveTab('cetak_unggah');
+      }
     } catch (err: any) {
       const errStr = err.message || String(err);
       const isAuthIssue = err.isAuthError || 
@@ -816,11 +967,16 @@ export default function FormInput({
                         // Automatically retry save after refresh!
                         setIsSubmitting(true);
                         const isEdit = !!selectedEditRecord;
-                        await onSave(formData, isEdit);
+                        const compactedRetry: LandRecord = {
+                          ...formData,
+                          plants: compactPlantsArray(formData.plants),
+                          buildings: compactBuildingsArray(formData.buildings)
+                        };
+                        await onSave(compactedRetry, isEdit, selectedEditRecord);
                         
-                        const savedRecord = JSON.parse(JSON.stringify(formData));
+                        const savedRecord = JSON.parse(JSON.stringify(compactedRetry));
                         if (!savedRecord.ID_UNIK) {
-                          const found = records.find(r => r.CODE === formData.CODE);
+                          const found = records.find(r => r.CODE === compactedRetry.CODE);
                           if (found) savedRecord.ID_UNIK = found.ID_UNIK;
                           else savedRecord.ID_UNIK = `TEMP_${Date.now()}`;
                         }
@@ -828,12 +984,14 @@ export default function FormInput({
                         setSubmitMessage({
                           type: 'success',
                           text: isEdit 
-                            ? `Sesi diperbarui & Data ${formData.CODE} berhasil disimpan ke Google Sheets!` 
-                            : `Sesi diperbarui & Data baru ${formData.CODE} berhasil ditambahkan!`
+                            ? `Sesi diperbarui & Data ${compactedRetry.CODE} berhasil disimpan ke Google Sheets!` 
+                            : `Sesi diperbarui & Data baru ${compactedRetry.CODE} berhasil ditambahkan!`
                         });
                         setSelectedEditRecord(savedRecord);
                         setFormData(JSON.parse(JSON.stringify(savedRecord)));
-                        setActiveTab('cetak_unggah');
+                        if (activeTab === 'administrasi') {
+                          setActiveTab('cetak_unggah');
+                        }
                       } catch (e: any) {
                         const isBlocked = e?.code === 'auth/popup-blocked' || String(e?.message || '').includes('popup-blocked');
                         const isCancelled = e?.code === 'auth/cancelled-popup-request' || e?.code === 'auth/popup-closed-by-user';
@@ -1621,15 +1779,121 @@ export default function FormInput({
           {/* Form Content - TAB 3: PLANTS (30 plants slots) */}
           {activeTab === 'tanaman' && (
             <div className="space-y-6 animate-fadeIn">
-              <div className="border-b border-white/10 pb-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="border-b border-white/10 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-bold text-slate-100 tracking-tight flex items-center gap-1.5">
                     <Sprout className="w-4 h-4 text-emerald-400" />
                     Pohon & Tanaman Produktif Di Atas Lahan (Hingga 30 Jenis)
                   </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">Isi jenis tanaman serta rincian usia produktif dan ukuran tanaman di bawah ini.</p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Menghapus tanaman akan otomatis menggeser tanaman berikutnya ke kiri (tanpa jarak/celah kosong).
+                  </p>
+                </div>
+
+                {/* Action Toolbar: Rapatkan/Geser Kiri & Inject Tanaman */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCompactPlantsNow}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/15 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                    title="Rapatkan dan geser semua tanaman ke kiri agar tidak ada slot kosong di tengah"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Geser Kiri / Rapatkan Slot Kosong</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsBulkPlantInjectOpen(prev => !prev)}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                      isBulkPlantInjectOpen
+                        ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md'
+                        : 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border-emerald-500/30'
+                    }`}
+                    title="Inject atau tempel daftar tanaman langsung dari Excel / Google Sheets ke bidang ini"
+                  >
+                    <ClipboardPaste className="w-3.5 h-3.5" />
+                    <span>{isBulkPlantInjectOpen ? 'Tutup Panel Inject Tanaman' : '⚡ Inject / Tempel Data Tanaman'}</span>
+                  </button>
                 </div>
               </div>
+
+              {/* Panel Inject / Paste Cepat Tanaman Bidang Ini */}
+              {isBulkPlantInjectOpen && (
+                <div className="p-4 rounded-2xl bg-slate-900/90 border border-emerald-500/40 space-y-3 shadow-xl animate-fadeIn">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-xs font-black text-emerald-300 uppercase tracking-wide flex items-center gap-1.5">
+                        <ClipboardPaste className="w-4 h-4 text-emerald-400" />
+                        Inject / Tempel Cepat Tanaman pada Bidang {formData.CODE || formData.NOBID || 'Ini'}
+                      </h4>
+                      <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                        Mendukung <strong>Copy-Paste langsung dari Excel / Google Sheets</strong>: baik format <strong>Vertikal per baris</strong> (<code>JENIS | SM | BM | KECIL | SEDANG | BESAR | KET</code>) maupun <strong>1 Baris Horizontal Database Master</strong> (otomatis melewati kolom kosong/jarak &amp; menggeser tanaman ke kiri!).
+                      </p>
+                    </div>
+                  </div>
+
+                  <textarea
+                    rows={4}
+                    value={bulkPlantInjectText}
+                    onChange={(e) => setBulkPlantInjectText(e.target.value)}
+                    placeholder={`Contoh Paste dari Excel / Ketik Manual:\nKELAPA\t10\t5\t0\t0\t0\tMilik Penggarap\nJATI\t0\t0\t12\t8\t4\nPISANG, 15, 5, 0, 0, 0`}
+                    className="w-full px-3.5 py-2.5 bg-slate-950 border border-white/20 rounded-xl text-xs font-mono text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-400"
+                  />
+
+                  {/* Live Preview of Parsed Plants */}
+                  {(() => {
+                    const previewPlants = parseInjectedPlantsText(bulkPlantInjectText);
+                    return (
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                        <div className="text-[11px] text-slate-300">
+                          {previewPlants.length > 0 ? (
+                            <span>
+                              Terdeteksi <strong className="text-emerald-400 font-black">{previewPlants.length} jenis tanaman</strong> siap di-inject:{' '}
+                              <span className="text-slate-400 font-mono">
+                                {previewPlants.slice(0, 5).map(p => p.jenis).join(', ')}
+                                {previewPlants.length > 5 ? ` +${previewPlants.length - 5} lainnya` : ''}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-500">Tempelkan (Ctrl+V) baris tanaman di kotak atas untuk melihat pratinjau...</span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={previewPlants.length === 0}
+                            onClick={() => handleApplyBulkPlantInject('REPLACE_ALL')}
+                            className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500 text-rose-200 hover:text-white border border-rose-500/30 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-40"
+                            title="Hapus isian tanaman lama di bidang ini dan ganti dengan hasil inject (otomatis rapat kiri)"
+                          >
+                            Timpa Semua Tanaman Bidang Ini
+                          </button>
+                          <button
+                            type="button"
+                            disabled={previewPlants.length === 0}
+                            onClick={() => handleApplyBulkPlantInject('APPEND')}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-40"
+                            title="Tambahkan ke urutan slot tanaman berikutnya tanpa jarak kosong"
+                          >
+                            + Tambahkan ke Slot Berikutnya
+                          </button>
+                          <button
+                            type="button"
+                            disabled={previewPlants.length === 0}
+                            onClick={() => handleApplyBulkPlantInject('AUTO_SUM')}
+                            className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs transition-all cursor-pointer disabled:opacity-40"
+                            title="Tambahkan dan otomatis jumlahkan jika ada jenis tanaman yang sama"
+                          >
+                            + Inject &amp; Gabungkan Jenis Sama (Auto-Sum)
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
 
               {/* Real-time Plant Repetition Warning & 1-Click Auto-Sum */}
               {analyzeRecordPlantRepetition(formData, true).repetitionGroups.length > 0 && (
@@ -1653,10 +1917,9 @@ export default function FormInput({
                     type="button"
                     onClick={() => {
                       const { updatedRecord } = consolidateRepeatedPlantsInRecord(formData, true);
-                      setFormData(updatedRecord);
-                      const popCount = (updatedRecord.plants || []).filter(
-                        p => (p.jenis || '').trim() !== '' || Boolean(p.keterangan && p.keterangan.trim() !== '')
-                      ).length;
+                      const compacted = compactPlantsArray(updatedRecord.plants);
+                      setFormData({ ...updatedRecord, plants: compacted });
+                      const popCount = compacted.filter(isPlantSlotOccupied).length;
                       setActivePlantsCount(Math.max(1, popCount));
                     }}
                     className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 shrink-0 cursor-pointer shadow-md"
@@ -1669,20 +1932,134 @@ export default function FormInput({
 
               <div className="space-y-4">
                 {Array.from({ length: activePlantsCount }).map((_, i) => {
-                  const p = formData.plants?.[i] || { jenis: '', sudah_menghasilkan: '', belum_menghasilkan: '', kecil: '', sedang: '', besar: '' };
+                  const p = formData.plants?.[i] || { jenis: '', sudah_menghasilkan: '', belum_menghasilkan: '', kecil: '', sedang: '', besar: '', keterangan: '' };
+                  const isSlotEmpty = !isPlantSlotOccupied(p);
                   return (
-                    <div key={i} className="p-5 rounded-2xl border border-emerald-500/20 bg-slate-900/60 relative space-y-4 shadow-lg shadow-black/10">
-                      {/* Close button to reset */}
-                      <button
-                        type="button"
-                        onClick={() => removePlantAt(i)}
-                        className="absolute top-3.5 right-3.5 p-1 text-slate-400 hover:text-rose-400 rounded-md hover:bg-white/5 transition-colors cursor-pointer"
-                        title="Hapus baris tanaman"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                    <div
+                      key={i}
+                      className={`p-5 rounded-2xl border relative space-y-4 shadow-lg shadow-black/10 transition-all ${
+                        isSlotEmpty
+                          ? 'border-amber-500/30 bg-slate-900/40'
+                          : 'border-emerald-500/20 bg-slate-900/60'
+                      }`}
+                    >
+                      {/* Top Header & Per-Slot Action Bar */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-white/10">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-0.5 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[11px] font-black font-mono">
+                            SLOT TANAMAN #{i + 1}
+                          </span>
+                          {isSlotEmpty && activePlantsCount > 1 && (
+                            <span className="text-[10px] font-bold text-amber-300 bg-amber-500/15 px-2 py-0.5 rounded border border-amber-500/30">
+                              Slot Kosong (Klik Hapus untuk Geser Kiri)
+                            </span>
+                          )}
+                        </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3 pt-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {i > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => movePlantSlot(i, -1)}
+                              className="px-2 py-1 text-[10px] font-bold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 flex items-center gap-1 cursor-pointer"
+                              title={`Geser Tanaman #${i + 1} ke posisi #${i}`}
+                            >
+                              <ArrowUp className="w-3 h-3" />
+                              <span>Geser Kiri/Naik</span>
+                            </button>
+                          )}
+                          {i < activePlantsCount - 1 && (
+                            <button
+                              type="button"
+                              onClick={() => movePlantSlot(i, 1)}
+                              className="px-2 py-1 text-[10px] font-bold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 flex items-center gap-1 cursor-pointer"
+                              title={`Geser Tanaman #${i + 1} ke posisi #${i + 2}`}
+                            >
+                              <ArrowDown className="w-3 h-3" />
+                              <span>Geser Kanan/Turun</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (slotInjectIndex === i) {
+                                setSlotInjectIndex(null);
+                                setSlotInjectText('');
+                              } else {
+                                setSlotInjectIndex(i);
+                                setSlotInjectText('');
+                              }
+                            }}
+                            className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border flex items-center gap-1 cursor-pointer transition-all ${
+                              slotInjectIndex === i
+                                ? 'bg-emerald-500 text-slate-950 border-emerald-400'
+                                : 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border-emerald-500/30'
+                            }`}
+                            title={`Inject / Tempel tanaman langsung di baris Tanaman #${i + 1}`}
+                          >
+                            <ClipboardPaste className="w-3 h-3" />
+                            <span>Inject di Baris #{i + 1}</span>
+                          </button>
+                          {activePlantsCount < 30 && (
+                            <button
+                              type="button"
+                              onClick={() => insertEmptyPlantAt(i)}
+                              className="px-2 py-1 text-[10px] font-bold text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg border border-amber-500/25 flex items-center gap-1 cursor-pointer"
+                              title={`Sisipkan 1 slot kosong di posisi #${i + 1} (menggeser tanaman ini ke #${i + 2})`}
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>Sisipkan Slot</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => removePlantAt(i)}
+                            className="px-2.5 py-1 text-[10px] font-bold text-rose-300 hover:text-white bg-rose-500/15 hover:bg-rose-600 rounded-lg border border-rose-500/30 flex items-center gap-1 transition-colors cursor-pointer"
+                            title={`Hapus Tanaman #${i + 1} dan otomatis geser tanaman berikutnya ke kiri`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Hapus &amp; Geser Kiri</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Inline Quick Inject Box for this specific slot */}
+                      {slotInjectIndex === i && (
+                        <div className="p-3 rounded-xl bg-slate-950/90 border border-emerald-500/40 space-y-2 animate-fadeIn">
+                          <label className="block text-[10px] font-extrabold text-emerald-300 uppercase">
+                            ⚡ Inject Tanaman di Baris #{i + 1} (Format: JENIS [Tab/Koma] SM [Tab/Koma] BM [Tab/Koma] K [Tab/Koma] S [Tab/Koma] B [Tab/Koma] KETERANGAN)
+                          </label>
+                          <div className="flex flex-col sm:flex-row gap-2">
+                            <input
+                              type="text"
+                              value={slotInjectText}
+                              onChange={(e) => setSlotInjectText(e.target.value)}
+                              placeholder="Contoh: KELAPA, 12, 4, 0, 0, 0, Milik Pak Budi (atau Paste dari Excel)"
+                              className="flex-1 px-3 py-1.5 bg-slate-900 border border-white/20 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-emerald-400"
+                            />
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleApplySlotInject(i, 'REPLACE_AT_SLOT')}
+                                disabled={!slotInjectText.trim()}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-bold cursor-pointer disabled:opacity-40"
+                              >
+                                Timpa Baris #{i + 1}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleApplySlotInject(i, 'INSERT_BEFORE_SLOT')}
+                                disabled={!slotInjectText.trim()}
+                                className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-[11px] font-black cursor-pointer disabled:opacity-40"
+                              >
+                                Sisipkan Sebelum #{i + 1}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3 pt-1">
                         <div className="sm:col-span-2">
                           <label className="block text-[10px] font-bold text-emerald-300 uppercase mb-1.5 tracking-wide">
                             Tanaman #{i + 1} - JENIS TANAMAN
@@ -1701,6 +2078,7 @@ export default function FormInput({
                           <input
                             type="number"
                             min="0"
+                            onWheel={(e) => (e.target as HTMLElement).blur()}
                             value={p.sudah_menghasilkan}
                             onChange={(e) => handlePlantChange(i, 'sudah_menghasilkan', e.target.value)}
                             className={`w-full px-3 py-2 bg-slate-950 border rounded-xl text-xs focus:outline-none focus:ring-1 font-semibold text-white placeholder:text-slate-500 ${
@@ -1715,6 +2093,7 @@ export default function FormInput({
                           <input
                             type="number"
                             min="0"
+                            onWheel={(e) => (e.target as HTMLElement).blur()}
                             value={p.belum_menghasilkan}
                             onChange={(e) => handlePlantChange(i, 'belum_menghasilkan', e.target.value)}
                             className={`w-full px-3 py-2 bg-slate-950 border rounded-xl text-xs focus:outline-none focus:ring-1 font-semibold text-white placeholder:text-slate-500 ${
@@ -1732,6 +2111,7 @@ export default function FormInput({
                             <input
                               type="number"
                               min="0"
+                              onWheel={(e) => (e.target as HTMLElement).blur()}
                               value={p.kecil}
                               onChange={(e) => handlePlantChange(i, 'kecil', e.target.value)}
                               className={`w-full px-2 py-2 bg-slate-950 border rounded-xl text-xs text-center focus:outline-none focus:ring-1 font-semibold text-white placeholder:text-slate-500 ${
@@ -1743,6 +2123,7 @@ export default function FormInput({
                             <input
                               type="number"
                               min="0"
+                              onWheel={(e) => (e.target as HTMLElement).blur()}
                               value={p.sedang}
                               onChange={(e) => handlePlantChange(i, 'sedang', e.target.value)}
                               className={`w-full px-2 py-2 bg-slate-950 border rounded-xl text-xs text-center focus:outline-none focus:ring-1 font-semibold text-white placeholder:text-slate-500 ${
@@ -1754,6 +2135,7 @@ export default function FormInput({
                             <input
                               type="number"
                               min="0"
+                              onWheel={(e) => (e.target as HTMLElement).blur()}
                               value={p.besar}
                               onChange={(e) => handlePlantChange(i, 'besar', e.target.value)}
                               className={`w-full px-2 py-2 bg-slate-950 border rounded-xl text-xs text-center focus:outline-none focus:ring-1 font-semibold text-white placeholder:text-slate-500 ${
@@ -1785,7 +2167,7 @@ export default function FormInput({
                 {activePlantsCount < 30 && (
                   <button
                     type="button"
-                    onClick={() => setActivePlantsCount(prev => prev + 1)}
+                    onClick={() => setActivePlantsCount(prev => Math.min(30, prev + 1))}
                     className="w-full py-3 bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-300 rounded-xl text-xs font-extrabold border border-dashed border-emerald-500/30 hover:border-emerald-500/40 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <Plus className="w-4 h-4" />

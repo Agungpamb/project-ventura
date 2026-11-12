@@ -170,6 +170,79 @@ export const getSheetHeaders = (): string[] => {
   return [...baseHeaders, ...buildingHeaders, ...plantHeaders, ...adminAndLinksHeaders, ...plantKeteranganHeaders];
 };
 
+export const isBuildingSlotOccupied = (b?: Partial<BuildingData> | null): boolean => {
+  if (!b) return false;
+  return (
+    (b.jenis || "").trim() !== "" ||
+    (b.bentuk || "").trim() !== "" ||
+    (b.luas || "").trim() !== ""
+  );
+};
+
+export const compactBuildingsArray = (buildings?: BuildingData[]): BuildingData[] => {
+  const occupied = (Array.isArray(buildings) ? buildings : [])
+    .filter(isBuildingSlotOccupied)
+    .slice(0, 8)
+    .map(b => ({
+      luas: (b.luas || "").trim(),
+      bentuk: (b.bentuk || "").trim(),
+      jenis: (b.jenis || "").trim()
+    }));
+  while (occupied.length < 8) {
+    occupied.push({ luas: "", bentuk: "", jenis: "" });
+  }
+  return occupied;
+};
+
+export const isPlantSlotOccupied = (p?: Partial<PlantData> | null): boolean => {
+  if (!p) return false;
+  const jenis = (p.jenis || "").trim();
+  const ket = (p.keterangan || "").trim();
+  if (jenis !== "" || ket !== "") return true;
+
+  const hasPositiveQty = [
+    p.sudah_menghasilkan,
+    p.belum_menghasilkan,
+    p.kecil,
+    p.sedang,
+    p.besar
+  ].some(val => {
+    const clean = (val || "").trim();
+    if (!clean) return false;
+    const num = parseFloat(clean.replace(",", "."));
+    return !isNaN(num) ? num > 0 : clean !== "0";
+  });
+
+  return hasPositiveQty;
+};
+
+export const compactPlantsArray = (plants?: PlantData[]): PlantData[] => {
+  const occupied = (Array.isArray(plants) ? plants : [])
+    .filter(isPlantSlotOccupied)
+    .slice(0, 30)
+    .map(p => ({
+      jenis: (p.jenis || "").trim(),
+      sudah_menghasilkan: (p.sudah_menghasilkan || "").trim(),
+      belum_menghasilkan: (p.belum_menghasilkan || "").trim(),
+      kecil: (p.kecil || "").trim(),
+      sedang: (p.sedang || "").trim(),
+      besar: (p.besar || "").trim(),
+      keterangan: (p.keterangan || "").trim()
+    }));
+  while (occupied.length < 30) {
+    occupied.push({
+      jenis: "",
+      sudah_menghasilkan: "",
+      belum_menghasilkan: "",
+      kecil: "",
+      sedang: "",
+      besar: "",
+      keterangan: ""
+    });
+  }
+  return occupied;
+};
+
 // Maps a LandRecord object into a row array aligned with headers
 export const recordToRow = (record: LandRecord): string[] => {
   // Ensure CODE is always populated
@@ -182,6 +255,10 @@ export const recordToRow = (record: LandRecord): string[] => {
       recordCode = `${cleanDesa}_${cleanSpan}_${cleanNobid}`;
     }
   }
+
+  // Always compact buildings and plants left so there are never empty gaps between occupied slots
+  const compactedBuildings = compactBuildingsArray(record.buildings);
+  const compactedPlants = compactPlantsArray(record.plants);
 
   const row: string[] = [
     recordCode,
@@ -209,13 +286,13 @@ export const recordToRow = (record: LandRecord): string[] => {
 
   // Buildings (8 items, 3 fields each)
   for (let i = 0; i < 8; i++) {
-    const b = record.buildings?.[i] || { luas: "", bentuk: "", jenis: "" };
+    const b = compactedBuildings[i] || { luas: "", bentuk: "", jenis: "" };
     row.push(b.luas || "", b.bentuk || "", b.jenis || "");
   }
 
   // Plants (30 items, 6 fields each)
   for (let i = 0; i < 30; i++) {
-    const p = record.plants?.[i] || { jenis: "", sudah_menghasilkan: "", belum_menghasilkan: "", kecil: "", sedang: "", besar: "", keterangan: "" };
+    const p = compactedPlants[i] || { jenis: "", sudah_menghasilkan: "", belum_menghasilkan: "", kecil: "", sedang: "", besar: "", keterangan: "" };
     row.push(
       p.jenis || "",
       p.sudah_menghasilkan || "",
@@ -281,7 +358,7 @@ export const recordToRow = (record: LandRecord): string[] => {
 
   // Plant Keterangan (30 columns at the far right of the database, indices 275..304)
   for (let i = 0; i < 30; i++) {
-    const p = record.plants?.[i];
+    const p = compactedPlants[i];
     row.push(p?.keterangan || "");
   }
 
@@ -427,7 +504,6 @@ export const rowToRecord = (row: any[], index?: number, headers?: any[]): LandRe
   record.TTD_PEMILIK = getVal(adminStartIdx + 49);
 
   // Plant Keterangan (30 columns at the far right of the database, default index 275..304)
-  // Also auto-detects if the spreadsheet has an explicit header or was extended from an older 264/267/268-column template
   let plantKetStartIdx = adminStartIdx + 50; // 275
   if (Array.isArray(headers) && headers.length > 0) {
     const explicitIdx = headers.findIndex(h => {
@@ -441,11 +517,7 @@ export const rowToRecord = (row: any[], index?: number, headers?: any[]): LandRe
     });
     if (explicitIdx >= 225) {
       plantKetStartIdx = explicitIdx;
-    } else if (headers.length >= 294 && headers.length <= 305) {
-      plantKetStartIdx = headers.length - 30;
     }
-  } else if (row.length >= 294 && row.length < 305 && !getVal(adminStartIdx + 50)) {
-    plantKetStartIdx = row.length - 30;
   }
 
   for (let i = 0; i < 30; i++) {
@@ -454,6 +526,11 @@ export const rowToRecord = (row: any[], index?: number, headers?: any[]): LandRe
       record.plants[i].keterangan = ketVal;
     }
   }
+
+  // Automatically compact (shift-left) buildings and plants so any empty slots/gaps in the spreadsheet
+  // are eliminated and all occupied plants + their keterangan align from slot #1 without holes
+  record.buildings = compactBuildingsArray(record.buildings);
+  record.plants = compactPlantsArray(record.plants);
 
   return record as LandRecord;
 };

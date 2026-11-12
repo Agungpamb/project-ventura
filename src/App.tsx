@@ -184,7 +184,7 @@ async function fetchPublicCsvContent(url: string): Promise<string> {
   throw new Error("Tautan CSV publik tidak dapat diakses atau spreadsheet belum dipublikasikan ke web. Pastikan Anda telah memilih menu File ➔ Bagikan ➔ Publikasikan ke Web (format .CSV).");
 }
 
-import { rowToRecord } from './types';
+import { rowToRecord, compactPlantsArray, compactBuildingsArray } from './types';
 
 export default function App() {
   const navigate = useNavigate();
@@ -1587,10 +1587,11 @@ export default function App() {
             if (csvRows.length >= 1) {
               const dataRows = csvRows.slice(1);
               const parsedRecords = dataRows
-                .filter(row => row && row.length > 0 && row.some(cell => cell && String(cell).trim() !== '') && String(row[0]).trim().toUpperCase() !== 'CODE' && String(row[1]).trim().toUpperCase() !== 'DESA')
-                .map((row, idx) => {
-                  const record = rowToRecord(row, idx, csvRows[0]);
-                  record.rowNumber = idx + 2;
+                .map((row, rawIdx) => ({ row, rawIdx }))
+                .filter(({ row }) => row && row.length > 0 && row.some(cell => cell && String(cell).trim() !== '') && String(row[0]).trim().toUpperCase() !== 'CODE' && String(row[1]).trim().toUpperCase() !== 'DESA')
+                .map(({ row, rawIdx }) => {
+                  const record = rowToRecord(row, rawIdx, csvRows[0]);
+                  record.rowNumber = rawIdx + 2;
                   if (!record.CODE || record.CODE.trim() === '') {
                     const cleanDesa = (record.DESA || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
                     const cleanSpan = (record.SPAN || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
@@ -1598,7 +1599,7 @@ export default function App() {
                     if (cleanDesa && cleanSpan && cleanNobid) {
                       record.CODE = `${cleanDesa}_${cleanSpan}_${cleanNobid}`;
                     } else {
-                      record.CODE = `BIDANG_${idx + 2}`;
+                      record.CODE = `BIDANG_${rawIdx + 2}`;
                     }
                   }
                   return record;
@@ -1784,15 +1785,16 @@ export default function App() {
             if (csvRows.length > 1) {
               const dataRows = csvRows.slice(1);
               const parsedRecords = dataRows
-                .filter(row => row && row.length > 0 && row.some(cell => cell && String(cell).trim() !== '') && String(row[0]).trim().toUpperCase() !== 'CODE' && String(row[1]).trim().toUpperCase() !== 'DESA')
-                .map((row, idx) => {
-                  const record = rowToRecord(row, idx, csvRows[0]);
-                  record.rowNumber = idx + 2;
+                .map((row, rawIdx) => ({ row, rawIdx }))
+                .filter(({ row }) => row && row.length > 0 && row.some(cell => cell && String(cell).trim() !== '') && String(row[0]).trim().toUpperCase() !== 'CODE' && String(row[1]).trim().toUpperCase() !== 'DESA')
+                .map(({ row, rawIdx }) => {
+                  const record = rowToRecord(row, rawIdx, csvRows[0]);
+                  record.rowNumber = rawIdx + 2;
                   if (!record.CODE || record.CODE.trim() === '') {
                     const cleanDesa = (record.DESA || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
                     const cleanSpan = (record.SPAN || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
                     const cleanNobid = (record.NOBID || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
-                    record.CODE = (cleanDesa && cleanSpan && cleanNobid) ? `${cleanDesa}_${cleanSpan}_${cleanNobid}` : `BIDANG_${idx + 2}`;
+                    record.CODE = (cleanDesa && cleanSpan && cleanNobid) ? `${cleanDesa}_${cleanSpan}_${cleanNobid}` : `BIDANG_${rawIdx + 2}`;
                   }
                   return record;
                 });
@@ -1884,10 +1886,11 @@ export default function App() {
           if (csvRows.length >= 1) {
             const dataRows = csvRows.slice(1);
             const parsedRecords = dataRows
-              .filter(row => row && row.length > 0 && row.some(cell => cell && String(cell).trim() !== '') && String(row[0]).trim().toUpperCase() !== 'CODE' && String(row[1]).trim().toUpperCase() !== 'DESA')
-              .map((row, idx) => {
-                const record = rowToRecord(row, idx, csvRows[0]);
-                record.rowNumber = idx + 2;
+              .map((row, rawIdx) => ({ row, rawIdx }))
+              .filter(({ row }) => row && row.length > 0 && row.some(cell => cell && String(cell).trim() !== '') && String(row[0]).trim().toUpperCase() !== 'CODE' && String(row[1]).trim().toUpperCase() !== 'DESA')
+              .map(({ row, rawIdx }) => {
+                const record = rowToRecord(row, rawIdx, csvRows[0]);
+                record.rowNumber = rawIdx + 2;
                 if (!record.CODE || record.CODE.trim() === '') {
                   const cleanDesa = (record.DESA || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
                   const cleanSpan = (record.SPAN || '').trim().toUpperCase().replace(/[\s\/\\?%*:|"]/g, '_');
@@ -1895,7 +1898,7 @@ export default function App() {
                   if (cleanDesa && cleanSpan && cleanNobid) {
                     record.CODE = `${cleanDesa}_${cleanSpan}_${cleanNobid}`;
                   } else {
-                    record.CODE = `BIDANG_${idx + 2}`;
+                    record.CODE = `BIDANG_${rawIdx + 2}`;
                   }
                 }
                 return record;
@@ -2304,39 +2307,68 @@ export default function App() {
     fetchedRecords: LandRecord[],
     targetRecord: LandRecord
   ): LandRecord[] => {
+    const compactedTarget: LandRecord = {
+      ...targetRecord,
+      plants: compactPlantsArray(targetRecord.plants),
+      buildings: compactBuildingsArray(targetRecord.buildings)
+    };
     const cleanList: LandRecord[] = [];
     const seenIds = new Set<string>();
     const seenCodes = new Set<string>();
 
+    const targetCodeKey = (compactedTarget.CODE || '').trim().toUpperCase();
+    const targetIdKey = (compactedTarget.ID_UNIK || '').trim();
+    let foundTarget = false;
+
     for (const r of fetchedRecords) {
       const codeKey = (r.CODE || '').trim().toUpperCase();
-      const idKey = r.ID_UNIK || '';
+      const idKey = (r.ID_UNIK || '').trim();
       if (codeKey && seenCodes.has(codeKey)) continue;
       if (idKey && seenIds.has(idKey)) continue;
       if (codeKey) seenCodes.add(codeKey);
       if (idKey) seenIds.add(idKey);
-      cleanList.push(r);
+
+      const isTargetMatch =
+        (targetIdKey && idKey && idKey === targetIdKey) ||
+        (targetCodeKey && codeKey && codeKey === targetCodeKey);
+
+      if (isTargetMatch && !foundTarget) {
+        foundTarget = true;
+        cleanList.push({
+          ...r,
+          ...compactedTarget,
+          rowNumber: r.rowNumber || compactedTarget.rowNumber,
+          plants: compactedTarget.plants,
+          buildings: compactedTarget.buildings
+        });
+      } else {
+        cleanList.push({
+          ...r,
+          plants: compactPlantsArray(r.plants),
+          buildings: compactBuildingsArray(r.buildings)
+        });
+      }
     }
 
-    const targetCodeKey = (targetRecord.CODE || '').trim().toUpperCase();
-    const targetIdKey = targetRecord.ID_UNIK || '';
-    const existsInClean = cleanList.some(r => 
-      (targetIdKey && r.ID_UNIK === targetIdKey) || 
-      (targetCodeKey && r.CODE && r.CODE.trim().toUpperCase() === targetCodeKey)
-    );
-
-    if (!existsInClean) {
-      cleanList.push(targetRecord);
+    if (!foundTarget) {
+      cleanList.push(compactedTarget);
     }
 
     return cleanList;
   };
 
   // Callback to add/update a record in the sheet
-  const handleSaveRecord = async (record: LandRecord, isEdit: boolean, originalRecord?: LandRecord | null) => {
+  const handleSaveRecord = async (rawRecord: LandRecord, isEdit: boolean, originalRecord?: LandRecord | null) => {
     if (isOperatorLocked && operatorLockedProjectId && activeProjectId !== operatorLockedProjectId) {
       throw new Error('Izin Ditolak: Akun operator Anda dikunci hanya untuk jalur proyek yang teregister.');
     }
+
+    // Always compact plants and buildings left so deleted slots never leave empty gaps
+    const record: LandRecord = {
+      ...rawRecord,
+      plants: compactPlantsArray(rawRecord.plants),
+      buildings: compactBuildingsArray(rawRecord.buildings)
+    };
 
     // Check if we have an active or restorable token
     let activeToken = token;
@@ -2355,36 +2387,51 @@ export default function App() {
     const isOfflineOrGuest = !activeToken || activeToken === 'GUEST_BYPASS' || !targetSpreadsheetId || targetSpreadsheetId === 'guest_bypass';
 
     // 1. Optimistic update immediately so data ALWAYS persists ("nyantol" langsung)
+    // Match strictly ONE record by unique identity (never overwrite a neighbor record via colliding rowNumber!)
     const targetCode = (record.CODE || '').trim().toUpperCase();
     const origCode = (originalRecord?.CODE || '').trim().toUpperCase();
     const origId = (originalRecord?.ID_UNIK || record.ID_UNIK || '').trim();
     const origRow = originalRecord?.rowNumber || record.rowNumber;
+    const origDesa = (originalRecord?.DESA || '').trim().toUpperCase();
+    const origSpan = (originalRecord?.SPAN || '').trim().toUpperCase();
+    const origNobid = (originalRecord?.NOBID || '').trim().toUpperCase();
 
     let updatedList: LandRecord[];
     if (isEdit) {
-      let matched = false;
-      updatedList = records.map(r => {
-        const rCode = (r.CODE || '').trim().toUpperCase();
-        const rId = (r.ID_UNIK || '').trim();
-        const isMatch = (origId && rId && rId === origId) ||
-                        (origCode && rCode && rCode === origCode) ||
-                        (origRow && r.rowNumber && r.rowNumber === origRow) ||
-                        (targetCode && rCode && rCode === targetCode);
-        if (isMatch) {
-          matched = true;
+      let matchIdx = -1;
+      if (origId) {
+        matchIdx = records.findIndex(r => (r.ID_UNIK || '').trim() === origId);
+      }
+      if (matchIdx === -1 && origCode) {
+        matchIdx = records.findIndex(r => (r.CODE || '').trim().toUpperCase() === origCode);
+      }
+      if (matchIdx === -1 && origDesa && origSpan && origNobid) {
+        matchIdx = records.findIndex(
+          r =>
+            (r.DESA || '').trim().toUpperCase() === origDesa &&
+            (r.SPAN || '').trim().toUpperCase() === origSpan &&
+            (r.NOBID || '').trim().toUpperCase() === origNobid
+        );
+      }
+      if (matchIdx === -1 && targetCode) {
+        matchIdx = records.findIndex(r => (r.CODE || '').trim().toUpperCase() === targetCode);
+      }
+
+      if (matchIdx !== -1) {
+        updatedList = records.map((r, idx) => {
+          if (idx !== matchIdx) return r;
           return {
             ...r,
             ...record,
+            plants: record.plants,
+            buildings: record.buildings,
             rowNumber: r.rowNumber || record.rowNumber || origRow,
             ID_UNIK: r.ID_UNIK || origId || record.ID_UNIK,
             _lastModified: Date.now(),
             _needsSheetSync: isOfflineOrGuest
           };
-        }
-        return r;
-      });
-
-      if (!matched) {
+        });
+      } else {
         updatedList = [...records, {
           ...record,
           rowNumber: record.rowNumber || origRow,
@@ -2394,9 +2441,10 @@ export default function App() {
         }];
       }
     } else {
+      const maxExistingRow = records.reduce((max, r) => Math.max(max, r.rowNumber || 0), records.length + 1);
       const newRecordWithRow = {
         ...record,
-        rowNumber: records.length + 2,
+        rowNumber: maxExistingRow + 1,
         ID_UNIK: record.ID_UNIK || `LOCAL_${Date.now()}`,
         _lastModified: Date.now(),
         _needsSheetSync: isOfflineOrGuest
@@ -2597,17 +2645,36 @@ export default function App() {
     const isOfflineOrGuest = !activeToken || activeToken === 'GUEST_BYPASS' || !targetSpreadsheetId || targetSpreadsheetId === 'guest_bypass';
 
     // 1. Optimistically update local state & cache immediately
+    updatedRecord.plants = compactPlantsArray(updatedRecord.plants);
+    updatedRecord.buildings = compactBuildingsArray(updatedRecord.buildings);
+
     const origId = (updatedRecord.ID_UNIK || '').trim();
     const targetCode = (updatedRecord.CODE || '').trim().toUpperCase();
 
-    const updatedList = records.map(r => {
-      const rCode = (r.CODE || '').trim().toUpperCase();
-      const rId = (r.ID_UNIK || '').trim();
-      const isMatch = (origId && rId && rId === origId) ||
-                      (targetCode && rCode === targetCode) ||
-                      (updatedRecord.rowNumber && r.rowNumber === updatedRecord.rowNumber);
-      return isMatch ? { ...r, ...updatedRecord, _lastModified: Date.now(), _needsSheetSync: isOfflineOrGuest } : r;
-    });
+    let matchIdx = -1;
+    if (origId) {
+      matchIdx = records.findIndex(r => (r.ID_UNIK || '').trim() === origId);
+    }
+    if (matchIdx === -1 && targetCode) {
+      matchIdx = records.findIndex(r => (r.CODE || '').trim().toUpperCase() === targetCode);
+    }
+    if (matchIdx === -1 && updatedRecord.DESA && updatedRecord.SPAN && updatedRecord.NOBID) {
+      const uDesa = updatedRecord.DESA.trim().toUpperCase();
+      const uSpan = updatedRecord.SPAN.trim().toUpperCase();
+      const uNobid = updatedRecord.NOBID.trim().toUpperCase();
+      matchIdx = records.findIndex(
+        r =>
+          (r.DESA || '').trim().toUpperCase() === uDesa &&
+          (r.SPAN || '').trim().toUpperCase() === uSpan &&
+          (r.NOBID || '').trim().toUpperCase() === uNobid
+      );
+    }
+
+    const updatedList = records.map((r, idx) =>
+      idx === matchIdx
+        ? { ...r, ...updatedRecord, rowNumber: r.rowNumber || updatedRecord.rowNumber, _lastModified: Date.now(), _needsSheetSync: isOfflineOrGuest }
+        : r
+    );
     const sortedRefreshed = [...updatedList].sort(compareLandRecords);
     setRecords(sortedRefreshed);
     try {
