@@ -73,8 +73,49 @@ export function saveLayerToLocalStorage(layer: SavedGeoJSONLayer): void {
 }
 
 /**
+ * Computes UTF-8 byte length of a string (for accurate Firestore 1MB document limit checks).
+ */
+function getUtf8ByteLength(str: string): number {
+  if (typeof TextEncoder !== 'undefined') {
+    return new TextEncoder().encode(str).length;
+  }
+  return str.length * 2;
+}
+
+/**
+ * Splits GeoJSON features into JSON-serialized chunks guaranteed to stay well under Firestore's 1MB doc limit.
+ */
+function buildFeatureJsonChunks(features: any[], maxChunkBytes: number = 450000): string[] {
+  const chunks: string[] = [];
+  let currentBatch: any[] = [];
+  let currentBytes = 2; // "[]"
+
+  for (const feat of features) {
+    const featStr = JSON.stringify(feat);
+    const featBytes = getUtf8ByteLength(featStr) + 1; // +1 for comma
+
+    if (currentBatch.length > 0 && currentBytes + featBytes > maxChunkBytes) {
+      chunks.push(JSON.stringify(currentBatch));
+      currentBatch = [feat];
+      currentBytes = 2 + featBytes;
+    } else {
+      currentBatch.push(feat);
+      currentBytes += featBytes;
+    }
+  }
+
+  if (currentBatch.length > 0) {
+    chunks.push(JSON.stringify(currentBatch));
+  }
+
+  return chunks;
+}
+
+/**
  * Saves a GeoJSON layer to Firestore.
- * Automatically chunks large feature collections across subcollection documents if total payload > 700KB.
+ * Serializes GeoJSON payloads as JSON strings (`dataJson` / `featuresJson`) because Cloud Firestore
+ * does not support nested arrays (which GeoJSON LineString/Polygon/MultiPolygon coordinates require).
+ * Automatically chunks large feature collections across subcollection documents if payload > 650KB.
  */
 export async function saveGeoJSONLayerToFirestore(layer: SavedGeoJSONLayer): Promise<void> {
   const {
@@ -94,7 +135,9 @@ export async function saveGeoJSONLayerToFirestore(layer: SavedGeoJSONLayer): Pro
 
   const nowIso = new Date().toISOString();
   const docRef = doc(db, 'geojson_layers', id);
-  const dataString = JSON.stringify(data || {});
+  const safeData = data && typeof data === 'object' ? data : { type: 'FeatureCollection', features: [] };
+  const dataString = JSON.stringify(safeData);
+  const totalBytes = getUtf8ByteLength(dataString);
 
   const cleanupStaleChunks = async (keepCount: number) => {
     try {
@@ -114,13 +157,14 @@ export async function saveGeoJSONLayerToFirestore(layer: SavedGeoJSONLayer): Pro
     }
   };
 
-  // Under 700KB: Save directly in single document
-  if (dataString.length < 700000) {
+  // Under 650KB: Save directly in single document as JSON string (avoids Firestore nested array error)
+  if (totalBytes < 650000) {
     await cleanupStaleChunks(0);
     await setDoc(docRef, {
       name,
       type,
-      data,
+      dataJson: dataString,
+      data: null,
       visible,
       isDefault,
       fieldMapping,
@@ -132,39 +176,35 @@ export async function saveGeoJSONLayerToFirestore(layer: SavedGeoJSONLayer): Pro
       createdAt: layer.createdAt || nowIso,
       updatedAt: layer.updatedAt || nowIso,
       chunked: false,
-      totalChunks: 0
+      totalChunks: 0,
+      totalFeatures: Array.isArray(safeData.features) ? safeData.features.length : 0
     });
     return;
   }
 
-  // Large GeoJSON (>700KB): Chunk features array across subcollection
-  const features = Array.isArray(data?.features) ? data.features : [];
-  const targetChunkBytes = 400000; // ~400KB per chunk
-  const estimatedChunkCount = Math.max(2, Math.ceil(dataString.length / targetChunkBytes));
-  const chunkSize = Math.max(10, Math.ceil(features.length / estimatedChunkCount));
-  
-  const chunks: any[][] = [];
-  for (let i = 0; i < features.length; i += chunkSize) {
-    chunks.push(features.slice(i, i + chunkSize));
-  }
+  // Large GeoJSON (>= 650KB): Chunk features array across subcollection as JSON strings
+  const features = Array.isArray(safeData.features) ? safeData.features : [];
+  const featureJsonChunks = buildFeatureJsonChunks(features, 450000);
 
   // 1. Write chunks first so any snapshot listener reading the parent doc immediately sees complete chunks
-  for (let i = 0; i < chunks.length; i++) {
+  for (let i = 0; i < featureJsonChunks.length; i++) {
     const chunkRef = doc(db, 'geojson_layers', id, 'chunks', `chunk_${i}`);
     await setDoc(chunkRef, {
       chunkIndex: i,
-      features: chunks[i]
+      featuresJson: featureJsonChunks[i]
     });
   }
 
   // 2. Remove any leftover chunks from an older larger version
-  await cleanupStaleChunks(chunks.length);
+  await cleanupStaleChunks(featureJsonChunks.length);
 
   // 3. Save metadata document in root collection (triggers realtime onSnapshot for all roles)
+  const { features: _omitFeatures, ...metaWithoutFeatures } = safeData;
   await setDoc(docRef, {
     name,
     type,
-    data: { ...data, features: [] },
+    dataJson: JSON.stringify({ ...metaWithoutFeatures, type: safeData.type || 'FeatureCollection', features: [] }),
+    data: null,
     visible,
     isDefault,
     fieldMapping,
@@ -176,19 +216,27 @@ export async function saveGeoJSONLayerToFirestore(layer: SavedGeoJSONLayer): Pro
     createdAt: layer.createdAt || nowIso,
     updatedAt: layer.updatedAt || nowIso,
     chunked: true,
-    totalChunks: chunks.length,
+    totalChunks: featureJsonChunks.length,
     totalFeatures: features.length
   });
 }
 
 /**
  * Reconstructs a full layer from a Firestore doc snapshot (assembling chunked subcollections if needed).
+ * Supports both JSON-stringified payloads (`dataJson`/`featuresJson`) and legacy object payloads.
  */
 export async function loadGeoJSONLayerDoc(docSnap: any): Promise<SavedGeoJSONLayer> {
   const item = docSnap.data();
   const layerId = docSnap.id;
 
-  let layerData = item.data;
+  let layerData: any = item.data;
+  if (typeof item.dataJson === 'string' && item.dataJson.trim()) {
+    try {
+      layerData = JSON.parse(item.dataJson);
+    } catch (parseErr) {
+      console.warn(`Gagal parsing dataJson GeoJSON ${layerId}:`, parseErr);
+    }
+  }
 
   // Reconstruct chunked features
   if (item.chunked && item.totalChunks > 0) {
@@ -197,9 +245,20 @@ export async function loadGeoJSONLayerDoc(docSnap: any): Promise<SavedGeoJSONLay
       const chunkDocs: { index: number; features: any[] }[] = [];
       chunksSnap.forEach(cSnap => {
         const cData = cSnap.data();
+        let chunkFeatures: any[] = [];
+        if (typeof cData.featuresJson === 'string' && cData.featuresJson.trim()) {
+          try {
+            const parsed = JSON.parse(cData.featuresJson);
+            if (Array.isArray(parsed)) chunkFeatures = parsed;
+          } catch (e) {
+            console.warn(`Gagal parsing chunk ${cSnap.id} dari ${layerId}:`, e);
+          }
+        } else if (Array.isArray(cData.features)) {
+          chunkFeatures = cData.features;
+        }
         chunkDocs.push({
           index: cData.chunkIndex ?? 0,
-          features: cData.features || []
+          features: chunkFeatures
         });
       });
 
@@ -207,8 +266,8 @@ export async function loadGeoJSONLayerDoc(docSnap: any): Promise<SavedGeoJSONLay
       const allFeatures = chunkDocs.flatMap(c => c.features);
 
       layerData = {
-        ...item.data,
-        type: item.data?.type || 'FeatureCollection',
+        ...(layerData && typeof layerData === 'object' ? layerData : {}),
+        type: layerData?.type || 'FeatureCollection',
         features: allFeatures
       };
     } catch (err) {
