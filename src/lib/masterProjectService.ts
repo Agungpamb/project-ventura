@@ -271,6 +271,10 @@ function mergeWithExisting(masterList: ProjectConfig[], existing?: ProjectConfig
       return {
         ...m,
         uploadsFolderId: matched.uploadsFolderId || m.uploadsFolderId,
+        geojsonFolderId: matched.geojsonFolderId || m.geojsonFolderId || null,
+        resumeUploadsFolderId: matched.resumeUploadsFolderId || m.resumeUploadsFolderId || null,
+        agencyLetterUploadsFolderId: matched.agencyLetterUploadsFolderId || m.agencyLetterUploadsFolderId || null,
+        inventoryPdfConfig: matched.inventoryPdfConfig || m.inventoryPdfConfig,
         // If local user specifically configured a custom upload folder or stages
         resumeStages: matched.resumeStages || m.resumeStages
       };

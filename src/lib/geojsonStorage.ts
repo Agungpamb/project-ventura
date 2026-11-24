@@ -11,8 +11,35 @@ export interface SavedGeoJSONLayer {
   fieldMapping?: any;
   projectId?: string;
   createdAt?: string;
+  updatedAt?: string;
   chunked?: boolean;
   totalChunks?: number;
+  driveFileId?: string | null;
+  driveFolderId?: string | null;
+  driveModifiedTime?: string | null;
+  source?: 'drive' | 'upload' | 'deployed';
+}
+
+/**
+ * Generates a deterministic Firestore document ID for a Drive-synced GeoJSON layer
+ * so repeated syncs overwrite the same layer instead of creating duplicates.
+ */
+export function getDriveLayerDocId(projectId: string, type: 'bidang' | 'jalur' | 'tower'): string {
+  const safeProj = (projectId || 'global').replace(/[^a-zA-Z0-9_-]+/g, '_');
+  return `drive_${safeProj}_${type}`;
+}
+
+/**
+ * Removes a layer from localStorage cache cleanly.
+ */
+export function removeLayerFromLocalStorage(id: string): void {
+  try {
+    const localGeoJSONs = JSON.parse(localStorage.getItem('local_geojson_layers') || '[]');
+    const filtered = localGeoJSONs.filter((l: any) => l.id !== id);
+    localStorage.setItem('local_geojson_layers', JSON.stringify(filtered));
+  } catch (e) {
+    console.warn('Failed removing layer from localStorage:', e);
+  }
 }
 
 /**
@@ -50,13 +77,46 @@ export function saveLayerToLocalStorage(layer: SavedGeoJSONLayer): void {
  * Automatically chunks large feature collections across subcollection documents if total payload > 700KB.
  */
 export async function saveGeoJSONLayerToFirestore(layer: SavedGeoJSONLayer): Promise<void> {
-  const { id, name, type, data, visible = true, isDefault = false, fieldMapping = null, projectId = 'global' } = layer;
-  
+  const {
+    id,
+    name,
+    type,
+    data,
+    visible = true,
+    isDefault = false,
+    fieldMapping = null,
+    projectId = 'global',
+    driveFileId = null,
+    driveFolderId = null,
+    driveModifiedTime = null,
+    source = 'upload'
+  } = layer;
+
+  const nowIso = new Date().toISOString();
   const docRef = doc(db, 'geojson_layers', id);
   const dataString = JSON.stringify(data || {});
 
+  const cleanupStaleChunks = async (keepCount: number) => {
+    try {
+      const existingChunks = await getDocs(collection(docRef, 'chunks'));
+      const deletePromises: Promise<void>[] = [];
+      existingChunks.forEach(cSnap => {
+        const idx = cSnap.data()?.chunkIndex;
+        if (keepCount === 0 || (typeof idx === 'number' && idx >= keepCount)) {
+          deletePromises.push(deleteDoc(cSnap.ref));
+        }
+      });
+      if (deletePromises.length > 0) {
+        await Promise.all(deletePromises);
+      }
+    } catch (e) {
+      // Ignore if chunks subcollection does not exist yet
+    }
+  };
+
   // Under 700KB: Save directly in single document
   if (dataString.length < 700000) {
+    await cleanupStaleChunks(0);
     await setDoc(docRef, {
       name,
       type,
@@ -65,8 +125,14 @@ export async function saveGeoJSONLayerToFirestore(layer: SavedGeoJSONLayer): Pro
       isDefault,
       fieldMapping,
       projectId,
-      createdAt: layer.createdAt || new Date().toISOString(),
-      chunked: false
+      driveFileId,
+      driveFolderId,
+      driveModifiedTime,
+      source,
+      createdAt: layer.createdAt || nowIso,
+      updatedAt: layer.updatedAt || nowIso,
+      chunked: false,
+      totalChunks: 0
     });
     return;
   }
@@ -82,7 +148,19 @@ export async function saveGeoJSONLayerToFirestore(layer: SavedGeoJSONLayer): Pro
     chunks.push(features.slice(i, i + chunkSize));
   }
 
-  // 1. Save metadata document in root collection
+  // 1. Write chunks first so any snapshot listener reading the parent doc immediately sees complete chunks
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkRef = doc(db, 'geojson_layers', id, 'chunks', `chunk_${i}`);
+    await setDoc(chunkRef, {
+      chunkIndex: i,
+      features: chunks[i]
+    });
+  }
+
+  // 2. Remove any leftover chunks from an older larger version
+  await cleanupStaleChunks(chunks.length);
+
+  // 3. Save metadata document in root collection (triggers realtime onSnapshot for all roles)
   await setDoc(docRef, {
     name,
     type,
@@ -91,20 +169,16 @@ export async function saveGeoJSONLayerToFirestore(layer: SavedGeoJSONLayer): Pro
     isDefault,
     fieldMapping,
     projectId,
-    createdAt: layer.createdAt || new Date().toISOString(),
+    driveFileId,
+    driveFolderId,
+    driveModifiedTime,
+    source,
+    createdAt: layer.createdAt || nowIso,
+    updatedAt: layer.updatedAt || nowIso,
     chunked: true,
     totalChunks: chunks.length,
     totalFeatures: features.length
   });
-
-  // 2. Save each chunk into subcollection 'chunks'
-  for (let i = 0; i < chunks.length; i++) {
-    const chunkRef = doc(db, 'geojson_layers', id, 'chunks', `chunk_${i}`);
-    await setDoc(chunkRef, {
-      chunkIndex: i,
-      features: chunks[i]
-    });
-  }
 }
 
 /**
@@ -152,8 +226,13 @@ export async function loadGeoJSONLayerDoc(docSnap: any): Promise<SavedGeoJSONLay
     fieldMapping: item.fieldMapping || null,
     projectId: item.projectId || 'global',
     createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
     chunked: item.chunked,
-    totalChunks: item.totalChunks
+    totalChunks: item.totalChunks,
+    driveFileId: item.driveFileId || null,
+    driveFolderId: item.driveFolderId || null,
+    driveModifiedTime: item.driveModifiedTime || null,
+    source: item.source || (item.isDefault ? 'deployed' : 'upload')
   };
 }
 

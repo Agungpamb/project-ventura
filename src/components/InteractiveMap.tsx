@@ -43,6 +43,11 @@ interface LoadedGeoJSON {
   };
   isDefault?: boolean;
   projectId?: string;
+  updatedAt?: string;
+  driveModifiedTime?: string | null;
+  driveFileId?: string | null;
+  driveFolderId?: string | null;
+  source?: 'drive' | 'upload' | 'deployed';
 }
 
 const findPropertyCaseInsensitive = (properties: any, keysToTry: string[]): string => {
@@ -299,19 +304,20 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
   
   // States
   const [basemap, setBasemap] = useState<'osm' | 'satelit' | 'google'>('google');
+  const isParentManagedGeoJSON = propLoadedGeoJSONs !== undefined;
   const [loadedGeoJSONs, setLoadedGeoJSONs] = useState<LoadedGeoJSON[]>(propLoadedGeoJSONs || []);
 
-  // Sync propLoadedGeoJSONs when passed from parent
+  // Sync propLoadedGeoJSONs directly when managed by App.tsx (strictly scoped per activeProjectId & synced via Firestore)
   useEffect(() => {
-    if (propLoadedGeoJSONs && propLoadedGeoJSONs.length > 0) {
-      setLoadedGeoJSONs(prev => {
-        const mergedMap = new Map<string, LoadedGeoJSON>();
-        prev.forEach(p => mergedMap.set(p.id, p));
-        propLoadedGeoJSONs.forEach(p => mergedMap.set(p.id, p));
-        return Array.from(mergedMap.values());
-      });
+    if (propLoadedGeoJSONs !== undefined) {
+      setLoadedGeoJSONs(propLoadedGeoJSONs);
     }
   }, [propLoadedGeoJSONs]);
+
+  // Reset auto-fit tracking whenever active project changes so the map zooms to the newly selected jalur
+  useEffect(() => {
+    fittedLayersRef.current = [];
+  }, [activeProjectId]);
   const [selectedRecord, setSelectedRecord] = useState<LandRecord | null>(null);
   const [recordToDelete, setRecordToDelete] = useState<LandRecord | null>(null);
   const [selectedFeatureProps, setSelectedFeatureProps] = useState<any | null>(null);
@@ -441,50 +447,51 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
     };
     window.addEventListener('resize', handleResize);
 
-    // Real-time synchronization of custom GeoJSON layers from Firestore
-    const unsubscribe = onSnapshot(collection(db, 'geojson_layers'), async (snapshot) => {
-      const docPromises = snapshot.docs.map(docSnap => loadGeoJSONLayerDoc(docSnap));
-      const customLayers = await Promise.all(docPromises);
+    // Real-time synchronization of custom GeoJSON layers from Firestore (standalone mode only; App.tsx already manages this when propLoadedGeoJSONs is passed)
+    const unsubscribe = isParentManagedGeoJSON
+      ? () => {}
+      : onSnapshot(collection(db, 'geojson_layers'), async (snapshot) => {
+          const docPromises = snapshot.docs.map(docSnap => loadGeoJSONLayerDoc(docSnap));
+          const customLayers = await Promise.all(docPromises);
 
-      // Merge local fallback layers from localStorage
-      const mergedMap = new Map<string, LoadedGeoJSON>();
-      try {
-        const localLayers: LoadedGeoJSON[] = JSON.parse(localStorage.getItem('local_geojson_layers') || '[]');
-        localLayers.forEach(l => mergedMap.set(l.id, l));
-      } catch (e) {}
-      customLayers.forEach(c => {
-        const existing = mergedMap.get(c.id);
-        mergedMap.set(c.id, {
-          ...existing,
-          ...c,
-          name: c.name || existing?.name || '',
-          data: (c.data?.features?.length ? c.data : (existing?.data || c.data)),
-          type: c.type || existing?.type || 'bidang',
-          fieldMapping: c.fieldMapping || existing?.fieldMapping || null,
-          projectId: c.projectId || existing?.projectId || 'global'
+          const mergedMap = new Map<string, LoadedGeoJSON>();
+          try {
+            const localLayers: LoadedGeoJSON[] = JSON.parse(localStorage.getItem('local_geojson_layers') || '[]');
+            localLayers.forEach(l => mergedMap.set(l.id, l));
+          } catch (e) {}
+          customLayers.forEach(c => {
+            const existing = mergedMap.get(c.id);
+            mergedMap.set(c.id, {
+              ...existing,
+              ...c,
+              name: c.name || existing?.name || '',
+              data: (c.data?.features?.length ? c.data : (existing?.data || c.data)),
+              type: c.type || existing?.type || 'bidang',
+              fieldMapping: c.fieldMapping || existing?.fieldMapping || null,
+              projectId: c.projectId || existing?.projectId || 'global'
+            });
+          });
+          const combinedCustomLayers = Array.from(mergedMap.values());
+
+          setLoadedGeoJSONs(prev => {
+            const defaults = prev.filter(p => p.isDefault);
+            const activeCustomIds = combinedCustomLayers.map(c => c.id);
+
+            // Remove any deleted layers from Leaflet map
+            prev.forEach(g => {
+              if (!g.isDefault && !activeCustomIds.includes(g.id)) {
+                if (mapRef.current && geojsonLayersRef.current[g.id]) {
+                  mapRef.current.removeLayer(geojsonLayersRef.current[g.id]);
+                  delete geojsonLayersRef.current[g.id];
+                }
+              }
+            });
+
+            return [...defaults, ...combinedCustomLayers];
+          });
+        }, (err) => {
+          console.warn('Error listening to geojson_layers collection:', err);
         });
-      });
-      const combinedCustomLayers = Array.from(mergedMap.values());
-
-      setLoadedGeoJSONs(prev => {
-        const defaults = prev.filter(p => p.isDefault);
-        const activeCustomIds = combinedCustomLayers.map(c => c.id);
-
-        // Remove any deleted layers from Leaflet map
-        prev.forEach(g => {
-          if (!g.isDefault && !activeCustomIds.includes(g.id)) {
-            if (mapRef.current && geojsonLayersRef.current[g.id]) {
-              mapRef.current.removeLayer(geojsonLayersRef.current[g.id]);
-              delete geojsonLayersRef.current[g.id];
-            }
-          }
-        });
-
-        return [...defaults, ...combinedCustomLayers];
-      });
-    }, (err) => {
-      console.warn('Error listening to geojson_layers collection:', err);
-    });
 
     return () => {
       clearTimeout(initTimer);
@@ -500,9 +507,9 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
     };
   }, []);
 
-  // Load project-specific GeoJSON files dynamically when active project changes
+  // Load project-specific static GeoJSON files dynamically only in standalone mode (when App.tsx doesn't manage layers)
   useEffect(() => {
-    if (!mapRef.current) return;
+    if (!mapRef.current || isParentManagedGeoJSON) return;
 
     const loadProjectGeoJSONs = async () => {
       // 1. Remove previous default/project-specific layers
@@ -777,11 +784,17 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
     loadedGeoJSONs.forEach(layer => {
       if (!layer.data) return;
 
-      const mappingKey = JSON.stringify(layer.fieldMapping || {});
+      const renderKey = JSON.stringify({
+        fieldMapping: layer.fieldMapping || {},
+        name: layer.name,
+        updatedAt: layer.updatedAt || '',
+        driveModifiedTime: layer.driveModifiedTime || '',
+        featureCount: Array.isArray(layer.data?.features) ? layer.data.features.length : 0
+      });
       let leafLayer = geojsonLayersRef.current[layer.id];
 
-      // Re-create layer if fieldMapping changed
-      if (leafLayer && (leafLayer as any)._mappingKey !== mappingKey) {
+      // Re-create layer if fieldMapping or underlying Drive/Firestore GeoJSON data updated
+      if (leafLayer && (leafLayer as any)._mappingKey !== renderKey) {
         try {
           leafLayer.eachLayer((l: any) => {
             l.closeTooltip?.();
@@ -926,12 +939,18 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
           }
         });
 
-        (leafLayer as any)._mappingKey = mappingKey;
+        (leafLayer as any)._mappingKey = renderKey;
         geojsonLayersRef.current[layer.id] = leafLayer;
       }
 
-      // Sync layer visibility on map considering layer.visible AND activeProjectId filtering
-      const isProjectMatch = !layer.projectId || layer.projectId === 'global' || !activeProjectId || layer.projectId === activeProjectId;
+      // Sync layer visibility on map: when managed by App.tsx, layers are already strictly filtered for activeProjectId
+      const isProjectMatch =
+        isParentManagedGeoJSON ||
+        Boolean(layer.isDefault) ||
+        !layer.projectId ||
+        layer.projectId === 'global' ||
+        !activeProjectId ||
+        layer.projectId === activeProjectId;
       const shouldBeVisible = layer.visible && isProjectMatch;
 
       if (shouldBeVisible) {
@@ -967,7 +986,7 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
         // Safe check for geometry issues
       }
     }
-  }, [loadedGeoJSONs]);
+  }, [loadedGeoJSONs, activeProjectId]);
 
   // Update styles and auto-zoom when selectedRecord changes
   useEffect(() => {

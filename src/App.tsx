@@ -9,6 +9,7 @@ import {
   createDedicatedResumeSpreadsheet,
   createDedicatedAgencyLetterSpreadsheet,
   fetchDriveGeoJSONFiles,
+  listDriveGeoJSONMetadata,
   extractDriveFolderId
 } from './lib/googleApi';
 import { executeDeleteParcel, isSameRecord } from './lib/parcelManagement';
@@ -17,6 +18,8 @@ import {
   loadGeoJSONLayerDoc,
   deleteGeoJSONLayerFromFirestore,
   saveLayerToLocalStorage,
+  removeLayerFromLocalStorage,
+  getDriveLayerDocId,
   loadDeployedDefaultGeoJSONs
 } from './lib/geojsonStorage';
 import { 
@@ -26,6 +29,7 @@ import {
   type DataIntegrityLog, 
   type ActivityLog, 
   type ProjectConfig,
+  type InventoryFormPdfConfig,
   type ResumeStageConfig,
   DEFAULT_RESUME_STAGES,
   getSheetHeaders,
@@ -33,6 +37,8 @@ import {
 } from './types';
 import { saveActivityLog, saveIntegrityLog } from './lib/activityStorage';
 import CacheDiffModal from './components/CacheDiffModal';
+import ProjectPdfConfigModal from './components/ProjectPdfConfigModal';
+import { getCoordinateProjectionOption } from './lib/geoUtils';
 import ModuleLoadingFallback from './components/ModuleLoadingFallback';
 import { TutorialGuideModal } from './components/TutorialGuideModal';
 import { CsvPublishGuideModal } from './components/CsvPublishGuideModal';
@@ -493,9 +499,15 @@ export default function App() {
   // GeoJSON Drive Sync state
   const [isSyncingDriveGeoJSON, setIsSyncingDriveGeoJSON] = useState<string | null>(null);
   const [driveGeoJsonFolderInput, setDriveGeoJsonFolderInput] = useState('');
+  const [driveGeoJsonTargetProjectId, setDriveGeoJsonTargetProjectId] = useState<string>('');
+  const [firestoreGeoJsonReady, setFirestoreGeoJsonReady] = useState<boolean>(false);
+  const loadedGeoJSONsRef = useRef<any[]>([]);
+  const lastDriveGeoCheckRef = useRef<Record<string, number>>({});
+  const activeGeoSyncPromiseRef = useRef<Record<string, Promise<void> | undefined>>({});
 
   const [editingStagesProjectId, setEditingStagesProjectId] = useState<string | null>(null);
   const [tempProjectStages, setTempProjectStages] = useState<ResumeStageConfig[]>(DEFAULT_RESUME_STAGES);
+  const [editingPdfConfigProjectId, setEditingPdfConfigProjectId] = useState<string | null>(null);
 
   // CSV Web Publish Test & Guide state
   const [isCsvGuideModalOpen, setIsCsvGuideModalOpen] = useState(false);
@@ -944,7 +956,12 @@ export default function App() {
     return Array.from(keysSet).sort();
   };
 
-  // Real-time synchronization of custom & deployed GeoJSON layers from Firestore / /public/geojson/
+  // Keep ref in sync with loadedGeoJSONs for background auto-sync comparisons
+  useEffect(() => {
+    loadedGeoJSONsRef.current = loadedGeoJSONs;
+  }, [loadedGeoJSONs]);
+
+  // Real-time synchronization of GeoJSON layers from Firestore (accessible by ALL roles: Admin, Operator, QC, Guest)
   useEffect(() => {
     let isMounted = true;
 
@@ -955,38 +972,44 @@ export default function App() {
       // 1. Fetch default deployed GeoJSON files from /public/geojson/
       const defaultDeployedLayers = await loadDeployedDefaultGeoJSONs();
 
-      // 2. Combine and remove duplicates by ID
-      const mergedMap = new Map<string, any>();
+      // 2. Read local fallback map only to recover data if a chunked doc momentarily returns empty features
+      const localMap = new Map<string, any>();
+      try {
+        const localLayers: any[] = JSON.parse(localStorage.getItem('local_geojson_layers') || '[]');
+        localLayers.forEach(l => localMap.set(l.id, l));
+      } catch (e) {}
 
-      // Merge deployed static layers first
+      // 3. Combine: deployed defaults + Firestore cloud layers (Firestore is the source of truth)
+      const mergedMap = new Map<string, any>();
       defaultDeployedLayers.forEach(d => mergedMap.set(d.id, d));
 
-      // Merge local fallback layers next
-      let localLayers: any[] = [];
-      try {
-        localLayers = JSON.parse(localStorage.getItem('local_geojson_layers') || '[]');
-      } catch (e) {}
-      localLayers.forEach(l => mergedMap.set(l.id, l));
-
-      // Override/merge with cloud Firestore layers safely
       customLayers.forEach(c => {
-        const existing = mergedMap.get(c.id);
+        const existingDefault = mergedMap.get(c.id);
+        const localFallback = localMap.get(c.id);
         mergedMap.set(c.id, {
-          ...existing,
+          ...(existingDefault || {}),
           ...c,
-          name: c.name || existing?.name || '',
-          data: (c.data?.features?.length ? c.data : (existing?.data || c.data)),
-          type: c.type || existing?.type || 'bidang',
-          fieldMapping: c.fieldMapping || existing?.fieldMapping || null
+          name: c.name || existingDefault?.name || localFallback?.name || '',
+          data: (c.data?.features?.length
+            ? c.data
+            : (existingDefault?.data?.features?.length
+              ? existingDefault.data
+              : (localFallback?.data || c.data))),
+          type: c.type || existingDefault?.type || localFallback?.type || 'bidang',
+          isDefault: existingDefault ? true : Boolean(c.isDefault),
+          fieldMapping: c.fieldMapping || existingDefault?.fieldMapping || localFallback?.fieldMapping || null
         });
       });
 
       if (isMounted) {
-        setLoadedGeoJSONs(Array.from(mergedMap.values()));
+        const nextLayers = Array.from(mergedMap.values());
+        loadedGeoJSONsRef.current = nextLayers;
+        setLoadedGeoJSONs(nextLayers);
+        setFirestoreGeoJsonReady(true);
       }
     };
 
-    // Load default deployed files immediately on mount
+    // Load default deployed files immediately on mount while waiting for Firestore snapshot
     loadDeployedDefaultGeoJSONs().then(defaults => {
       if (isMounted && defaults.length > 0) {
         setLoadedGeoJSONs(prev => {
@@ -1001,7 +1024,21 @@ export default function App() {
     const unsubscribe = onSnapshot(collection(db, 'geojson_layers'), (snapshot) => {
       syncLayers(snapshot.docs);
     }, (err) => {
-      console.warn('Error listening to geojson_layers collection in App:', err);
+      console.warn('Error listening to geojson_layers collection in App (falling back to local cache):', err);
+      if (isMounted) {
+        try {
+          const localLayers: any[] = JSON.parse(localStorage.getItem('local_geojson_layers') || '[]');
+          if (localLayers.length > 0) {
+            setLoadedGeoJSONs(prev => {
+              const map = new Map<string, any>();
+              prev.forEach(p => map.set(p.id, p));
+              localLayers.forEach(l => map.set(l.id, l));
+              return Array.from(map.values());
+            });
+          }
+        } catch (e) {}
+        setFirestoreGeoJsonReady(true);
+      }
     });
 
     return () => {
@@ -1009,6 +1046,37 @@ export default function App() {
       unsubscribe();
     };
   }, []);
+
+  // GeoJSON layers strictly scoped to the currently active Jalur (prevents cross-project overlap on Map/Peta Bidang/Resume/Sanding)
+  const activeProjectGeoJSONs = useMemo(() => {
+    const activeProj = projects.find(p => p.id === activeProjectId);
+    const activeProjNameUpper = (activeProj?.name || '').toUpperCase();
+    const isDefaultJelokProject =
+      activeProjectId === 'proj-1' ||
+      activeProjectId === 'JELOK-SANGGRAHAN' ||
+      activeProjNameUpper.includes('JELOK');
+
+    const hasFeatures = (g: any) => Array.isArray(g?.data?.features) && g.data.features.length > 0;
+
+    // 1. Layers explicitly belonging to activeProjectId (synced from Drive or uploaded for this jalur)
+    const projectLayers = loadedGeoJSONs.filter(
+      g => !g.isDefault && g.projectId === activeProjectId && hasFeatures(g)
+    );
+    const coveredTypes = new Set(projectLayers.map(l => l.type));
+
+    // 2. Legacy global layers (only for layer types not yet defined specifically for this jalur)
+    const globalLayers = loadedGeoJSONs.filter(
+      g => !g.isDefault && (!g.projectId || g.projectId === 'global') && hasFeatures(g) && !coveredTypes.has(g.type)
+    );
+    globalLayers.forEach(l => coveredTypes.add(l.type));
+
+    // 3. Static deployed fallback layers (only for Jelok-Sanggarahan and only if not overridden by non-empty Firestore layers)
+    const fallbackDefaultLayers = isDefaultJelokProject
+      ? loadedGeoJSONs.filter(g => g.isDefault && hasFeatures(g) && !coveredTypes.has(g.type))
+      : [];
+
+    return [...projectLayers, ...globalLayers, ...fallbackDefaultLayers];
+  }, [loadedGeoJSONs, activeProjectId, projects]);
 
   const handleAddGeoJSON = async (data: any, name: string, type: 'bidang' | 'jalur' | 'tower') => {
     const newId = `${type}_${Date.now()}`;
@@ -3003,22 +3071,31 @@ export default function App() {
     e.preventDefault();
     if (!newProjectName.trim()) return;
 
+    const cleanNewFolder = extractDriveFolderId(newProjectFolderId) || null;
+    const cleanNewUploadsFolder = extractDriveFolderId(newProjectUploadsFolderId) || null;
+    const cleanNewGeojsonFolder = extractDriveFolderId(newProjectGeojsonFolderId) || null;
+    const cleanNewResumeUploadsFolder = extractDriveFolderId(newProjectResumeUploadsFolderId) || null;
+    const cleanNewAgencyUploadsFolder = extractDriveFolderId(newProjectAgencyLetterUploadsFolderId) || null;
+    const cleanNewSpreadsheetId = extractDriveFolderId(newProjectSpreadsheetId) || null;
+    const cleanNewResumeSpreadsheetId = extractDriveFolderId(newProjectResumeSpreadsheetId) || null;
+    const cleanNewAgencySpreadsheetId = extractDriveFolderId(newProjectAgencyLetterSpreadsheetId) || null;
+
     const newProj: ProjectConfig = {
       id: `proj-${Date.now()}`,
       name: newProjectName.trim().toUpperCase(),
-      folderId: newProjectFolderId.trim() || null,
-      uploadsFolderId: newProjectUploadsFolderId.trim() || null,
-      geojsonFolderId: newProjectGeojsonFolderId.trim() || null,
-      resumeUploadsFolderId: newProjectResumeUploadsFolderId.trim() || null,
-      agencyLetterUploadsFolderId: newProjectAgencyLetterUploadsFolderId.trim() || null,
+      folderId: cleanNewFolder,
+      uploadsFolderId: cleanNewUploadsFolder,
+      geojsonFolderId: cleanNewGeojsonFolder,
+      resumeUploadsFolderId: cleanNewResumeUploadsFolder,
+      agencyLetterUploadsFolderId: cleanNewAgencyUploadsFolder,
       // File 1: Data Lahan (267 Kolom)
-      spreadsheetId: newProjectSpreadsheetId.trim() || null,
+      spreadsheetId: cleanNewSpreadsheetId,
       publicCsvUrl: newProjectPublicCsvUrl.trim() || null,
       // File 2: Resume Project (36 Kolom)
-      resumeSpreadsheetId: newProjectResumeSpreadsheetId.trim() || null,
+      resumeSpreadsheetId: cleanNewResumeSpreadsheetId,
       resumePublicCsvUrl: newProjectResumePublicCsvUrl.trim() || null,
       // File 3: Surat Instansi (13 Kolom)
-      agencyLetterSpreadsheetId: newProjectAgencyLetterSpreadsheetId.trim() || null,
+      agencyLetterSpreadsheetId: cleanNewAgencySpreadsheetId,
       agencyLetterPublicCsvUrl: newProjectAgencyLetterPublicCsvUrl.trim() || null,
       resumeStages: DEFAULT_RESUME_STAGES
     };
@@ -3035,9 +3112,16 @@ export default function App() {
 
     setSyncFeedback({
       type: 'success',
-      message: `✨ Jalur proyek baru "${newProj.name}" berhasil ditambahkan! Anda dapat mulai menginput data atau memuat data dummy demo.`,
+      message: cleanNewGeojsonFolder
+        ? `✨ Jalur proyek baru "${newProj.name}" berhasil ditambahkan! Memulai sinkronisasi otomatis GeoJSON dari Google Drive ke Firestore...`
+        : `✨ Jalur proyek baru "${newProj.name}" berhasil ditambahkan! Anda dapat mulai menginput data atau memuat data dummy demo.`,
       timestamp: Date.now()
     });
+
+    // Auto-sync GeoJSON from Google Drive immediately if folder link/ID was provided
+    if (cleanNewGeojsonFolder && token && token !== 'GUEST_BYPASS' && token !== 'null') {
+      void handleSyncDriveGeoJSON(newProj, cleanNewGeojsonFolder, { silent: true, force: true });
+    }
     
     setNewProjectName('');
     setNewProjectFolderId('');
@@ -3071,6 +3155,24 @@ export default function App() {
         localStorage.setItem('project_ventura_active_project_id', nextActive);
       }
     }
+  };
+
+  // Update Inventory Form PDF config (Header, Footer & Coordinate Projection) per jalur
+  const handleSaveProjectPdfConfig = async (projectId: string, pdfConfig: InventoryFormPdfConfig) => {
+    const targetProj = projects.find(p => p.id === projectId);
+    const updated = projects.map(p =>
+      p.id === projectId ? { ...p, inventoryPdfConfig: pdfConfig } : p
+    );
+    setProjects(updated);
+    localStorage.setItem('project_ventura_projects', JSON.stringify(updated));
+    await saveProjectsToCloud(updated);
+
+    const projOpt = getCoordinateProjectionOption(pdfConfig.coordinateProjection || 'UTM_49S');
+    setSyncFeedback({
+      type: 'success',
+      message: `✅ Pengaturan Kop PDF, Footer & Proyeksi (${projOpt.shortName}) untuk "${targetProj?.name || projectId}" berhasil disimpan ke Firestore.`,
+      timestamp: Date.now()
+    });
   };
 
   // Switch active project path helper
@@ -3167,6 +3269,9 @@ export default function App() {
       return p;
     });
 
+    const previousProj = projects.find(p => p.id === editingProjectId);
+    const updatedProj = updated.find(p => p.id === editingProjectId);
+
     setProjects(updated);
     localStorage.setItem('project_ventura_projects', JSON.stringify(updated));
     saveProjectsToCloud(updated);
@@ -3180,22 +3285,71 @@ export default function App() {
       }
     }
 
+    // Automatically sync GeoJSON from Google Drive to Firestore when a folder link/ID is configured or changed
+    const geojsonFolderChanged = cleanGeojsonFolder && cleanGeojsonFolder !== (previousProj?.geojsonFolderId || null);
+    const hasSyncedDriveLayerForFolder = cleanGeojsonFolder
+      ? loadedGeoJSONsRef.current.some(l => l.projectId === editingProjectId && l.driveFolderId === cleanGeojsonFolder)
+      : false;
+    const willAutoSyncGeoJSON = Boolean(
+      updatedProj &&
+      cleanGeojsonFolder &&
+      (geojsonFolderChanged || !hasSyncedDriveLayerForFolder) &&
+      token &&
+      token !== 'GUEST_BYPASS' &&
+      token !== 'null'
+    );
+
     cancelEditingProject();
-    alert("Konfigurasi 3 Spreadsheet & Folder ID berhasil disimpan!");
+
+    if (willAutoSyncGeoJSON && updatedProj && cleanGeojsonFolder) {
+      setSyncFeedback({
+        type: 'info',
+        message: `Konfigurasi disimpan. Menarik & menyinkronkan GeoJSON dari folder Google Drive ke Firestore untuk "${updatedProj.name}"...`,
+        timestamp: Date.now()
+      });
+      void handleSyncDriveGeoJSON(updatedProj, cleanGeojsonFolder, { silent: true, force: true });
+    } else {
+      alert("Konfigurasi 3 Spreadsheet & Folder ID berhasil disimpan!");
+    }
   };
 
-  // Auto-sync 3 GeoJSON layers directly from Google Drive folder
-  const handleSyncDriveGeoJSON = async (proj: ProjectConfig, explicitFolderId?: string) => {
-    const rawFolder = explicitFolderId || proj.geojsonFolderId || proj.folderId;
+  // Auto-sync 3 GeoJSON layers directly from Google Drive folder -> Firestore (readable by ALL roles)
+  const handleSyncDriveGeoJSON = async (
+    proj: ProjectConfig,
+    explicitFolderId?: string,
+    options?: { silent?: boolean; force?: boolean; persistFolderId?: boolean }
+  ) => {
+    const silent = options?.silent ?? false;
+    const force = options?.force ?? true;
+    const persistFolderId = options?.persistFolderId ?? false;
+
+    const rawFolder = explicitFolderId || proj.geojsonFolderId || '';
     const cleanFolderId = extractDriveFolderId(rawFolder || '');
     
     if (!cleanFolderId) {
-      alert("ID atau Tautan Folder Google Drive untuk GeoJSON belum diisi.\n\nSilakan masukkan ID atau Tautan Folder Google Drive pada kolom 'ID Folder Google Drive Berkas GeoJSON'.");
+      if (!silent) {
+        alert("ID atau Tautan Folder Google Drive untuk GeoJSON belum diisi.\n\nSilakan masukkan ID atau Tautan Folder Google Drive pada kolom 'ID Folder Google Drive Berkas GeoJSON'.");
+      }
       return;
+    }
+
+    // Persist the GeoJSON folder ID to project config (Firestore + localStorage) if requested or changed
+    if (persistFolderId && proj.geojsonFolderId !== cleanFolderId) {
+      const updatedProjects = projects.map(p =>
+        p.id === proj.id ? { ...p, geojsonFolderId: cleanFolderId } : p
+      );
+      setProjects(updatedProjects);
+      localStorage.setItem('project_ventura_projects', JSON.stringify(updatedProjects));
+      saveProjectsToCloud(updatedProjects);
     }
 
     let activeAuthToken = token;
     if (!activeAuthToken || activeAuthToken === 'GUEST_BYPASS' || activeAuthToken === 'null') {
+      if (silent) {
+        // In silent auto-sync mode (e.g. Guest / PIN Operator / unauthenticated), never force popup;
+        // all levels automatically read the already-synced GeoJSON layers from Firestore.
+        return;
+      }
       try {
         activeAuthToken = (await handleRefreshGoogleAuth()) || null;
       } catch (e) {
@@ -3203,74 +3357,197 @@ export default function App() {
       }
     }
 
-    if (!activeAuthToken) {
-      alert("Silakan hubungkan akun Google Anda terlebih dahulu untuk membaca folder Google Drive.");
+    if (!activeAuthToken || activeAuthToken === 'GUEST_BYPASS' || activeAuthToken === 'null') {
+      if (!silent) {
+        alert("Silakan hubungkan akun Google Anda terlebih dahulu untuk membaca folder Google Drive.");
+      }
       return;
     }
 
-    setIsSyncingDriveGeoJSON(proj.id);
-    setSyncFeedback({
-      type: 'info',
-      message: `Sedang memindai & mengunduh 3 berkas GeoJSON dari Google Drive untuk "${proj.name}"...`,
-      timestamp: Date.now()
-    });
-
-    try {
-      const detectedFiles = await fetchDriveGeoJSONFiles(activeAuthToken, cleanFolderId);
-      if (!detectedFiles || detectedFiles.length === 0) {
-        alert("Tidak ditemukan berkas .geojson di dalam folder Google Drive tersebut.");
-        return;
-      }
-
-      // Process each detected layer
-      const newLayers: any[] = [];
-      for (const item of detectedFiles) {
-        const layerId = `${proj.id}_${item.type}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-        const savedLayer = {
-          id: layerId,
-          name: item.name,
-          type: item.type,
-          data: item.data,
-          visible: true,
-          projectId: proj.id,
-          createdAt: new Date().toISOString()
-        };
-
-        await saveGeoJSONLayerToFirestore(savedLayer);
-        saveLayerToLocalStorage(savedLayer);
-        newLayers.push(savedLayer);
-      }
-
-      // Refresh loadedGeoJSONs in state
-      setLoadedGeoJSONs(prev => {
-        const filtered = prev.filter(l => !(l.projectId === proj.id && newLayers.some(nl => nl.type === l.type)));
-        return [...filtered, ...newLayers];
-      });
-
-      const summaryDetails = detectedFiles.map(f => {
-        const typeLabel = f.type === 'bidang' ? '1. Bidang Tanah (Polygon)' : f.type === 'jalur' ? '2. Jalur ROW (LineString)' : '3. Tapak Tower (Point)';
-        return `• ${typeLabel}: "${f.name}" (${f.featureCount} fitur, geometri: ${f.geometryType})`;
-      }).join('\n');
-
-      setSyncFeedback({
-        type: 'success',
-        message: `✅ Berhasil menarik ${detectedFiles.length} berkas GeoJSON dari Google Drive untuk "${proj.name}".`,
-        timestamp: Date.now()
-      });
-
-      alert(`✅ Berhasil Menarik ${detectedFiles.length} Berkas GeoJSON dari Google Drive!\n\nJalur: ${proj.name}\nRincian Deteksi:\n${summaryDetails}\n\nPeta Spasial (GIS), Peta Bidang Tanah, dan Formulir PDF telah otomatis disinkronkan.`);
-    } catch (err: any) {
-      console.error("Error syncing GeoJSON from Drive:", err);
-      setSyncFeedback({
-        type: 'error',
-        message: `Gagal menarik GeoJSON dari Google Drive: ${err?.message || err}`,
-        timestamp: Date.now()
-      });
-      alert(`Gagal menarik GeoJSON: ${err?.message || err}`);
-    } finally {
-      setIsSyncingDriveGeoJSON(null);
+    // Prevent concurrent duplicate syncs for the exact same project+folder
+    const syncKey = `${proj.id}::${cleanFolderId}`;
+    if (activeGeoSyncPromiseRef.current[syncKey]) {
+      return activeGeoSyncPromiseRef.current[syncKey];
     }
+
+    const runSync = async () => {
+      try {
+        // Lightweight modifiedTime check when not forced (automatic background sync)
+        if (!force) {
+          const driveFilesMeta = await listDriveGeoJSONMetadata(activeAuthToken!, cleanFolderId);
+          lastDriveGeoCheckRef.current[syncKey] = Date.now();
+
+          if (!driveFilesMeta || driveFilesMeta.length === 0) {
+            return;
+          }
+
+          const existingProjectDriveLayers = loadedGeoJSONsRef.current.filter(
+            l => !l.isDefault && l.projectId === proj.id && l.driveFolderId === cleanFolderId
+          );
+
+          // Check if every file currently in Drive is already in Firestore with the exact same modifiedTime
+          const isUpToDate =
+            existingProjectDriveLayers.length > 0 &&
+            existingProjectDriveLayers.length >= Math.min(driveFilesMeta.length, 3) &&
+            driveFilesMeta.every(meta => {
+              const matched = existingProjectDriveLayers.find(l => l.driveFileId === meta.id);
+              if (!matched) return false;
+              if (meta.modifiedTime && matched.driveModifiedTime && matched.driveModifiedTime !== meta.modifiedTime) {
+                return false;
+              }
+              return Boolean(matched.data?.features?.length);
+            });
+
+          if (isUpToDate) {
+            return;
+          }
+        }
+
+        setIsSyncingDriveGeoJSON(proj.id);
+        setSyncFeedback({
+          type: 'info',
+          message: `Sedang memindai & menyinkronkan GeoJSON dari Google Drive ke Firestore untuk "${proj.name}"...`,
+          timestamp: Date.now()
+        });
+
+        const detectedFiles = await fetchDriveGeoJSONFiles(activeAuthToken!, cleanFolderId);
+        lastDriveGeoCheckRef.current[syncKey] = Date.now();
+
+        if (!detectedFiles || detectedFiles.length === 0) {
+          if (!silent) {
+            alert("Tidak ditemukan berkas .geojson di dalam folder Google Drive tersebut.");
+          }
+          return;
+        }
+
+        // Deduplicate by layer type (keep the latest modified file if multiple files match one type)
+        const bestByType = new Map<'bidang' | 'jalur' | 'tower', typeof detectedFiles[number]>();
+        for (const item of detectedFiles) {
+          const prev = bestByType.get(item.type);
+          if (!prev) {
+            bestByType.set(item.type, item);
+          } else {
+            const prevTime = prev.modifiedTime ? Date.parse(prev.modifiedTime) : 0;
+            const currTime = item.modifiedTime ? Date.parse(item.modifiedTime) : 0;
+            if (currTime >= prevTime) {
+              bestByType.set(item.type, item);
+            }
+          }
+        }
+        const uniqueDetectedFiles = Array.from(bestByType.values());
+
+        const nowIso = new Date().toISOString();
+        const existingLayers = loadedGeoJSONsRef.current;
+        const newLayers: any[] = [];
+        const removedLegacyIds: string[] = [];
+
+        for (const item of uniqueDetectedFiles) {
+          const layerId = getDriveLayerDocId(proj.id, item.type);
+
+          // Preserve previous fieldMapping & visibility if user already configured this project+type
+          const prevMatchingLayers = existingLayers.filter(
+            l => !l.isDefault && l.projectId === proj.id && l.type === item.type
+          );
+          const prevExact = prevMatchingLayers.find(l => l.id === layerId) || prevMatchingLayers[0];
+
+          const savedLayer = {
+            id: layerId,
+            name: item.name,
+            type: item.type,
+            data: item.data,
+            visible: prevExact?.visible !== undefined ? prevExact.visible : true,
+            isDefault: false,
+            fieldMapping: prevExact?.fieldMapping || null,
+            projectId: proj.id,
+            driveFileId: item.id,
+            driveFolderId: cleanFolderId,
+            driveModifiedTime: item.modifiedTime || null,
+            source: 'drive' as const,
+            createdAt: prevExact?.createdAt || nowIso,
+            updatedAt: nowIso
+          };
+
+          await saveGeoJSONLayerToFirestore(savedLayer);
+          saveLayerToLocalStorage(savedLayer);
+          newLayers.push(savedLayer);
+
+          // Clean up any legacy timestamp-suffixed duplicate documents for this project+type in Firestore
+          for (const oldLayer of prevMatchingLayers) {
+            if (oldLayer.id !== layerId) {
+              removedLegacyIds.push(oldLayer.id);
+              removeLayerFromLocalStorage(oldLayer.id);
+              try {
+                await deleteGeoJSONLayerFromFirestore(oldLayer.id, oldLayer.chunked);
+              } catch (cleanupErr) {
+                console.warn(`Gagal membersihkan duplikat layer lama ${oldLayer.id}:`, cleanupErr);
+              }
+            }
+          }
+        }
+
+        // Refresh loadedGeoJSONs in state immediately
+        setLoadedGeoJSONs(prev => {
+          const replacedIds = new Set([...newLayers.map(nl => nl.id), ...removedLegacyIds]);
+          const filtered = prev.filter(l => !replacedIds.has(l.id));
+          return [...filtered, ...newLayers];
+        });
+
+        const summaryDetails = uniqueDetectedFiles.map(f => {
+          const typeLabel = f.type === 'bidang' ? '1. Bidang Tanah (Polygon)' : f.type === 'jalur' ? '2. Jalur ROW (LineString)' : '3. Tapak Tower (Point)';
+          return `• ${typeLabel}: "${f.name}" (${f.featureCount} fitur, geometri: ${f.geometryType})`;
+        }).join('\n');
+
+        setSyncFeedback({
+          type: 'success',
+          message: `✅ Auto-Sync berhasil: ${uniqueDetectedFiles.length} berkas GeoJSON "${proj.name}" tersimpan di Firestore & siap dibaca semua level.`,
+          timestamp: Date.now()
+        });
+
+        if (!silent) {
+          alert(`✅ Berhasil Menarik & Menyimpan ${uniqueDetectedFiles.length} Berkas GeoJSON ke Firestore!\n\nJalur: ${proj.name}\nRincian Deteksi:\n${summaryDetails}\n\nSemua level pengguna (Admin, Operator, QC, dan Tamu) otomatis membaca peta terbaru ini dari Firestore.`);
+        }
+      } catch (err: any) {
+        console.error("Error syncing GeoJSON from Drive:", err);
+        if (!silent) {
+          setSyncFeedback({
+            type: 'error',
+            message: `Gagal menarik GeoJSON dari Google Drive: ${err?.message || err}`,
+            timestamp: Date.now()
+          });
+          alert(`Gagal menarik GeoJSON: ${err?.message || err}`);
+        }
+      } finally {
+        setIsSyncingDriveGeoJSON(prev => (prev === proj.id ? null : prev));
+        delete activeGeoSyncPromiseRef.current[syncKey];
+      }
+    };
+
+    const promise = runSync();
+    activeGeoSyncPromiseRef.current[syncKey] = promise;
+    return promise;
   };
+
+  // Automatic background GeoJSON Drive -> Firestore synchronization when active project changes or Google token becomes available
+  useEffect(() => {
+    if (!firestoreGeoJsonReady) return;
+    if (!token || token === 'GUEST_BYPASS' || token === 'null') return;
+
+    const activeProj = projects.find(p => p.id === activeProjectId);
+    const cleanFolderId = extractDriveFolderId(activeProj?.geojsonFolderId || '');
+    if (!activeProj || !cleanFolderId) return;
+
+    const syncKey = `${activeProj.id}::${cleanFolderId}`;
+    const lastChecked = lastDriveGeoCheckRef.current[syncKey] || 0;
+    const COOLDOWN_MS = 60 * 1000; // Check Drive modifiedTime at most once per minute per project+folder
+
+    if (Date.now() - lastChecked < COOLDOWN_MS) return;
+
+    const timer = setTimeout(() => {
+      void handleSyncDriveGeoJSON(activeProj, cleanFolderId, { silent: true, force: false });
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [activeProjectId, token, projects, firestoreGeoJsonReady]);
 
   const [isAutoCreatingSheet, setIsAutoCreatingSheet] = useState(false);
 
@@ -5343,7 +5620,7 @@ export default function App() {
                 {activeMenu === 'map' && (
                   <InteractiveMap 
                     records={records} 
-                    loadedGeoJSONs={loadedGeoJSONs}
+                    loadedGeoJSONs={activeProjectGeoJSONs}
                     role={role} 
                     activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
                     activeProjectId={activeProjectId}
@@ -5354,7 +5631,7 @@ export default function App() {
                 {activeMenu === 'map_span' && (
                   <PetaBidangTanah 
                     records={records} 
-                    loadedGeoJSONs={loadedGeoJSONs}
+                    loadedGeoJSONs={activeProjectGeoJSONs}
                     role={role} 
                     activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
                     activeProjectId={activeProjectId}
@@ -5371,11 +5648,7 @@ export default function App() {
                   <ResumeProjectPanel 
                     key={activeProjectId}
                     records={records}
-                    loadedGeoJSONs={loadedGeoJSONs.filter(g => {
-                      if (g.projectId === activeProjectId) return true;
-                      if (g.isDefault && (activeProjectId === 'proj-1' || (projects.find(p => p.id === activeProjectId)?.name || '').toUpperCase().includes('JELOK'))) return true;
-                      return false;
-                    })}
+                    loadedGeoJSONs={activeProjectGeoJSONs}
                     activeProjectId={activeProjectId}
                     activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
                     role={role}
@@ -5431,7 +5704,10 @@ export default function App() {
                     onUpdateRecord={handleUpdateRecord} 
                     onDeleteRecord={handleDeleteRecord}
                     uploadsFolderId={projectUploadsFolderId || undefined}
+                    activeProjectId={activeProjectId}
                     activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
+                    inventoryPdfConfig={projects.find(p => p.id === activeProjectId)?.inventoryPdfConfig}
+                    loadedGeoJSONs={activeProjectGeoJSONs}
                     initialSelectedRecord={selectedRecordForEdit}
                     onClearInitialRecord={() => setSelectedRecordForEdit(null)}
                     onRefreshGoogleToken={handleRefreshGoogleAuth}
@@ -5483,7 +5759,7 @@ export default function App() {
                 {activeMenu === 'qc_sanding' && (role === 'ADMIN' || role === 'QC' || role === 'FIELD') && (
                   <SandingDataPanel 
                     records={records} 
-                    loadedGeoJSONs={loadedGeoJSONs}
+                    loadedGeoJSONs={activeProjectGeoJSONs}
                     role={role}
                     activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
                     onNavigateToInput={(rec) => {
@@ -6117,6 +6393,16 @@ export default function App() {
 
                                           <button
                                             type="button"
+                                            onClick={() => setEditingPdfConfigProjectId(proj.id)}
+                                            className="px-2 py-1 bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 text-[10px] font-bold rounded cursor-pointer flex items-center gap-1"
+                                            title="Atur Kop Header, Footer & Proyeksi Koordinat Form Inventarisasi PDF untuk jalur ini"
+                                          >
+                                            <FileText className="w-2.5 h-2.5 text-sky-400" />
+                                            Kop PDF ({getCoordinateProjectionOption(proj.inventoryPdfConfig?.coordinateProjection).shortName})
+                                          </button>
+
+                                          <button
+                                            type="button"
                                             onClick={() => startEditingProject(proj)}
                                             className="px-2 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 text-[10px] font-bold rounded cursor-pointer flex items-center gap-1"
                                             title="Edit 3 ID Sheet & 3 Link CSV"
@@ -6468,7 +6754,16 @@ export default function App() {
                                       </div>
                                     </div>
 
-                                    <div className="flex items-center gap-1.5">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingPdfConfigProjectId(proj.id)}
+                                        className="text-sky-300 hover:text-sky-200 text-xs font-bold px-2.5 py-1 bg-sky-500/15 rounded-lg cursor-pointer border border-sky-500/30 hover:bg-sky-500/25 transition-all flex items-center gap-1"
+                                        title="Atur Kop Header, Footer & Proyeksi Koordinat Form Inventarisasi PDF untuk jalur ini"
+                                      >
+                                        <FileText className="w-3.5 h-3.5 text-sky-400" />
+                                        Kop PDF ({getCoordinateProjectionOption(proj.inventoryPdfConfig?.coordinateProjection).shortName})
+                                      </button>
                                       <button
                                         type="button"
                                         onClick={() => startEditingProject(proj)}
@@ -6988,7 +7283,13 @@ export default function App() {
                                       disabled={isSyncingDriveGeoJSON === editingProjectId}
                                       onClick={() => {
                                         const proj = projects.find(p => p.id === editingProjectId);
-                                        if (proj) handleSyncDriveGeoJSON(proj, editGeojsonFolderId);
+                                        if (proj) {
+                                          void handleSyncDriveGeoJSON(proj, editGeojsonFolderId, {
+                                            silent: false,
+                                            force: true,
+                                            persistFolderId: true
+                                          });
+                                        }
                                       }}
                                       className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-lg cursor-pointer flex items-center gap-1.5 shadow transition-all self-start sm:self-auto disabled:opacity-50"
                                       title="Tarik langsung 3 file GeoJSON dari Google Drive ke database Firestore & Peta"
@@ -7420,10 +7721,10 @@ export default function App() {
                                 </div>
                                 <div>
                                   <h4 className="text-xs font-black text-amber-300 uppercase tracking-wide">
-                                    Tarik Otomatis 3 Berkas GeoJSON dari Google Drive Folder
+                                    Auto-Sync 3 Berkas GeoJSON dari Google Drive Folder → Firestore
                                   </h4>
                                   <p className="text-[10px] text-slate-400">
-                                    Sistem akan otomatis mengidentifikasi 3 berkas GeoJSON di dalam folder Google Drive Anda.
+                                    Tautan folder akan disimpan per jalur &amp; otomatis disinkronkan ke Firestore saat ada pembaruan di Drive. Semua level (Admin, Operator, QC, Tamu) otomatis membaca peta terbaru dari Firestore.
                                   </p>
                                 </div>
                               </div>
@@ -7431,12 +7732,12 @@ export default function App() {
                               <div className="flex items-center gap-2">
                                 <span className="text-[10px] font-bold text-slate-400">Untuk Jalur:</span>
                                 <select
-                                  value={driveGeoJsonFolderInput ? '' : (projects.find(p => p.id === activeProjectId)?.id || projects[0]?.id || '')}
+                                  value={driveGeoJsonTargetProjectId || activeProjectId || projects[0]?.id || ''}
                                   onChange={(e) => {
-                                    const selectedProj = projects.find(p => p.id === e.target.value);
-                                    if (selectedProj) {
-                                      setDriveGeoJsonFolderInput(selectedProj.geojsonFolderId || '');
-                                    }
+                                    const nextId = e.target.value;
+                                    setDriveGeoJsonTargetProjectId(nextId);
+                                    const selectedProj = projects.find(p => p.id === nextId);
+                                    setDriveGeoJsonFolderInput(selectedProj?.geojsonFolderId || '');
                                   }}
                                   className="px-2 py-1 bg-slate-900 border border-white/10 text-amber-300 rounded-lg text-xs font-bold focus:outline-none focus:border-amber-500 max-w-[200px] truncate"
                                 >
@@ -7450,16 +7751,20 @@ export default function App() {
                             <div className="flex flex-col sm:flex-row gap-2">
                               <input
                                 type="text"
-                                value={driveGeoJsonFolderInput || (projects.find(p => p.id === activeProjectId)?.geojsonFolderId || '')}
+                                value={
+                                  driveGeoJsonFolderInput ||
+                                  (projects.find(p => p.id === (driveGeoJsonTargetProjectId || activeProjectId))?.geojsonFolderId || '')
+                                }
                                 onChange={(e) => setDriveGeoJsonFolderInput(e.target.value)}
-                                placeholder="Masukkan ID Folder atau Tautan Google Drive (Contoh: 1aBcDeFgH123456789...)"
+                                placeholder="Masukkan ID Folder atau Tautan Google Drive (Contoh: https://drive.google.com/drive/folders/...)"
                                 className="flex-1 px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-amber-200 font-mono focus:outline-none focus:border-amber-500 placeholder:text-slate-600"
                               />
                               <button
                                 type="button"
                                 disabled={Boolean(isSyncingDriveGeoJSON)}
                                 onClick={async () => {
-                                  const targetProj = projects.find(p => p.id === activeProjectId) || projects[0];
+                                  const targetId = driveGeoJsonTargetProjectId || activeProjectId;
+                                  const targetProj = projects.find(p => p.id === targetId) || projects[0];
                                   if (!targetProj) {
                                     alert('Pilih atau buat jalur proyek terlebih dahulu!');
                                     return;
@@ -7469,12 +7774,16 @@ export default function App() {
                                     alert('Silakan masukkan ID Folder atau Link Google Drive yang berisi 3 berkas .geojson!');
                                     return;
                                   }
-                                  await handleSyncDriveGeoJSON(targetProj, folderIdToUse);
+                                  await handleSyncDriveGeoJSON(targetProj, folderIdToUse, {
+                                    silent: false,
+                                    force: true,
+                                    persistFolderId: true
+                                  });
                                 }}
                                 className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-xl cursor-pointer flex items-center justify-center gap-2 shadow-lg transition-all shrink-0 disabled:opacity-50"
                               >
                                 <RefreshCw className={`w-3.5 h-3.5 ${isSyncingDriveGeoJSON ? 'animate-spin' : ''}`} />
-                                {isSyncingDriveGeoJSON ? 'Mengunduh GeoJSON...' : 'Tarik 3 GeoJSON Sekarang'}
+                                {isSyncingDriveGeoJSON ? 'Menyinkronkan GeoJSON...' : 'Simpan & Tarik GeoJSON'}
                               </button>
                             </div>
 
@@ -8436,6 +8745,13 @@ export default function App() {
         onClose={() => setIsCsvGuideModalOpen(false)}
         activeSpreadsheetId={projects.find(p => p.id === activeProjectId)?.spreadsheetId}
         activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
+      />
+
+      {/* Per-Jalur Inventory Form PDF Header, Footer & Coordinate Projection Settings Modal */}
+      <ProjectPdfConfigModal
+        project={projects.find(p => p.id === editingPdfConfigProjectId) || null}
+        onClose={() => setEditingPdfConfigProjectId(null)}
+        onSave={handleSaveProjectPdfConfig}
       />
     </div>
   );

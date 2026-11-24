@@ -1,9 +1,119 @@
 import { jsPDF } from 'jspdf';
-import { type LandRecord } from '../types';
+import {
+  type LandRecord,
+  type InventoryFormPdfConfig,
+  type VendorHeaderPreset
+} from '../types';
 import { db } from './firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import { loadGeoJSONLayerDoc } from './geojsonStorage';
 import { getOfficialLogos } from './logoLoader';
+import {
+  formatProjectedCoordinate,
+  getCoordinateProjectionOption
+} from './geoUtils';
+import { resolveProjectTitleByDesa } from './projectTitleHelper';
+
+export interface GenerateInventoryPDFOptions {
+  pdfConfig?: InventoryFormPdfConfig;
+  projectId?: string;
+  projectGeoJSONs?: any[];
+}
+
+export function getVendorPresetDefaults(preset: VendorHeaderPreset = 'SURVEYOR_INDONESIA'): InventoryFormPdfConfig {
+  switch (preset) {
+    case 'PLN':
+      return {
+        vendorPreset: 'PLN',
+        headerMode: 'TWO_LOGOS_WITH_TEXT',
+        headerCompanyName: 'PT PLN (PERSERO)',
+        headerSubTitle: 'UNIT INDUK PEMBANGUNAN / PROYEK JARINGAN TRANSMISI',
+        headerAddress: '',
+        docTitleLine1: 'FORMULIR INVENTARISASI',
+        docTitleLine2: 'PEMERIKSAAN RENCANA JALUR TRANSMISI TENAGA LISTRIK',
+        footerPhone: '',
+        footerEmail: '',
+        footerWebsite: 'www.pln.co.id',
+        footerLine1: 'PT PLN (Persero) — Pengadaan Lahan & Kompensasi Ruang Bebas (ROW)',
+        footerLine2: 'www.pln.co.id',
+        footerLeftPrefix: 'Kode Lahan',
+        coordinateProjection: 'UTM_49S',
+        coordinateLabelOverride: ''
+      };
+    case 'VENTURA':
+      return {
+        vendorPreset: 'VENTURA',
+        headerMode: 'TWO_LOGOS_WITH_TEXT',
+        headerCompanyName: 'PT. VENTURA SKALA SIMETRIS',
+        headerSubTitle: 'KONSULTAN SURVEI, PEMETAAN GIS & INVENTARISASI PERTANAHAN',
+        headerAddress: '',
+        docTitleLine1: 'FORMULIR INVENTARISASI',
+        docTitleLine2: 'PEMERIKSAAN RENCANA JALUR TRANSMISI TENAGA LISTRIK',
+        footerPhone: '',
+        footerEmail: 'admin@venturaskalasimetris.co.id',
+        footerWebsite: 'www.venturaskalasimetris.co.id',
+        footerLine1: 'PT. Ventura Skala Simetris   |   Survei & Inventarisasi Jalur Transmisi',
+        footerLine2: 'www.venturaskalasimetris.co.id',
+        footerLeftPrefix: 'Kode Lahan',
+        coordinateProjection: 'UTM_49S',
+        coordinateLabelOverride: ''
+      };
+    case 'CUSTOM':
+      return {
+        vendorPreset: 'CUSTOM',
+        headerMode: 'TWO_LOGOS_WITH_TEXT',
+        headerCompanyName: 'NAMA VENDOR / INSTANSI',
+        headerSubTitle: 'DIVISI / UNIT PELAKSANA SURVEI & INVENTARISASI',
+        headerAddress: '',
+        docTitleLine1: 'FORMULIR INVENTARISASI',
+        docTitleLine2: 'PEMERIKSAAN RENCANA JALUR TRANSMISI TENAGA LISTRIK',
+        footerPhone: '',
+        footerEmail: '',
+        footerWebsite: '',
+        footerLine1: '',
+        footerLine2: '',
+        footerLeftPrefix: 'Kode Lahan',
+        coordinateProjection: 'UTM_49S',
+        coordinateLabelOverride: ''
+      };
+    case 'SURVEYOR_INDONESIA':
+    default:
+      return {
+        vendorPreset: 'SURVEYOR_INDONESIA',
+        headerMode: 'THREE_LOGOS',
+        headerCompanyName: 'PT SURVEYOR INDONESIA',
+        headerSubTitle: 'Member of ID Survey',
+        headerAddress: '',
+        docTitleLine1: 'FORMULIR INVENTARISASI',
+        docTitleLine2: 'PEMERIKSAAN RENCANA JALUR TRANSMISI TENAGA LISTRIK',
+        footerPhone: '(62-24) 845 0918',
+        footerEmail: 'surveyorindonesia@ptsi.co.id',
+        footerWebsite: 'www.ptsi.co.id',
+        footerLine1: '',
+        footerLine2: '',
+        footerLeftPrefix: 'Kode Lahan',
+        coordinateProjection: 'UTM_49S',
+        coordinateLabelOverride: ''
+      };
+  }
+}
+
+async function loadLogoWithDimensions(url: string, maxWidth: number = 360): Promise<{ dataUrl: string; ratio: number } | null> {
+  if (!url) return null;
+  const dataUrl = await loadSignatureAsBase64(url, maxWidth);
+  if (!dataUrl || !dataUrl.startsWith('data:image/')) return null;
+
+  return await new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth || img.width || 100;
+      const h = img.naturalHeight || img.height || 100;
+      resolve({ dataUrl, ratio: w / Math.max(h, 1) });
+    };
+    img.onerror = () => resolve({ dataUrl, ratio: 2.0 });
+    img.src = dataUrl;
+  });
+}
 
 const findPropInObj = (obj: any, keys: string[]): string => {
   if (!obj) return '';
@@ -342,10 +452,27 @@ async function loadSignatureAsBase64(url: string, maxWidth: number = 400): Promi
 
 /**
  * Generates a beautiful, high-fidelity 4-page Formulir Inventarisasi PDF
- * based on the provided LandRecord and Project Name.
+ * based on the provided LandRecord, Project Name, and optional per-jalur PDF configuration.
  */
-export async function generateInventoryPDF(record: LandRecord, projectName: string): Promise<jsPDF> {
+export async function generateInventoryPDF(
+  record: LandRecord,
+  projectName: string,
+  options?: GenerateInventoryPDFOptions
+): Promise<jsPDF> {
   const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4', compress: true });
+
+  const presetDefaults = getVendorPresetDefaults(options?.pdfConfig?.vendorPreset || 'SURVEYOR_INDONESIA');
+  const pdfCfg: InventoryFormPdfConfig = {
+    ...presetDefaults,
+    ...(options?.pdfConfig || {})
+  };
+  const headerMode = pdfCfg.headerMode || presetDefaults.headerMode || 'THREE_LOGOS';
+  const projectionId = pdfCfg.coordinateProjection || 'UTM_49S';
+  const projectionOption = getCoordinateProjectionOption(projectionId);
+  const effectiveProjectGeoJSONs = options?.projectGeoJSONs;
+  const activeProjectId = options?.projectId;
+  const resolvedProjectTitle = resolveProjectTitleByDesa(projectName, record.DESA, activeProjectId);
+  const effectiveProjectTitle = resolvedProjectTitle.title || projectName;
   
   // Set A4 dimensions
   const pageWidth = 210;
@@ -354,8 +481,13 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
   const rightMargin = 195;
   const contentWidth = rightMargin - leftMargin; // 180mm
 
-  // Preload crisp official PNG logos directly from /public
+  // Preload crisp official PNG logos directly from /public + any custom per-jalur uploaded/URL logos
   const logos = await getOfficialLogos();
+  const [customLeftLogo, customCenterLogo, customRightLogo] = await Promise.all([
+    pdfCfg.headerLeftLogoUrl ? loadLogoWithDimensions(pdfCfg.headerLeftLogoUrl) : Promise.resolve(null),
+    pdfCfg.headerCenterLogoUrl ? loadLogoWithDimensions(pdfCfg.headerCenterLogoUrl) : Promise.resolve(null),
+    pdfCfg.headerRightLogoUrl ? loadLogoWithDimensions(pdfCfg.headerRightLogoUrl) : Promise.resolve(null)
+  ]);
 
   // Preload 7 official signatures and village stamp
   const [
@@ -392,115 +524,197 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
   const accentRed = [185, 28, 28]; // #b91c1c
   const tealAccent = [13, 148, 136]; // #0d9488
 
-  // Helper function to draw the elegant corporate header on both pages
+  // Helper to fit a custom logo inside a bounding box without distorting aspect ratio
+  const drawFittedLogo = (
+    logoObj: { dataUrl: string; ratio: number },
+    boxX: number,
+    boxY: number,
+    maxW: number,
+    maxH: number,
+    align: 'left' | 'center' | 'right',
+    alias: string
+  ) => {
+    let drawW = maxW;
+    let drawH = drawW / Math.max(logoObj.ratio, 0.2);
+    if (drawH > maxH) {
+      drawH = maxH;
+      drawW = drawH * logoObj.ratio;
+    }
+    const drawX =
+      align === 'center'
+        ? boxX + (maxW - drawW) / 2
+        : align === 'right'
+        ? boxX + (maxW - drawW)
+        : boxX;
+    const drawY = boxY + (maxH - drawH) / 2;
+    const fmt = logoObj.dataUrl.includes('image/jpeg') ? 'JPEG' : 'PNG';
+    doc.addImage(logoObj.dataUrl, fmt, drawX, drawY, drawW, drawH, alias, 'FAST');
+  };
+
+  // Helper function to draw the corporate header on every page (customizable per jalur)
   const drawPageHeader = (pNum: number) => {
     // Header bottom line
     doc.setDrawColor(borderGray[0], borderGray[1], borderGray[2]);
     doc.setLineWidth(0.2);
     doc.line(15, 24, 195, 24);
 
-    // 1. Danantara Indonesia Logo (Left side) - crisp PNG
-    let danantaraRendered = false;
-    if (logos.danantara) {
-      try {
-        doc.addImage(logos.danantara, 'PNG', 15, 8.5, 36.1, 9.5, 'danantara_logo', 'FAST');
-        danantaraRendered = true;
-      } catch (e) {
-        console.warn('Failed to add danantara image to PDF:', e);
+    if (headerMode === 'TWO_LOGOS_WITH_TEXT' || headerMode === 'CUSTOM_TEXT_ONLY') {
+      if (headerMode === 'TWO_LOGOS_WITH_TEXT') {
+        if (customLeftLogo) {
+          try {
+            drawFittedLogo(customLeftLogo, 15, 6.5, 34, 14, 'left', 'custom_left_logo');
+          } catch (e) {
+            console.warn('Failed to draw custom left logo:', e);
+          }
+        }
+        if (customRightLogo) {
+          try {
+            drawFittedLogo(customRightLogo, 161, 6.5, 34, 14, 'right', 'custom_right_logo');
+          } catch (e) {
+            console.warn('Failed to draw custom right logo:', e);
+          }
+        }
       }
-    }
-    if (!danantaraRendered) {
-      // Draw a premium gold & crimson corporate crest
-      doc.setFillColor(178, 34, 34); // Crimson
-      doc.rect(15, 11, 4, 8, 'F');
-      doc.setFillColor(212, 175, 55); // Gold
-      doc.rect(19, 11, 2, 8, 'F');
-      doc.setFillColor(15, 23, 42); // Dark slate
-      doc.rect(21, 11, 1, 8, 'F');
-      
-      // Draw stylized layered triangles (crown/crest) above
-      doc.setFillColor(178, 34, 34);
-      doc.triangle(15, 11, 19, 11, 17, 8, 'F');
-      doc.setFillColor(212, 175, 55);
-      doc.triangle(19, 11, 21, 11, 20, 8, 'F');
 
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9);
-      doc.setTextColor(15, 23, 42);
-      doc.text('DANANTARA', 24, 14);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
-      doc.setTextColor(100, 116, 139);
-      doc.text('REPUBLIK INDONESIA', 24, 18);
-    }
+      const companyText = (pdfCfg.headerCompanyName || '').trim();
+      const subText = (pdfCfg.headerSubTitle || '').trim();
+      const addrText = (pdfCfg.headerAddress || '').trim();
 
-    // 2. ID Survey Logo (Middle) - crisp PNG
-    let idsurveyRendered = false;
-    if (logos.idsurvey) {
-      try {
-        doc.addImage(logos.idsurvey, 'PNG', 89, 8.5, 30.0, 9.2, 'idsurvey_logo', 'FAST');
-        idsurveyRendered = true;
-      } catch (e) {
-        console.warn('Failed to add idsurvey image to PDF:', e);
+      let textY = addrText ? 11.5 : 13.5;
+      if (companyText) {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(10.5);
+        doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+        doc.text(companyText, 105, textY, { align: 'center', maxWidth: 112 });
+        textY += 4.3;
       }
-    }
-    if (!idsurveyRendered) {
-      // Draw a modern holding icon: circle enclosing checkmark
-      doc.setFillColor(2, 132, 199); // Blue
-      doc.circle(92, 13.5, 3, 'F');
-      doc.setFillColor(255, 255, 255); // white punch hole
-      doc.circle(92, 13.5, 1.8, 'F');
-      
-      // Green check mark on top
-      doc.setDrawColor(16, 185, 129); // Green
-      doc.setLineWidth(0.6);
-      doc.line(91.5, 13.5, 92.5, 14.5);
-      doc.line(92.5, 14.5, 94.5, 12.5);
-
-      // ID Survey Typography
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(15, 23, 42);
-      doc.text('id', 97, 15);
-      doc.setFont('helvetica', 'normal');
-      doc.text('survey', 100.5, 15);
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
-      doc.setTextColor(100, 116, 139);
-      doc.text('Testing · Inspection · Certification', 105, 19, { align: 'center' });
-    }
-
-    // 3. Surveyor Indonesia Logo (Right side) - crisp PNG
-    let surveyorRendered = false;
-    if (logos.surveyor) {
-      try {
-        doc.addImage(logos.surveyor, 'PNG', 195 - 15.5, 8.0, 15.5, 11.0, 'surveyor_logo', 'FAST');
-        surveyorRendered = true;
-      } catch (e) {
-        console.warn('Failed to add surveyor image to PDF:', e);
+      if (subText) {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.5);
+        doc.setTextColor(primaryBlue[0], primaryBlue[1], primaryBlue[2]);
+        doc.text(subText, 105, textY, { align: 'center', maxWidth: 112 });
+        textY += 3.6;
       }
-    }
-    if (!surveyorRendered) {
-      const xRight = 171;
-      // Draw globe icon with latitude/longitude lines
-      doc.setDrawColor(2, 132, 199); // Blue
-      doc.setLineWidth(0.2);
-      doc.circle(xRight - 4, 14, 3, 'S'); // Outer circle
-      doc.ellipse(xRight - 4, 14, 1.2, 3, 'S'); // Longitude arc
-      doc.line(xRight - 7, 14, xRight - 1, 14); // Equator
-      
-      // Add corporate brand name
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7);
-      doc.setTextColor(2, 132, 199); // Brand Blue
-      doc.text('SURVEYOR', xRight + 1, 13);
-      doc.text('INDONESIA', xRight + 1, 16);
-      
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(5);
-      doc.setTextColor(100, 116, 139);
-      doc.text('Member of ID Survey', xRight + 1, 19.5);
+      if (addrText) {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6.5);
+        doc.setTextColor(100, 116, 139);
+        doc.text(addrText, 105, textY, { align: 'center', maxWidth: 116 });
+      }
+    } else {
+      // THREE_LOGOS mode (Default Surveyor Indonesia / custom 3-logo corporate kop)
+      const isDefaultSI = (pdfCfg.vendorPreset || 'SURVEYOR_INDONESIA') === 'SURVEYOR_INDONESIA';
+
+      // 1. Left Logo (Custom or Danantara default)
+      let leftRendered = false;
+      if (customLeftLogo) {
+        try {
+          drawFittedLogo(customLeftLogo, 15, 7.0, 38, 12.5, 'left', 'custom_left_logo');
+          leftRendered = true;
+        } catch (e) {
+          console.warn('Failed to add custom left logo:', e);
+        }
+      } else if (isDefaultSI && logos.danantara) {
+        try {
+          doc.addImage(logos.danantara, 'PNG', 15, 8.5, 36.1, 9.5, 'danantara_logo', 'FAST');
+          leftRendered = true;
+        } catch (e) {
+          console.warn('Failed to add danantara image to PDF:', e);
+        }
+      }
+      if (!leftRendered && isDefaultSI) {
+        doc.setFillColor(178, 34, 34);
+        doc.rect(15, 11, 4, 8, 'F');
+        doc.setFillColor(212, 175, 55);
+        doc.rect(19, 11, 2, 8, 'F');
+        doc.setFillColor(15, 23, 42);
+        doc.rect(21, 11, 1, 8, 'F');
+        doc.setFillColor(178, 34, 34);
+        doc.triangle(15, 11, 19, 11, 17, 8, 'F');
+        doc.setFillColor(212, 175, 55);
+        doc.triangle(19, 11, 21, 11, 20, 8, 'F');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(15, 23, 42);
+        doc.text('DANANTARA', 24, 14);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6.5);
+        doc.setTextColor(100, 116, 139);
+        doc.text('REPUBLIK INDONESIA', 24, 18);
+      }
+
+      // 2. Center Logo (Custom or ID Survey default)
+      let centerRendered = false;
+      if (customCenterLogo) {
+        try {
+          drawFittedLogo(customCenterLogo, 82, 7.0, 46, 12.5, 'center', 'custom_center_logo');
+          centerRendered = true;
+        } catch (e) {
+          console.warn('Failed to add custom center logo:', e);
+        }
+      } else if (isDefaultSI && logos.idsurvey) {
+        try {
+          doc.addImage(logos.idsurvey, 'PNG', 89, 8.5, 30.0, 9.2, 'idsurvey_logo', 'FAST');
+          centerRendered = true;
+        } catch (e) {
+          console.warn('Failed to add idsurvey image to PDF:', e);
+        }
+      }
+      if (!centerRendered && isDefaultSI) {
+        doc.setFillColor(2, 132, 199);
+        doc.circle(92, 13.5, 3, 'F');
+        doc.setFillColor(255, 255, 255);
+        doc.circle(92, 13.5, 1.8, 'F');
+        doc.setDrawColor(16, 185, 129);
+        doc.setLineWidth(0.6);
+        doc.line(91.5, 13.5, 92.5, 14.5);
+        doc.line(92.5, 14.5, 94.5, 12.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(10);
+        doc.setTextColor(15, 23, 42);
+        doc.text('id', 97, 15);
+        doc.setFont('helvetica', 'normal');
+        doc.text('survey', 100.5, 15);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6.5);
+        doc.setTextColor(100, 116, 139);
+        doc.text('Testing · Inspection · Certification', 105, 19, { align: 'center' });
+      }
+
+      // 3. Right Logo (Custom or Surveyor Indonesia default)
+      let rightRendered = false;
+      if (customRightLogo) {
+        try {
+          drawFittedLogo(customRightLogo, 157, 7.0, 38, 12.5, 'right', 'custom_right_logo');
+          rightRendered = true;
+        } catch (e) {
+          console.warn('Failed to add custom right logo:', e);
+        }
+      } else if (isDefaultSI && logos.surveyor) {
+        try {
+          doc.addImage(logos.surveyor, 'PNG', 195 - 15.5, 8.0, 15.5, 11.0, 'surveyor_logo', 'FAST');
+          rightRendered = true;
+        } catch (e) {
+          console.warn('Failed to add surveyor image to PDF:', e);
+        }
+      }
+      if (!rightRendered && isDefaultSI) {
+        const xRight = 171;
+        doc.setDrawColor(2, 132, 199);
+        doc.setLineWidth(0.2);
+        doc.circle(xRight - 4, 14, 3, 'S');
+        doc.ellipse(xRight - 4, 14, 1.2, 3, 'S');
+        doc.line(xRight - 7, 14, xRight - 1, 14);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7);
+        doc.setTextColor(2, 132, 199);
+        doc.text('SURVEYOR', xRight + 1, 13);
+        doc.text('INDONESIA', xRight + 1, 16);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(5);
+        doc.setTextColor(100, 116, 139);
+        doc.text('Member of ID Survey', xRight + 1, 19.5);
+      }
     }
 
     // Page Number Indicator
@@ -510,7 +724,7 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
     doc.text(`Halaman ${pNum} dari 4`, rightMargin, 22.5, { align: 'right' });
   };
 
-  // Helper function to draw contact info footer at the bottom of both pages
+  // Helper function to draw contact info footer at the bottom of every page (customizable per jalur)
   const drawPageFooter = (pNum: number, totalPages: number = 4) => {
     // Top border line
     doc.setDrawColor(borderGray[0], borderGray[1], borderGray[2]);
@@ -521,20 +735,31 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
     doc.setFontSize(7);
     doc.setTextColor(100, 116, 139); // Slate-500
 
-    // Center phone & email
-    const phoneText = '(62-24) 845 0918';
-    const emailText = 'surveyorindonesia@ptsi.co.id';
-    const webText = 'www.ptsi.co.id';
+    const phoneText = (pdfCfg.footerPhone || '').trim();
+    const emailText = (pdfCfg.footerEmail || '').trim();
+    const webText = (pdfCfg.footerWebsite || '').trim();
 
-    doc.text(`Telp: ${phoneText}   |   Email: ${emailText}`, 105, 286, { align: 'center' });
-    doc.setFont('helvetica', 'bold');
-    doc.text(webText, 105, 290, { align: 'center' });
+    const structuredLine1Parts: string[] = [];
+    if (phoneText) structuredLine1Parts.push(`Telp: ${phoneText}`);
+    if (emailText) structuredLine1Parts.push(`Email: ${emailText}`);
 
-    // Page indicator
+    const line1 = (pdfCfg.footerLine1 || '').trim() || structuredLine1Parts.join('   |   ');
+    const line2 = (pdfCfg.footerLine2 || '').trim() || webText;
+    const leftPrefix = (pdfCfg.footerLeftPrefix || 'Kode Lahan').trim();
+
+    if (line1) {
+      doc.text(line1, 105, 286, { align: 'center', maxWidth: 165 });
+    }
+    if (line2) {
+      doc.setFont('helvetica', 'bold');
+      doc.text(line2, 105, 290, { align: 'center', maxWidth: 110 });
+    }
+
+    // Page indicator & left code
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.text(`Halaman ${pNum} dari ${totalPages}`, 195, 290, { align: 'right' });
-    doc.text(`Kode Lahan: ${record.CODE}`, 15, 290);
+    doc.text(`${leftPrefix}: ${record.CODE}`, 15, 290);
   };
 
   // Helper to draw clean table grids with key-value rows
@@ -608,10 +833,10 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
   doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-  doc.text('FORMULIR INVENTARISASI', 105, 31, { align: 'center' });
-  doc.text('PEMERIKSAAN RENCANA JALUR TRANSMISI TENAGA LISTRIK', 105, 36, { align: 'center' });
+  doc.text((pdfCfg.docTitleLine1 || 'FORMULIR INVENTARISASI').toUpperCase(), 105, 31, { align: 'center' });
+  doc.text((pdfCfg.docTitleLine2 || 'PEMERIKSAAN RENCANA JALUR TRANSMISI TENAGA LISTRIK').toUpperCase(), 105, 36, { align: 'center' });
   doc.setFontSize(10);
-  doc.text(projectName.toUpperCase(), 105, 41, { align: 'center' });
+  doc.text(effectiveProjectTitle, 105, 41, { align: 'center' });
 
   let y = 47;
 
@@ -623,7 +848,7 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
   
   y += 3;
   const section1Data = [
-    { label: 'Jaringan Transmisi', value: projectName },
+    { label: 'Jaringan Transmisi', value: effectiveProjectTitle },
     { label: 'Nomor SPAN (Tower)', value: record.SPAN },
     { label: 'Nomor Bidang Lahan', value: record.NOBID }
   ];
@@ -653,8 +878,11 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
   doc.text('III. DATA BIDANG TANAH', leftMargin, y);
 
   y += 3;
+  const coordProjectionLabel = projectionOption.sheetRowLabel;
+  const coordProjectionValue = (pdfCfg.coordinateLabelOverride || '').trim() || projectionOption.sheetRowValue;
+
   const section3Data = [
-    { label: 'Koordinat Universal Transverse Mercator', value: '49 S (Zone UTM)' },
+    { label: coordProjectionLabel, value: coordProjectionValue },
     { label: 'Desa / Kelurahan', value: record.DESA ? (record.DESA.toUpperCase().startsWith('DESA') || record.DESA.toUpperCase().startsWith('KELURAHAN') ? record.DESA : `Desa ${record.DESA}`) : '-' },
     { label: 'Kecamatan', value: record.KECAMATAN },
     { label: 'Kabupaten/Kota', value: record.KABUPATEN },
@@ -1186,7 +1414,19 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
   try {
     let candidateGeoJSONs: { id?: string; name?: string; type: 'bidang' | 'tower' | 'jalur'; data: any; fieldMapping?: any }[] = [];
 
-    if (cachedCandidateGeoJSONs && cachedCandidateGeoJSONs.length > 0) {
+    if (Array.isArray(effectiveProjectGeoJSONs) && effectiveProjectGeoJSONs.length > 0) {
+      effectiveProjectGeoJSONs.forEach((l: any) => {
+        if (l?.data && Array.isArray(l.data.features) && l.data.features.length > 0) {
+          candidateGeoJSONs.push({
+            id: l.id,
+            name: l.name,
+            type: l.type || 'bidang',
+            data: l.data,
+            fieldMapping: l.fieldMapping
+          });
+        }
+      });
+    } else if (cachedCandidateGeoJSONs && cachedCandidateGeoJSONs.length > 0 && !activeProjectId) {
       candidateGeoJSONs = cachedCandidateGeoJSONs;
     } else {
       // 1. Gather all custom layers (bidang, tower, jalur) from localStorage
@@ -1982,11 +2222,12 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
   doc.setTextColor(100, 116, 139);
   doc.text('SITUASI MENGGAMBARKAN KONDISI SEMPADAN DAN BIDANG TANAH', 105, boxY + boxH + 4, { align: 'center' });
 
-  // COORDINATES TABLE / GRID
+  // COORDINATES TABLE / GRID (uses the configured per-jalur projection)
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
   doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-  doc.text('I. KOORDINAT BIDANG TANAH', leftMargin, 115);
+  const coordSectionSuffix = (pdfCfg.coordinateLabelOverride || '').trim() || projectionOption.shortName;
+  doc.text(`I. KOORDINAT BIDANG TANAH (${coordSectionSuffix})`, leftMargin, 115);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
@@ -2004,7 +2245,7 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
     const colWidth = numCols === 3 ? 59 : 90;
 
     uniquePoints.forEach((pt, i) => {
-      const utm = latLngToUTM49S(pt[0], pt[1]);
+      const formatted = formatProjectedCoordinate(pt[0], pt[1], projectionId, numCols === 3);
       const colIdx = Math.floor(i / numRows);
       const rowIdx = i % numRows;
       const px = leftMargin + (numCols === 3 ? 2 : 4) + (colIdx * colWidth);
@@ -2014,9 +2255,9 @@ export async function generateInventoryPDF(record: LandRecord, projectName: stri
       doc.text(`Koordinat P${i+1}`, px, py);
       doc.setFont('helvetica', 'normal');
       if (numCols === 3) {
-        doc.text(`X: ${utm.x.toFixed(2)} Y: ${utm.y.toFixed(2)}`, px + 18, py);
+        doc.text(formatted.primaryText, px + 18, py);
       } else {
-        doc.text(`X: ${utm.x.toFixed(4)}   Y: ${utm.y.toFixed(4)}`, px + 22, py);
+        doc.text(formatted.primaryText, px + 22, py);
       }
     });
 

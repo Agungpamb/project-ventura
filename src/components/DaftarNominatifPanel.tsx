@@ -13,6 +13,7 @@ import QuickParcelPickerModal from './QuickParcelPickerModal';
 import DeleteParcelModal from './DeleteParcelModal';
 import DriveFolderSyncModal from './DriveFolderSyncModal';
 import { getRecordUniqueKey } from '../lib/parcelManagement';
+import { resolveProjectTitleByDesa } from '../lib/projectTitleHelper';
 
 interface DaftarNominatifPanelProps {
   records: LandRecord[];
@@ -414,7 +415,12 @@ export default function DaftarNominatifPanel({
     aoa.push(['DAFTAR NOMINATIF INVENTARISASI TANAH, BANGUNAN, DAN/ATAU TANAMAN', ...Array(24).fill('')]);
     merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: 24 } });
 
-    aoa.push([(activeProjectName || '').toUpperCase(), ...Array(24).fill('')]);
+    const resolvedExportTitle = resolveProjectTitleByDesa(
+      activeProjectName,
+      selectedDesa === '__ALL__' ? '' : selectedDesa,
+      activeProjectId
+    );
+    aoa.push([resolvedExportTitle.title || (activeProjectName || '').toUpperCase(), ...Array(24).fill('')]);
     merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: 24 } });
 
     const locationSubtitle = `KABUPATEN: ${activeKabupaten}   |   KECAMATAN: ${activeKecamatan}   |   DESA: ${exportDesaLabel}${
@@ -1214,7 +1220,11 @@ export default function DaftarNominatifPanel({
             DAFTAR NOMINATIF INVENTARISASI TANAH, BANGUNAN, DAN/ATAU TANAMAN
           </h2>
           <h3 className="text-xs md:text-sm font-bold text-emerald-400 font-mono tracking-wider">
-            {activeProjectName.toUpperCase()}
+            {resolveProjectTitleByDesa(
+              activeProjectName,
+              selectedDesa === '__ALL__' ? '' : selectedDesa,
+              activeProjectId
+            ).title || activeProjectName.toUpperCase()}
           </h3>
           <p className="text-xs text-slate-300 font-semibold pt-1 font-mono">
             KABUPATEN: <strong className="text-white underline">{activeKabupaten}</strong> &nbsp; | &nbsp; 

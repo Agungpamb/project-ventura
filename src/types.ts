@@ -845,6 +845,47 @@ export const getAgencyLetterSheetHeaders = (): string[] => [
   "TERAKHIR_DIPERBARUI"
 ];
 
+export type CoordinateProjectionId =
+  | 'AUTO_UTM'
+  | 'UTM_46N' | 'UTM_47N' | 'UTM_48N' | 'UTM_49N' | 'UTM_50N' | 'UTM_51N' | 'UTM_52N' | 'UTM_53N' | 'UTM_54N'
+  | 'UTM_46S' | 'UTM_47S' | 'UTM_48S' | 'UTM_49S' | 'UTM_50S' | 'UTM_51S' | 'UTM_52S' | 'UTM_53S' | 'UTM_54S'
+  | 'TM3_46_2'
+  | 'TM3_47_1' | 'TM3_47_2'
+  | 'TM3_48_1' | 'TM3_48_2'
+  | 'TM3_49_1' | 'TM3_49_2'
+  | 'TM3_50_1' | 'TM3_50_2'
+  | 'TM3_51_1' | 'TM3_51_2'
+  | 'TM3_52_1' | 'TM3_52_2'
+  | 'TM3_53_1' | 'TM3_53_2'
+  | 'TM3_54_1'
+  | 'WGS84_DD'
+  | 'WGS84_DMS';
+
+export type VendorHeaderPreset = 'SURVEYOR_INDONESIA' | 'PLN' | 'VENTURA' | 'CUSTOM';
+
+export type HeaderLayoutMode = 'THREE_LOGOS' | 'TWO_LOGOS_WITH_TEXT' | 'CUSTOM_TEXT_ONLY';
+
+export interface InventoryFormPdfConfig {
+  vendorPreset?: VendorHeaderPreset;
+  headerMode?: HeaderLayoutMode;
+  headerLeftLogoUrl?: string;
+  headerCenterLogoUrl?: string;
+  headerRightLogoUrl?: string;
+  headerCompanyName?: string;
+  headerSubTitle?: string;
+  headerAddress?: string;
+  docTitleLine1?: string;
+  docTitleLine2?: string;
+  footerPhone?: string;
+  footerEmail?: string;
+  footerWebsite?: string;
+  footerLine1?: string;
+  footerLine2?: string;
+  footerLeftPrefix?: string;
+  coordinateProjection?: CoordinateProjectionId;
+  coordinateLabelOverride?: string;
+}
+
 export interface ProjectConfig {
   id: string;
   name: string;
@@ -863,6 +904,8 @@ export interface ProjectConfig {
   agencyLetterSpreadsheetId?: string | null;
   agencyLetterPublicCsvUrl?: string | null;
   agencyLetterUploadsFolderId?: string | null; // ID Folder Berkas Surat Instansi (PDF & Foto per Instansi)
+  // 4. Konfigurasi Header, Footer & Proyeksi Koordinat Form Inventarisasi PDF (Per Jalur)
+  inventoryPdfConfig?: InventoryFormPdfConfig;
   status?: string;
   webhookUrl?: string;
   geojsonPolylineUrl?: string;

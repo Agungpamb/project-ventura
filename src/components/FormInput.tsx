@@ -9,6 +9,7 @@ import {
   type PlantData,
   createEmptyRecord, 
   type ProjectConfig,
+  type InventoryFormPdfConfig,
   compactPlantsArray,
   compactBuildingsArray,
   isPlantSlotOccupied,
@@ -41,6 +42,35 @@ const PREDEFINED_JENIS_ALAS_HAK = [
   'SEPORADIK',
   'SURAT KETERANGAN'
 ];
+
+const PREDEFINED_STATUS_PENUTUP_LAHAN = [
+  'TANAH MASYARAKAT',
+  'KAWASAN HUTAN',
+  'BMN',
+  'BMD',
+  'ASET BUMN',
+  'ASET BUMD',
+  'ASET DESA',
+  'TANAH NEGARA'
+];
+
+const PREDEFINED_JENIS_PERALIHAN_HAK = [
+  'SESUAI',
+  'JUAL-BELI',
+  'KETERANGAN WARIS',
+  'KUASA WARIS',
+  'SURAT KUASA',
+  'KET. BEDA NAMA',
+  'WAKAF',
+  'SURAT KLAIM TANAMAN',
+  'SURAT KLAIM BANGUNAN'
+];
+
+type CustomSelectField =
+  | 'PENUTUP_LAHAN'
+  | 'STATUS_PENUTUP_LAHAN'
+  | 'JENIS_ALAS_HAK'
+  | 'JENIS_PERALIHAN_HAK';
 interface FormInputProps {
   records: LandRecord[];
   role?: 'ADMIN' | 'FIELD' | 'QC' | 'GUEST' | null;
@@ -52,6 +82,8 @@ interface FormInputProps {
   activeProjectName?: string;
   projects?: ProjectConfig[];
   activeProjectId?: string;
+  inventoryPdfConfig?: InventoryFormPdfConfig;
+  loadedGeoJSONs?: any[];
   onSwitchProject?: (projectId: string) => void;
   initialSelectedRecord?: LandRecord | null;
   onClearInitialRecord?: () => void;
@@ -69,6 +101,8 @@ export default function FormInput({
   activeProjectName,
   projects,
   activeProjectId,
+  inventoryPdfConfig,
+  loadedGeoJSONs,
   onSwitchProject,
   initialSelectedRecord,
   onClearInitialRecord,
@@ -138,6 +172,51 @@ export default function FormInput({
   
   // Form State
   const [formData, setFormData] = useState<LandRecord>(createEmptyRecord());
+  const [customSelectMode, setCustomSelectMode] = useState<Record<CustomSelectField, boolean>>({
+    PENUTUP_LAHAN: false,
+    STATUS_PENUTUP_LAHAN: false,
+    JENIS_ALAS_HAK: false,
+    JENIS_PERALIHAN_HAK: false
+  });
+
+  const isCustomFieldValue = (val: string | undefined, predefined: string[]) => {
+    const clean = String(val || '').trim().toUpperCase();
+    return clean !== '' && !predefined.includes(clean);
+  };
+
+  const syncCustomSelectModeFromRecord = (rec: LandRecord) => {
+    setCustomSelectMode({
+      PENUTUP_LAHAN: isCustomFieldValue(rec.PENUTUP_LAHAN, PREDEFINED_PENUTUP_LAHAN),
+      STATUS_PENUTUP_LAHAN: isCustomFieldValue(rec.STATUS_PENUTUP_LAHAN, PREDEFINED_STATUS_PENUTUP_LAHAN),
+      JENIS_ALAS_HAK: isCustomFieldValue(rec.JENIS_ALAS_HAK, PREDEFINED_JENIS_ALAS_HAK),
+      JENIS_PERALIHAN_HAK: isCustomFieldValue(rec.JENIS_PERALIHAN_HAK, PREDEFINED_JENIS_PERALIHAN_HAK)
+    });
+  };
+
+  const getCustomSelectValue = (field: CustomSelectField, predefined: string[]): string => {
+    if (customSelectMode[field]) return 'LAINNYA';
+    const normalized = String(formData[field] || '').trim().toUpperCase();
+    if (!normalized) return '';
+    return predefined.includes(normalized) ? normalized : 'LAINNYA';
+  };
+
+  const isCustomInputVisible = (field: CustomSelectField, predefined: string[]): boolean => {
+    if (customSelectMode[field]) return true;
+    return isCustomFieldValue(String(formData[field] || ''), predefined);
+  };
+
+  const handleCustomSelectChange = (field: CustomSelectField, val: string, predefined: string[]) => {
+    if (val === 'LAINNYA') {
+      setCustomSelectMode(prev => ({ ...prev, [field]: true }));
+      const currentNorm = String(formData[field] || '').trim().toUpperCase();
+      if (predefined.includes(currentNorm)) {
+        handleChange(field, '');
+      }
+    } else {
+      setCustomSelectMode(prev => ({ ...prev, [field]: false }));
+      handleChange(field, val);
+    }
+  };
   const [activeTab, setActiveTab] = useState<'lahan_pemilik' | 'alas_bangunan' | 'tanaman' | 'administrasi' | 'cetak_unggah'>('lahan_pemilik');
   
   // Validation errors
@@ -218,6 +297,7 @@ export default function FormInput({
     deepCopy.buildings = compactBuildingsArray(deepCopy.buildings);
     setSelectedEditRecord(deepCopy);
     setFormData(deepCopy);
+    syncCustomSelectModeFromRecord(deepCopy);
     setSearchQuery('');
     setSubmitMessage({ type: 'success', text: `Berhasil memuat No. Bidang ${record.NOBID || record.CODE} (${record.NAMA || 'Tanpa Nama'}) untuk diedit` });
     setTimeout(() => setSubmitMessage(null), 4000);
@@ -234,7 +314,9 @@ export default function FormInput({
   // Cancel edit mode
   const handleCancelEdit = () => {
     setSelectedEditRecord(null);
-    setFormData(createEmptyRecord());
+    const empty = createEmptyRecord();
+    setFormData(empty);
+    syncCustomSelectModeFromRecord(empty);
     setErrors({});
     if (onClearInitialRecord) onClearInitialRecord();
   };
@@ -1252,42 +1334,25 @@ export default function FormInput({
                 <div>
                   <label className="block text-xs font-bold text-slate-600 uppercase mb-1">PENUTUP LAHAN</label>
                   <select
-                    value={
-                      PREDEFINED_PENUTUP_LAHAN.includes((formData.PENUTUP_LAHAN || '').toUpperCase())
-                        ? (formData.PENUTUP_LAHAN || '').toUpperCase()
-                        : (formData.PENUTUP_LAHAN ? 'LAINNYA' : '')
-                    }
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === 'LAINNYA') {
-                        if (PREDEFINED_PENUTUP_LAHAN.includes((formData.PENUTUP_LAHAN || '').toUpperCase())) {
-                          handleChange('PENUTUP_LAHAN', '');
-                        }
-                      } else {
-                        handleChange('PENUTUP_LAHAN', val);
-                      }
-                    }}
+                    value={getCustomSelectValue('PENUTUP_LAHAN', PREDEFINED_PENUTUP_LAHAN)}
+                    onChange={(e) => handleCustomSelectChange('PENUTUP_LAHAN', e.target.value, PREDEFINED_PENUTUP_LAHAN)}
                     className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                   >
                     <option value="" className="text-slate-400 bg-white">-- Pilih Penutup Lahan --</option>
-                    <option value="SAWAH" className="text-slate-800 bg-white">SAWAH</option>
-                    <option value="LADANG ATAU TEGALAN" className="text-slate-800 bg-white">LADANG ATAU TEGALAN</option>
-                    <option value="PERKEBUNAN" className="text-slate-800 bg-white">PERKEBUNAN</option>
-                    <option value="PEMUKIMAN" className="text-slate-800 bg-white">PEMUKIMAN</option>
-                    <option value="PADANG RUMPUT" className="text-slate-800 bg-white">PADANG RUMPUT</option>
-                    <option value="SUNGAI" className="text-slate-800 bg-white">SUNGAI</option>
-                    <option value="JARINGAN JALAN" className="text-slate-800 bg-white">JARINGAN JALAN</option>
-                    <option value="SALURAN IRIGASI" className="text-slate-800 bg-white">SALURAN IRIGASI</option>
+                    {PREDEFINED_PENUTUP_LAHAN.map(opt => (
+                      <option key={opt} value={opt} className="text-slate-800 bg-white">{opt}</option>
+                    ))}
                     <option value="LAINNYA" className="text-slate-800 bg-white">LAINNYA (Ketik Sendiri)</option>
                   </select>
 
-                  {(!PREDEFINED_PENUTUP_LAHAN.includes((formData.PENUTUP_LAHAN || '').toUpperCase())) && formData.PENUTUP_LAHAN !== '' && (
+                  {isCustomInputVisible('PENUTUP_LAHAN', PREDEFINED_PENUTUP_LAHAN) && (
                     <div className="mt-2 animate-fadeIn">
                       <label className="block text-[10px] font-bold text-amber-600 uppercase mb-1">
                         Ketik Spesifikasi Penutup Lahan (misal: MAKAM, TAMAN, FASUM):
                       </label>
                       <input
                         type="text"
+                        autoFocus={customSelectMode.PENUTUP_LAHAN && !formData.PENUTUP_LAHAN}
                         value={formData.PENUTUP_LAHAN || ''}
                         onChange={(e) => handleChange('PENUTUP_LAHAN', e.target.value.toUpperCase())}
                         placeholder="Contoh: MAKAM"
@@ -1300,20 +1365,32 @@ export default function FormInput({
                 <div>
                   <label className="block text-xs font-bold text-slate-600 uppercase mb-1">STATUS PENUTUP LAHAN</label>
                   <select
-                    value={formData.STATUS_PENUTUP_LAHAN || ''}
-                    onChange={(e) => handleChange('STATUS_PENUTUP_LAHAN', e.target.value)}
+                    value={getCustomSelectValue('STATUS_PENUTUP_LAHAN', PREDEFINED_STATUS_PENUTUP_LAHAN)}
+                    onChange={(e) => handleCustomSelectChange('STATUS_PENUTUP_LAHAN', e.target.value, PREDEFINED_STATUS_PENUTUP_LAHAN)}
                     className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                   >
                     <option value="" className="text-slate-400 bg-white">-- Pilih Status Penutup Lahan --</option>
-                    <option value="TANAH MASYARAKAT" className="text-slate-800 bg-white">TANAH MASYARAKAT</option>
-                    <option value="KAWASAN HUTAN" className="text-slate-800 bg-white">KAWASAN HUTAN</option>
-                    <option value="BMN" className="text-slate-800 bg-white">BMN</option>
-                    <option value="BMD" className="text-slate-800 bg-white">BMD</option>
-                    <option value="ASET BUMN" className="text-slate-800 bg-white">ASET BUMN</option>
-                    <option value="ASET BUMD" className="text-slate-800 bg-white">ASET BUMD</option>
-                    <option value="ASET DESA" className="text-slate-800 bg-white">ASET DESA</option>
-                    <option value="TANAH NEGARA" className="text-slate-800 bg-white">TANAH NEGARA</option>
+                    {PREDEFINED_STATUS_PENUTUP_LAHAN.map(opt => (
+                      <option key={opt} value={opt} className="text-slate-800 bg-white">{opt}</option>
+                    ))}
+                    <option value="LAINNYA" className="text-slate-800 bg-white">LAINNYA (Ketik Sendiri)</option>
                   </select>
+
+                  {isCustomInputVisible('STATUS_PENUTUP_LAHAN', PREDEFINED_STATUS_PENUTUP_LAHAN) && (
+                    <div className="mt-2 animate-fadeIn">
+                      <label className="block text-[10px] font-bold text-amber-600 uppercase mb-1">
+                        Ketik Status Penutup Lahan Lainnya:
+                      </label>
+                      <input
+                        type="text"
+                        autoFocus={customSelectMode.STATUS_PENUTUP_LAHAN && !formData.STATUS_PENUTUP_LAHAN}
+                        value={formData.STATUS_PENUTUP_LAHAN || ''}
+                        onChange={(e) => handleChange('STATUS_PENUTUP_LAHAN', e.target.value.toUpperCase())}
+                        placeholder="Contoh: TANAH WAKAF / FASOS"
+                        className="w-full px-3 py-2 border border-amber-400/40 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500/30 bg-amber-50 text-slate-800 placeholder:text-slate-400 placeholder:font-normal"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -1555,42 +1632,25 @@ export default function FormInput({
                   <div>
                     <label className="block text-xs font-bold text-slate-600 uppercase mb-1">JENIS ALAS HAK</label>
                     <select
-                      value={
-                        PREDEFINED_JENIS_ALAS_HAK.includes((formData.JENIS_ALAS_HAK || '').toUpperCase())
-                          ? (formData.JENIS_ALAS_HAK || '').toUpperCase()
-                          : (formData.JENIS_ALAS_HAK ? 'LAINNYA' : '')
-                      }
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === 'LAINNYA') {
-                          if (PREDEFINED_JENIS_ALAS_HAK.includes((formData.JENIS_ALAS_HAK || '').toUpperCase())) {
-                            handleChange('JENIS_ALAS_HAK', '');
-                          }
-                        } else {
-                          handleChange('JENIS_ALAS_HAK', val);
-                        }
-                      }}
+                      value={getCustomSelectValue('JENIS_ALAS_HAK', PREDEFINED_JENIS_ALAS_HAK)}
+                      onChange={(e) => handleCustomSelectChange('JENIS_ALAS_HAK', e.target.value, PREDEFINED_JENIS_ALAS_HAK)}
                       className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
                     >
                       <option value="" className="text-slate-400 bg-white">-- Pilih Jenis Alas Hak --</option>
-                      <option value="SERTIPIKAT HAK MILIK" className="text-slate-800 bg-white">SERTIPIKAT HAK MILIK</option>
-                      <option value="SERTIPIKAT HAK GUNA BANGUNAN" className="text-slate-800 bg-white">SERTIPIKAT HAK GUNA BANGUNAN</option>
-                      <option value="SERTIPIKAT HAK GUNA USAHA" className="text-slate-800 bg-white">SERTIPIKAT HAK GUNA USAHA</option>
-                      <option value="SERTIPIKAT HAK PAKAI" className="text-slate-800 bg-white">SERTIPIKAT HAK PAKAI</option>
-                      <option value="SERTIPIKAT HAK WAKAF" className="text-slate-800 bg-white">SERTIPIKAT HAK WAKAF</option>
-                      <option value="LETTER C" className="text-slate-800 bg-white">LETTER C</option>
-                      <option value="SEPORADIK" className="text-slate-800 bg-white">SEPORADIK</option>
-                      <option value="SURAT KETERANGAN" className="text-slate-800 bg-white">SURAT KETERANGAN</option>
+                      {PREDEFINED_JENIS_ALAS_HAK.map(opt => (
+                        <option key={opt} value={opt} className="text-slate-800 bg-white">{opt}</option>
+                      ))}
                       <option value="LAINNYA" className="text-slate-800 bg-white">LAINNYA (Ketik Sendiri)</option>
                     </select>
 
-                    {(!PREDEFINED_JENIS_ALAS_HAK.includes((formData.JENIS_ALAS_HAK || '').toUpperCase())) && formData.JENIS_ALAS_HAK !== '' && (
+                    {isCustomInputVisible('JENIS_ALAS_HAK', PREDEFINED_JENIS_ALAS_HAK) && (
                       <div className="mt-2 animate-fadeIn">
                         <label className="block text-[10px] font-bold text-amber-600 uppercase mb-1">
                           Ketik Jenis Alas Hak Lainnya:
                         </label>
                         <input
                           type="text"
+                          autoFocus={customSelectMode.JENIS_ALAS_HAK && !formData.JENIS_ALAS_HAK}
                           value={formData.JENIS_ALAS_HAK || ''}
                           onChange={(e) => handleChange('JENIS_ALAS_HAK', e.target.value.toUpperCase())}
                           placeholder="Contoh: KETERANGAN DESA / GIRIK"
@@ -1639,21 +1699,32 @@ export default function FormInput({
                   <div>
                     <label className="block text-xs font-bold text-slate-600 uppercase mb-1">JENIS DOKUMEN PERALIHAN</label>
                     <select
-                      value={formData.JENIS_PERALIHAN_HAK || ''}
-                      onChange={(e) => handleChange('JENIS_PERALIHAN_HAK', e.target.value)}
+                      value={getCustomSelectValue('JENIS_PERALIHAN_HAK', PREDEFINED_JENIS_PERALIHAN_HAK)}
+                      onChange={(e) => handleCustomSelectChange('JENIS_PERALIHAN_HAK', e.target.value, PREDEFINED_JENIS_PERALIHAN_HAK)}
                       className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white font-medium text-slate-800"
                     >
                       <option value="" className="text-slate-400 bg-white">-- Pilih Dokumen Peralihan (Jika Ada) --</option>
-                      <option value="SESUAI" className="text-slate-800 bg-white">SESUAI</option>
-                      <option value="JUAL-BELI" className="text-slate-800 bg-white">JUAL-BELI</option>
-                      <option value="KETERANGAN WARIS" className="text-slate-800 bg-white">KETERANGAN WARIS</option>
-                      <option value="KUASA WARIS" className="text-slate-800 bg-white">KUASA WARIS</option>
-                      <option value="SURAT KUASA" className="text-slate-800 bg-white">SURAT KUASA</option>
-                      <option value="KET. BEDA NAMA" className="text-slate-800 bg-white">KET. BEDA NAMA</option>
-                      <option value="WAKAF" className="text-slate-800 bg-white">WAKAF</option>
-                      <option value="SURAT KLAIM TANAMAN" className="text-slate-800 bg-white">SURAT KLAIM TANAMAN</option>
-                      <option value="SURAT KLAIM BANGUNAN" className="text-slate-800 bg-white">SURAT KLAIM BANGUNAN</option>
+                      {PREDEFINED_JENIS_PERALIHAN_HAK.map(opt => (
+                        <option key={opt} value={opt} className="text-slate-800 bg-white">{opt}</option>
+                      ))}
+                      <option value="LAINNYA" className="text-slate-800 bg-white">LAINNYA (Ketik Sendiri)</option>
                     </select>
+
+                    {isCustomInputVisible('JENIS_PERALIHAN_HAK', PREDEFINED_JENIS_PERALIHAN_HAK) && (
+                      <div className="mt-2 animate-fadeIn">
+                        <label className="block text-[10px] font-bold text-amber-600 uppercase mb-1">
+                          Ketik Jenis Dokumen Peralihan Lainnya:
+                        </label>
+                        <input
+                          type="text"
+                          autoFocus={customSelectMode.JENIS_PERALIHAN_HAK && !formData.JENIS_PERALIHAN_HAK}
+                          value={formData.JENIS_PERALIHAN_HAK || ''}
+                          onChange={(e) => handleChange('JENIS_PERALIHAN_HAK', e.target.value.toUpperCase())}
+                          placeholder="Contoh: HIBAH / PEMBEBASAN TOL"
+                          className="w-full px-3 py-2 border border-amber-400/40 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500/30 bg-amber-50 text-slate-800 placeholder:text-slate-400 placeholder:font-normal"
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2464,7 +2535,10 @@ export default function FormInput({
                 accessToken={accessToken}
                 onUpdateRecord={onUpdateRecord || (async () => {})}
                 uploadsFolderId={uploadsFolderId}
+                activeProjectId={activeProjectId}
                 activeProjectName={activeProjectName}
+                inventoryPdfConfig={inventoryPdfConfig}
+                loadedGeoJSONs={loadedGeoJSONs}
                 preselectedRecordId={selectedEditRecord.ID_UNIK}
               />
             ) : (

@@ -2493,6 +2493,14 @@ export function extractDriveFolderId(input: string): string {
   return clean || trimmed;
 }
 
+export interface DriveGeoJSONFileMeta {
+  id: string;
+  name: string;
+  mimeType?: string;
+  size?: string;
+  modifiedTime?: string;
+}
+
 export interface DetectedDriveGeoJSON {
   id: string;
   name: string;
@@ -2500,17 +2508,13 @@ export interface DetectedDriveGeoJSON {
   data: any;
   featureCount: number;
   geometryType: string;
+  modifiedTime?: string;
 }
 
-/**
- * Scans a Google Drive folder for GeoJSON files, automatically downloads them,
- * and detects their layer type ('bidang' | 'jalur' | 'tower') based on filename keywords
- * and geometric feature types.
- */
-export async function fetchDriveGeoJSONFiles(
+async function scanDriveGeoJSONCandidateFiles(
   accessToken: string,
   folderIdOrUrl: string
-): Promise<DetectedDriveGeoJSON[]> {
+): Promise<{ folderId: string; targetName: string; candidateFiles: any[]; geojsonFiles: DriveGeoJSONFileMeta[] }> {
   const folderId = extractDriveFolderId(folderIdOrUrl);
   if (!folderId) {
     throw new Error('ID atau Tautan Folder Google Drive tidak valid.');
@@ -2522,7 +2526,7 @@ export async function fetchDriveGeoJSONFiles(
   let isSingleFile = false;
 
   try {
-    const metaUrl = `https://www.googleapis.com/drive/v3/files/${folderId}?fields=id,name,mimeType,parents,trashed&supportsAllDrives=true`;
+    const metaUrl = `https://www.googleapis.com/drive/v3/files/${folderId}?fields=id,name,mimeType,size,modifiedTime,parents,trashed&supportsAllDrives=true`;
     const metaRes = await fetchWithTimeout(metaUrl, {
       headers: { Authorization: `Bearer ${accessToken}` }
     }, 12000);
@@ -2553,7 +2557,7 @@ export async function fetchDriveGeoJSONFiles(
       const parentFolderId = targetMeta.parents[0];
       try {
         const siblingQuery = `'${parentFolderId}' in parents and trashed = false`;
-        const siblingUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(siblingQuery)}&fields=files(id,name,mimeType,size)&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true`;
+        const siblingUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(siblingQuery)}&fields=files(id,name,mimeType,size,modifiedTime)&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true`;
         const sibRes = await fetchWithTimeout(siblingUrl, {
           headers: { Authorization: `Bearer ${accessToken}` }
         }, 12000);
@@ -2572,7 +2576,7 @@ export async function fetchDriveGeoJSONFiles(
   } else {
     // Normal folder search
     const query = `'${folderId}' in parents and trashed = false`;
-    const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,parents)&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true`;
+    const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,modifiedTime,parents)&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true`;
 
     const response = await fetchWithTimeout(searchUrl, {
       headers: { Authorization: `Bearer ${accessToken}` }
@@ -2597,7 +2601,7 @@ export async function fetchDriveGeoJSONFiles(
       for (const sf of subfolders.slice(0, 5)) {
         try {
           const subQuery = `'${sf.id}' in parents and trashed = false`;
-          const subUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(subQuery)}&fields=files(id,name,mimeType,size,parents)&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true`;
+          const subUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(subQuery)}&fields=files(id,name,mimeType,size,modifiedTime,parents)&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true`;
           const subRes = await fetchWithTimeout(subUrl, {
             headers: { Authorization: `Bearer ${accessToken}` }
           }, 12000);
@@ -2615,7 +2619,7 @@ export async function fetchDriveGeoJSONFiles(
   }
 
   // Filter geojson or json files
-  const geojsonFiles = candidateFiles.filter(f => {
+  const geojsonFiles: DriveGeoJSONFileMeta[] = candidateFiles.filter(f => {
     if (f.mimeType === 'application/vnd.google-apps.folder') return false;
     const name = (f.name || '').toLowerCase();
     return (
@@ -2627,6 +2631,32 @@ export async function fetchDriveGeoJSONFiles(
       (name.includes('geojson') && (f.mimeType === 'application/octet-stream' || f.mimeType === 'text/plain'))
     );
   });
+
+  return { folderId, targetName, candidateFiles, geojsonFiles };
+}
+
+/**
+ * Lightweight metadata check for GeoJSON files in a Drive folder (no file download).
+ * Used for automatic background sync to detect newly added or updated GeoJSON files.
+ */
+export async function listDriveGeoJSONMetadata(
+  accessToken: string,
+  folderIdOrUrl: string
+): Promise<DriveGeoJSONFileMeta[]> {
+  const { geojsonFiles } = await scanDriveGeoJSONCandidateFiles(accessToken, folderIdOrUrl);
+  return geojsonFiles;
+}
+
+/**
+ * Scans a Google Drive folder for GeoJSON files, automatically downloads them,
+ * and detects their layer type ('bidang' | 'jalur' | 'tower') based on filename keywords
+ * and geometric feature types.
+ */
+export async function fetchDriveGeoJSONFiles(
+  accessToken: string,
+  folderIdOrUrl: string
+): Promise<DetectedDriveGeoJSON[]> {
+  const { targetName, candidateFiles, geojsonFiles } = await scanDriveGeoJSONCandidateFiles(accessToken, folderIdOrUrl);
 
   if (geojsonFiles.length === 0) {
     const nonFolderFiles = candidateFiles.filter(f => f.mimeType !== 'application/vnd.google-apps.folder');
@@ -2731,7 +2761,8 @@ export async function fetchDriveGeoJSONFiles(
         type: layerType,
         data: parsedData,
         featureCount: features.length,
-        geometryType: geomTypeStr
+        geometryType: geomTypeStr,
+        modifiedTime: file.modifiedTime
       });
     } catch (fileErr) {
       console.warn(`Error parsing GeoJSON file ${file.name}:`, fileErr);

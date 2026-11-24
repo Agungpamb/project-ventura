@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import DeleteParcelModal from "./DeleteParcelModal";
 import type { LandRecord } from '../types';
+import { resolveProjectTitleByDesa } from '../lib/projectTitleHelper';
 
 interface LoadedGeoJSON {
   id: string;
@@ -103,6 +104,10 @@ export default function PetaBidangTanah({
   const [recordToDelete, setRecordToDelete] = useState<LandRecord | null>(null);
   const [selectedDesa, setSelectedDesa] = useState<string>('');
   const [selectedSpan, setSelectedSpan] = useState<string>('');
+  const resolvedProjectTitle = useMemo(
+    () => resolveProjectTitleByDesa(activeProjectName, selectedDesa, activeProjectId),
+    [activeProjectName, selectedDesa, activeProjectId]
+  );
   const [rotasiOffset, setRotasiOffset] = useState<number>(0); // Custom +/- rotation adjustment (UserRotationOffset)
   const [projectionCorrection, setProjectionCorrection] = useState<number>(0); // Optional projection correction offset
   const [currentScaleText, setCurrentScaleText] = useState<string>('1 : 1.000');
@@ -1632,7 +1637,9 @@ export default function PetaBidangTanah({
           </div>
           <div className="text-right">
             <span className="text-[10px] font-mono font-bold text-slate-500 block">PROYEK TRANSMISI</span>
-            <span className="text-xs font-black text-slate-800 uppercase">{activeProjectName || 'SUTT / SUTET'}</span>
+            <span className="text-xs font-black text-slate-800">
+              {resolvedProjectTitle.title || activeProjectName || 'SUTT / SUTET'}
+            </span>
           </div>
         </div>
 

@@ -4,7 +4,7 @@ import {
   Search, Loader2, FolderOpen, Info, ShieldAlert, MapPin, Check,
   FileDown, Cloud, PenTool, Trash2, Layers, FolderCheck, Image as ImageIcon
 } from 'lucide-react';
-import { type LandRecord } from '../types';
+import { type LandRecord, type InventoryFormPdfConfig } from '../types';
 import { 
   findOrCreateFolder, 
   uploadFileToDrive, 
@@ -15,14 +15,19 @@ import {
   type ParcelSubfolderCategory,
   PARCEL_SUBFOLDERS
 } from '../lib/googleApi';
-import { generateInventoryPDF } from '../lib/pdfGenerator';
+import { generateInventoryPDF, getVendorPresetDefaults } from '../lib/pdfGenerator';
+import { getCoordinateProjectionOption } from '../lib/geoUtils';
+import { resolveProjectTitleByDesa } from '../lib/projectTitleHelper';
 
 interface DocUploadProps {
   records: LandRecord[];
   accessToken: string;
   onUpdateRecord: (updatedRecord: LandRecord) => Promise<void>;
   uploadsFolderId?: string;
+  activeProjectId?: string;
   activeProjectName?: string;
+  inventoryPdfConfig?: InventoryFormPdfConfig;
+  loadedGeoJSONs?: any[];
   preselectedRecordId?: string | null;
 }
 
@@ -64,8 +69,11 @@ export default function DocUpload({
   records, 
   accessToken, 
   onUpdateRecord, 
-  uploadsFolderId, 
+  uploadsFolderId,
+  activeProjectId,
   activeProjectName,
+  inventoryPdfConfig,
+  loadedGeoJSONs,
   preselectedRecordId = null
 }: DocUploadProps) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -300,7 +308,15 @@ export default function DocUpload({
     setIsDownloadingPDF(true);
     setStatusMessage(null);
     try {
-      const docInstance = await generateInventoryPDF(selectedRecord, activeProjectName || "KOMPENSASI JALUR TRANSMISI");
+      const docInstance = await generateInventoryPDF(
+        selectedRecord,
+        activeProjectName || "KOMPENSASI JALUR TRANSMISI",
+        {
+          pdfConfig: inventoryPdfConfig,
+          projectId: activeProjectId,
+          projectGeoJSONs: loadedGeoJSONs
+        }
+      );
       const pdfFileName = buildSanitizedFileName('FORM_INVENT', selectedRecord, 'pdf');
       docInstance.save(pdfFileName);
       setStatusMessage({
@@ -324,7 +340,15 @@ export default function DocUpload({
     setStatusMessage(null);
     try {
       // 1. Generate PDF blob
-      const docInstance = await generateInventoryPDF(selectedRecord, activeProjectName || "KOMPENSASI JALUR TRANSMISI");
+      const docInstance = await generateInventoryPDF(
+        selectedRecord,
+        activeProjectName || "KOMPENSASI JALUR TRANSMISI",
+        {
+          pdfConfig: inventoryPdfConfig,
+          projectId: activeProjectId,
+          projectGeoJSONs: loadedGeoJSONs
+        }
+      );
       const pdfBlob = docInstance.output('blob');
       const pdfFileName = buildSanitizedFileName('FORM_INVENT', selectedRecord, 'pdf');
       const pdfFile = new File([pdfBlob], pdfFileName, { type: 'application/pdf' });
@@ -781,11 +805,23 @@ export default function DocUpload({
                         <FileText className="w-6 h-6 text-amber-300" />
                       </div>
                       <div className="space-y-1">
-                        <h4 className="text-sm font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
+                        <h4 className="text-sm font-bold text-slate-900 dark:text-white tracking-tight flex flex-wrap items-center gap-2">
                           Formulir Inventarisasi Resmi (Hasil Generate PDF)
                           <span className="text-[9px] font-extrabold text-amber-800 bg-amber-100 border border-amber-300 dark:text-amber-400 dark:bg-amber-500/10 px-2 py-0.5 rounded dark:border-amber-500/20">
                             Subfolder: 4. Form Invent
                           </span>
+                          <span className="text-[9px] font-extrabold text-sky-800 bg-sky-100 border border-sky-300 dark:text-sky-300 dark:bg-sky-500/10 px-2 py-0.5 rounded dark:border-sky-500/25">
+                            Kop: {inventoryPdfConfig?.headerCompanyName || getVendorPresetDefaults(inventoryPdfConfig?.vendorPreset).headerCompanyName} • Proyeksi: {getCoordinateProjectionOption(inventoryPdfConfig?.coordinateProjection).shortName}
+                          </span>
+                          {(() => {
+                            const autoTitle = resolveProjectTitleByDesa(activeProjectName, selectedRecord?.DESA, activeProjectId);
+                            if (!autoTitle.isAutoSplit) return null;
+                            return (
+                              <span className="text-[9px] font-extrabold text-emerald-800 bg-emerald-100 border border-emerald-300 dark:text-emerald-300 dark:bg-emerald-500/15 px-2 py-0.5 rounded dark:border-emerald-500/30">
+                                Auto-Judul ({autoTitle.matchedDesaRule}): {autoTitle.title}
+                              </span>
+                            );
+                          })()}
                         </h4>
                         <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
                           Menghasilkan dokumen resmi 4 halaman A4 lengkap dengan identitas pihak berhak, data lahan, rincian bangunan, 30 tanaman produktif, denah sketsa bidang tanah, foto situasi, dan <strong>7 tanda tangan & cap desa resmi</strong> yang telah diinput.
