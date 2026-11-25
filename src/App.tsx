@@ -5595,6 +5595,8 @@ export default function App() {
                     activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
                     projects={projects}
                     activeProjectId={activeProjectId}
+                    inventoryPdfConfig={projects.find(p => p.id === activeProjectId)?.inventoryPdfConfig}
+                    loadedGeoJSONs={activeProjectGeoJSONs}
                     uploadsFolderId={
                       projectUploadsFolderId && projectUploadsFolderId !== 'guest_bypass'
                         ? projectUploadsFolderId
@@ -5612,6 +5614,7 @@ export default function App() {
                       setSelectedRecordForEdit(rec);
                       setActiveMenu('input');
                     }}
+                    onUpdateRecord={handleUpdateRecord}
                     onBatchUpdateRecords={handleBatchUpdateRecords}
                     onDeleteRecord={handleDeleteRecord}
                   />

@@ -1238,7 +1238,7 @@ export default function FormInput({
                   <input
                     type="text"
                     value={formData.DESA}
-                    onChange={(e) => handleChange('DESA', e.target.value)}
+                    onChange={(e) => handleChange('DESA', e.target.value.toUpperCase())}
                     className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 ${
                       errors.DESA ? 'border-rose-300 focus:border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-amber-500'
                     }`}

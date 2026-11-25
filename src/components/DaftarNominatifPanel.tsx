@@ -3,15 +3,16 @@ import {
   FileSpreadsheet, Printer, Download, Filter, Search, 
   FileText, Edit3, Layers, User, MapPin, CheckCircle2, 
   Clock, AlertCircle, Building2, Trees, RefreshCw, X, ChevronRight, Eye,
-  ArrowRight, Zap, GitMerge, Scissors, CheckSquare, Square, ShieldAlert, Trash2, Briefcase, FolderSync
+  ArrowRight, Zap, GitMerge, Scissors, CheckSquare, Square, ShieldAlert, Trash2, Briefcase, FolderSync, FileDown
 } from 'lucide-react';
-import { type LandRecord, type ProjectConfig } from '../types';
+import { type LandRecord, type ProjectConfig, type InventoryFormPdfConfig } from '../types';
 import XLSX from 'xlsx-js-style';
 import MergeParcelModal from './MergeParcelModal';
 import SplitParcelModal from './SplitParcelModal';
 import QuickParcelPickerModal from './QuickParcelPickerModal';
 import DeleteParcelModal from './DeleteParcelModal';
 import DriveFolderSyncModal from './DriveFolderSyncModal';
+import InventoryFormExportModal from './InventoryFormExportModal';
 import { getRecordUniqueKey } from '../lib/parcelManagement';
 import { resolveProjectTitleByDesa } from '../lib/projectTitleHelper';
 
@@ -21,11 +22,14 @@ interface DaftarNominatifPanelProps {
   activeProjectName?: string;
   projects?: ProjectConfig[];
   activeProjectId?: string;
+  inventoryPdfConfig?: InventoryFormPdfConfig;
+  loadedGeoJSONs?: any[];
   uploadsFolderId?: string;
   accessToken?: string | null;
   onRequestGoogleAuth?: () => Promise<string | null>;
   onSwitchProject?: (newId: string) => void;
   onNavigateToInput?: (record: LandRecord) => void;
+  onUpdateRecord?: (updatedRecord: LandRecord) => Promise<void>;
   onBatchUpdateRecords?: (newRecords: LandRecord[], logDetails: string) => Promise<void>;
   onDeleteRecord?: (record: LandRecord, adjustNextParcels: boolean) => Promise<void>;
 }
@@ -36,11 +40,14 @@ export default function DaftarNominatifPanel({
   activeProjectName = 'SUTT 150 KV JELOK - SANGGRAHAN',
   projects,
   activeProjectId,
+  inventoryPdfConfig,
+  loadedGeoJSONs,
   uploadsFolderId,
   accessToken,
   onRequestGoogleAuth,
   onSwitchProject,
   onNavigateToInput,
+  onUpdateRecord,
   onBatchUpdateRecords,
   onDeleteRecord
 }: DaftarNominatifPanelProps) {
@@ -70,6 +77,7 @@ export default function DaftarNominatifPanel({
   const [mergePair, setMergePair] = useState<[LandRecord, LandRecord] | null>(null);
   const [splitTarget, setSplitTarget] = useState<LandRecord | null>(null);
   const [recordToDelete, setRecordToDelete] = useState<LandRecord | null>(null);
+  const [recordForFormPdf, setRecordForFormPdf] = useState<LandRecord | null>(null);
   const [isDriveSyncModalOpen, setIsDriveSyncModalOpen] = useState<boolean>(false);
 
   // Toggle selection for a record
@@ -1421,7 +1429,7 @@ export default function DaftarNominatifPanel({
                 <th rowSpan={2} className="py-2.5 px-2 border-r border-white/10 min-w-[90px]">UPLOAD TRABAS</th>
                 <th rowSpan={2} className="py-2.5 px-2 border-r border-white/10 min-w-[120px]">KEKURANGAN BERKAS</th>
                 <th rowSpan={2} className="py-2.5 px-3 border-r border-white/10 min-w-[160px]">KETERANGAN</th>
-                <th rowSpan={2} className="py-2.5 px-2 w-28 no-print">AKSI</th>
+                <th rowSpan={2} className="py-2.5 px-2 min-w-[165px] no-print">AKSI</th>
               </tr>
 
               {/* HEADER ROW 2 (SUB-HEADERS) */}
@@ -1736,7 +1744,18 @@ export default function DaftarNominatifPanel({
 
                             {/* AKSI */}
                             <td rowSpan={subRowsCount} className="py-2.5 px-2 border-b-2 border-b-slate-400/70 [html.light_&]:!border-b-slate-900 text-center no-print align-top">
-                              <div className="flex items-center justify-center gap-1">
+                              <div className="flex items-center justify-center gap-1 flex-wrap">
+                                {/* Tombol Cetak / Ekspor Form Inventarisasi PDF langsung */}
+                                <button
+                                  type="button"
+                                  onClick={() => setRecordForFormPdf(r)}
+                                  className="px-2 py-1.5 bg-sky-500/20 hover:bg-sky-500 text-sky-300 hover:text-slate-950 font-extrabold rounded-lg transition-all cursor-pointer border border-sky-500/35 flex items-center gap-1 text-[10px]"
+                                  title={`Cetak / Ekspor Form Inventarisasi PDF untuk Bidang No. ${r.NOBID} (${r.NAMA || '-'})`}
+                                >
+                                  <FileDown className="w-3.5 h-3.5" />
+                                  <span>Form</span>
+                                </button>
+
                                 {/* Tombol Pecah Bidang (Split) */}
                                 <button
                                   type="button"
@@ -1911,7 +1930,20 @@ export default function DaftarNominatifPanel({
 
             <div className="p-4 bg-slate-950 border-t border-white/10 flex items-center justify-between">
               <span className="text-[10px] text-slate-500 font-mono">Kode Record: {selectedRecordDetail.CODE}</span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const rec = selectedRecordDetail;
+                    setSelectedRecordDetail(null);
+                    setRecordForFormPdf(rec);
+                  }}
+                  className="px-3 py-1.5 bg-sky-500/20 hover:bg-sky-500 text-sky-300 hover:text-slate-950 text-xs font-extrabold rounded-xl transition-all border border-sky-500/35 flex items-center gap-1.5 cursor-pointer"
+                  title="Cetak / Ekspor Formulir Inventarisasi PDF untuk bidang ini"
+                >
+                  <FileDown className="w-3.5 h-3.5" />
+                  <span>Form Invent (PDF)</span>
+                </button>
                 {role === 'ADMIN' && (
                   <button
                     type="button"
@@ -2124,6 +2156,26 @@ export default function DaftarNominatifPanel({
           }}
         />
       )}
+
+      {/* MODAL POP-UP CETAK / EKSPOR FORM INVENTARISASI PDF (DOWNLOAD / PUSH DRIVE + LOCK PROSES) */}
+      <InventoryFormExportModal
+        record={recordForFormPdf}
+        onClose={() => setRecordForFormPdf(null)}
+        activeProjectId={activeProjectId}
+        activeProjectName={activeProjectName}
+        inventoryPdfConfig={inventoryPdfConfig}
+        loadedGeoJSONs={loadedGeoJSONs}
+        uploadsFolderId={
+          uploadsFolderId ||
+          projects?.find(p => p.id === activeProjectId)?.uploadsFolderId ||
+          projects?.find(p => p.id === activeProjectId)?.folderId ||
+          ''
+        }
+        accessToken={accessToken || null}
+        role={role}
+        onRequestGoogleAuth={onRequestGoogleAuth}
+        onUpdateRecord={onUpdateRecord}
+      />
 
       {/* MODAL OTOMATISASI & SINKRONISASI FOLDER GOOGLE DRIVE (KHUSUS ADMIN) */}
       {role === 'ADMIN' && isDriveSyncModalOpen && (

@@ -883,7 +883,7 @@ export async function generateInventoryPDF(
 
   const section3Data = [
     { label: coordProjectionLabel, value: coordProjectionValue },
-    { label: 'Desa / Kelurahan', value: record.DESA ? (record.DESA.toUpperCase().startsWith('DESA') || record.DESA.toUpperCase().startsWith('KELURAHAN') ? record.DESA : `Desa ${record.DESA}`) : '-' },
+    { label: 'Desa / Kelurahan', value: record.DESA ? record.DESA.trim().replace(/^(desa|kelurahan|kel\.?|dsa\.?)\s+/i, '').toUpperCase() : '-' },
     { label: 'Kecamatan', value: record.KECAMATAN },
     { label: 'Kabupaten/Kota', value: record.KABUPATEN },
     { label: 'Jenis Bukti Kepenguasaan / Kepemilikan', value: `${record.JENIS_ALAS_HAK} ${record.NOMER_HAK ? '(No: ' + record.NOMER_HAK + ')' : ''}` },
