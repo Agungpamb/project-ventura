@@ -1169,25 +1169,64 @@ export async function generateInventoryPDF(
 
   y2 += lines.length * 4.2 + 5;
 
-  // Helper for title casing names from user data
+  // Helper for title casing names from user data while preserving common Indonesian academic/honorific titles
+  const PRESERVED_UPPER_TOKENS = new Set([
+    'SH', 'SE', 'ST', 'SP', 'SI', 'MM', 'MH', 'MT', 'MP', 'MS', 'MA', 'MBA', 'MPD', 'MSI', 'SKM', 'SIP', 'SPD', 'SHU', 'AK', 'CA', 'DR', 'DRS', 'DRA', 'IR', 'HJ', 'KH', 'PLT', 'PJ', 'PJS', 'SH.', 'SE.', 'ST.', 'SP.', 'MM.', 'MH.', 'MT.', 'MP.', 'MSI.', 'SIP.', 'SPD.', 'SKM.'
+  ]);
   const formatNameDisplay = (str?: string) => {
     if (!str || !str.trim()) return '';
     const s = str.trim();
     if (s === s.toUpperCase() && s.length > 2) {
-      return s.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
+      return s.replace(/\S+/g, (token) => {
+        const strippedPunct = token.replace(/^[,.\-()]+|[,.\-()]+$/g, '');
+        const upperClean = strippedPunct.toUpperCase();
+        // Preserve dotted academic degrees like S.H., S.Pd., M.M., S.Sos., S.IP.
+        if (/^([A-Z]\.){2,}$/i.test(strippedPunct) || /^[A-Z]\.[A-Z][a-z]*\.?$/i.test(strippedPunct)) {
+          return token.replace(/[A-Za-z]+/g, (part, offset) =>
+            offset === 0 || part.length === 1 ? part.toUpperCase() : part.charAt(0).toUpperCase() + part.substring(1).toLowerCase()
+          );
+        }
+        if (PRESERVED_UPPER_TOKENS.has(upperClean) || PRESERVED_UPPER_TOKENS.has(token.toUpperCase())) {
+          if (upperClean === 'PLT' || upperClean === 'PJ' || upperClean === 'PJS' || upperClean === 'DRS' || upperClean === 'DRA' || upperClean === 'IR' || upperClean === 'HJ') {
+            return token.charAt(0).toUpperCase() + token.substring(1).toLowerCase();
+          }
+          return token.toUpperCase();
+        }
+        return token.charAt(0).toUpperCase() + token.substring(1).toLowerCase();
+      });
     }
     return s;
   };
 
-  // Village Head Title
-  const desaClean = (record.DESA || '').trim();
-  let desaTitle = 'Kepala Desa';
-  if (desaClean) {
-    const formattedDesa = formatNameDisplay(desaClean);
-    if (formattedDesa.toLowerCase().startsWith('desa ') || formattedDesa.toLowerCase().startsWith('kelurahan ')) {
-      desaTitle = `Kepala ${formattedDesa}`;
+  // Village / Kelurahan Head Title (adapts dynamically to STATUS_KEPALA & STATUS_DESA)
+  const desaRaw = (record.DESA || '').trim();
+  const desaBase = desaRaw.replace(/^(desa|kelurahan|kel\.?|dsa\.?)\s+/i, '').trim();
+  const formattedDesaBase = formatNameDisplay(desaBase);
+
+  const statusKepalaRaw = (record.STATUS_KEPALA || '').trim();
+  const statusKepalaUpper = statusKepalaRaw.toUpperCase();
+  const statusDesaUpper = (record.STATUS_DESA || '').trim().toUpperCase();
+
+  let kepalaRoleLabel = 'Kepala Desa';
+  if (statusKepalaUpper) {
+    if (statusKepalaUpper === 'LURAH') {
+      kepalaRoleLabel = 'Lurah';
+    } else if (statusKepalaUpper === 'KEPALA DESA' || statusKepalaUpper === 'KADES') {
+      kepalaRoleLabel = 'Kepala Desa';
     } else {
-      desaTitle = `Kepala Desa ${formattedDesa}`;
+      // Custom typed jabatan (e.g. "Pj. Kepala Desa", "Plt. Lurah", "Sekretaris Desa")
+      kepalaRoleLabel = formatNameDisplay(statusKepalaRaw);
+    }
+  } else if (statusDesaUpper.includes('KELURAHAN') || desaRaw.toUpperCase().startsWith('KELURAHAN ')) {
+    kepalaRoleLabel = 'Lurah';
+  }
+
+  let desaTitle = kepalaRoleLabel;
+  if (formattedDesaBase) {
+    if (kepalaRoleLabel.toLowerCase().includes(formattedDesaBase.toLowerCase())) {
+      desaTitle = kepalaRoleLabel;
+    } else {
+      desaTitle = `${kepalaRoleLabel} ${formattedDesaBase}`;
     }
   }
 

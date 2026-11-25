@@ -66,11 +66,23 @@ const PREDEFINED_JENIS_PERALIHAN_HAK = [
   'SURAT KLAIM BANGUNAN'
 ];
 
+const PREDEFINED_STATUS_DESA = [
+  'DESA',
+  'KELURAHAN'
+];
+
+const PREDEFINED_STATUS_KEPALA = [
+  'KEPALA DESA',
+  'LURAH'
+];
+
 type CustomSelectField =
   | 'PENUTUP_LAHAN'
   | 'STATUS_PENUTUP_LAHAN'
   | 'JENIS_ALAS_HAK'
-  | 'JENIS_PERALIHAN_HAK';
+  | 'JENIS_PERALIHAN_HAK'
+  | 'STATUS_DESA'
+  | 'STATUS_KEPALA';
 interface FormInputProps {
   records: LandRecord[];
   role?: 'ADMIN' | 'FIELD' | 'QC' | 'GUEST' | null;
@@ -176,7 +188,9 @@ export default function FormInput({
     PENUTUP_LAHAN: false,
     STATUS_PENUTUP_LAHAN: false,
     JENIS_ALAS_HAK: false,
-    JENIS_PERALIHAN_HAK: false
+    JENIS_PERALIHAN_HAK: false,
+    STATUS_DESA: false,
+    STATUS_KEPALA: false
   });
 
   const isCustomFieldValue = (val: string | undefined, predefined: string[]) => {
@@ -189,7 +203,12 @@ export default function FormInput({
       PENUTUP_LAHAN: isCustomFieldValue(rec.PENUTUP_LAHAN, PREDEFINED_PENUTUP_LAHAN),
       STATUS_PENUTUP_LAHAN: isCustomFieldValue(rec.STATUS_PENUTUP_LAHAN, PREDEFINED_STATUS_PENUTUP_LAHAN),
       JENIS_ALAS_HAK: isCustomFieldValue(rec.JENIS_ALAS_HAK, PREDEFINED_JENIS_ALAS_HAK),
-      JENIS_PERALIHAN_HAK: isCustomFieldValue(rec.JENIS_PERALIHAN_HAK, PREDEFINED_JENIS_PERALIHAN_HAK)
+      JENIS_PERALIHAN_HAK: isCustomFieldValue(rec.JENIS_PERALIHAN_HAK, PREDEFINED_JENIS_PERALIHAN_HAK),
+      STATUS_DESA: isCustomFieldValue(rec.STATUS_DESA, PREDEFINED_STATUS_DESA),
+      STATUS_KEPALA: isCustomFieldValue(
+        String(rec.STATUS_KEPALA || '').trim().toUpperCase() === 'KADES' ? 'KEPALA DESA' : rec.STATUS_KEPALA,
+        PREDEFINED_STATUS_KEPALA
+      )
     });
   };
 
@@ -2291,35 +2310,103 @@ export default function FormInput({
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 uppercase mb-1">STATUS DESA</label>
-                    <input
-                      type="text"
-                      value={formData.STATUS_DESA}
-                      onChange={(e) => handleChange('STATUS_DESA', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                      placeholder="Contoh: AKTIF / PERSUASIF"
-                    />
+                    <label className="block text-xs font-bold text-slate-600 uppercase mb-1">STATUS DESA / KELURAHAN</label>
+                    <select
+                      value={getCustomSelectValue('STATUS_DESA', PREDEFINED_STATUS_DESA)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        handleCustomSelectChange('STATUS_DESA', val, PREDEFINED_STATUS_DESA);
+                        // Auto-sinkronkan STATUS_KEPALA jika masih kosong atau standar
+                        const currKepala = String(formData.STATUS_KEPALA || '').trim().toUpperCase();
+                        if (val === 'KELURAHAN' && (!currKepala || currKepala === 'KEPALA DESA' || currKepala === 'KADES')) {
+                          setCustomSelectMode(prev => ({ ...prev, STATUS_KEPALA: false }));
+                          handleChange('STATUS_KEPALA', 'LURAH');
+                        } else if (val === 'DESA' && (!currKepala || currKepala === 'LURAH')) {
+                          setCustomSelectMode(prev => ({ ...prev, STATUS_KEPALA: false }));
+                          handleChange('STATUS_KEPALA', 'KEPALA DESA');
+                        }
+                      }}
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
+                    >
+                      <option value="" className="text-slate-400 bg-white">-- Pilih Status Wilayah --</option>
+                      <option value="DESA" className="text-slate-800 bg-white">DESA</option>
+                      <option value="KELURAHAN" className="text-slate-800 bg-white">KELURAHAN</option>
+                      <option value="LAINNYA" className="text-slate-800 bg-white">LAINNYA (Ketik Sendiri)</option>
+                    </select>
+                    {isCustomInputVisible('STATUS_DESA', PREDEFINED_STATUS_DESA) && (
+                      <div className="mt-2 animate-fadeIn">
+                        <label className="block text-[10px] font-bold text-amber-600 uppercase mb-1">
+                          Ketik Status Wilayah Lainnya:
+                        </label>
+                        <input
+                          type="text"
+                          autoFocus={customSelectMode.STATUS_DESA && !formData.STATUS_DESA}
+                          value={formData.STATUS_DESA || ''}
+                          onChange={(e) => handleChange('STATUS_DESA', e.target.value.toUpperCase())}
+                          placeholder="Contoh: KAMPUNG / NAGARI"
+                          className="w-full px-3 py-2 border border-amber-400/40 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500/30 bg-amber-50 text-slate-800 placeholder:text-slate-400 placeholder:font-normal"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 uppercase mb-1">STATUS KEPALA DESA</label>
-                    <input
-                      type="text"
-                      value={formData.STATUS_KEPALA}
-                      onChange={(e) => handleChange('STATUS_KEPALA', e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                      placeholder="Contoh: PLT / DEFINITIF"
-                    />
+                    <label className="block text-xs font-bold text-slate-600 uppercase mb-1">STATUS KEPALA (KADES / LURAH)</label>
+                    <select
+                      value={
+                        customSelectMode.STATUS_KEPALA
+                          ? 'LAINNYA'
+                          : String(formData.STATUS_KEPALA || '').trim().toUpperCase() === 'KADES'
+                          ? 'KEPALA DESA'
+                          : getCustomSelectValue('STATUS_KEPALA', PREDEFINED_STATUS_KEPALA)
+                      }
+                      onChange={(e) => handleCustomSelectChange('STATUS_KEPALA', e.target.value, PREDEFINED_STATUS_KEPALA)}
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white text-slate-800 font-medium"
+                    >
+                      <option value="" className="text-slate-400 bg-white">-- Pilih Status Kepala --</option>
+                      <option value="KEPALA DESA" className="text-slate-800 bg-white">KEPALA DESA (KADES)</option>
+                      <option value="LURAH" className="text-slate-800 bg-white">LURAH</option>
+                      <option value="LAINNYA" className="text-slate-800 bg-white">LAINNYA (Ketik Sendiri)</option>
+                    </select>
+                    {(customSelectMode.STATUS_KEPALA ||
+                      (String(formData.STATUS_KEPALA || '').trim().toUpperCase() !== 'KADES' &&
+                        isCustomInputVisible('STATUS_KEPALA', PREDEFINED_STATUS_KEPALA))) && (
+                      <div className="mt-2 animate-fadeIn">
+                        <label className="block text-[10px] font-bold text-amber-600 uppercase mb-1">
+                          Ketik Jabatan Penandatangan (misal: PJ. KEPALA DESA, PLT. LURAH, SEKDES):
+                        </label>
+                        <input
+                          type="text"
+                          autoFocus={customSelectMode.STATUS_KEPALA && !formData.STATUS_KEPALA}
+                          value={formData.STATUS_KEPALA || ''}
+                          onChange={(e) => handleChange('STATUS_KEPALA', e.target.value.toUpperCase())}
+                          placeholder="Contoh: PJ. KEPALA DESA / PLT. LURAH"
+                          className="w-full px-3 py-2 border border-amber-400/40 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500/30 bg-amber-50 text-slate-800 placeholder:text-slate-400 placeholder:font-normal"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 uppercase mb-1">NAMA KEPALA DESA (KADES)</label>
+                    <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
+                      {String(formData.STATUS_KEPALA || '').trim().toUpperCase() === 'LURAH' ||
+                      (!formData.STATUS_KEPALA && String(formData.STATUS_DESA || '').trim().toUpperCase().includes('KELURAHAN'))
+                        ? 'NAMA LURAH'
+                        : formData.STATUS_KEPALA &&
+                          !PREDEFINED_STATUS_KEPALA.includes(String(formData.STATUS_KEPALA).trim().toUpperCase())
+                        ? `NAMA ${String(formData.STATUS_KEPALA).trim().toUpperCase()}`
+                        : 'NAMA KEPALA DESA (KADES)'}
+                    </label>
                     <input
                       type="text"
                       value={formData.NAMA_KADES}
                       onChange={(e) => handleChange('NAMA_KADES', e.target.value)}
                       className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                      placeholder="Contoh: SUPRAYITNO"
+                      placeholder={
+                        String(formData.STATUS_KEPALA || '').trim().toUpperCase() === 'LURAH'
+                          ? 'Contoh: DISTIANI DWI ASTUTIK, SH.'
+                          : 'Contoh: SUPRAYITNO'
+                      }
                     />
                   </div>
                 </div>
