@@ -18,6 +18,7 @@ export interface GenerateInventoryPDFOptions {
   pdfConfig?: InventoryFormPdfConfig;
   projectId?: string;
   projectGeoJSONs?: any[];
+  accessToken?: string | null;
 }
 
 export function getVendorPresetDefaults(preset: VendorHeaderPreset = 'SURVEYOR_INDONESIA'): InventoryFormPdfConfig {
@@ -98,9 +99,139 @@ export function getVendorPresetDefaults(preset: VendorHeaderPreset = 'SURVEYOR_I
   }
 }
 
-async function loadLogoWithDimensions(url: string, maxWidth: number = 360): Promise<{ dataUrl: string; ratio: number } | null> {
-  if (!url) return null;
-  const dataUrl = await loadSignatureAsBase64(url, maxWidth);
+function extractGoogleDriveFileIdFromUrl(url: string): string {
+  if (!url) return '';
+  const trimmed = url.trim();
+  const dMatch = trimmed.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (dMatch && dMatch[1]) return dMatch[1];
+  const idMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (idMatch && idMatch[1]) return idMatch[1];
+  return '';
+}
+
+async function blobOrUrlToResizedPngDataUrl(src: string, maxWidth: number = 280, maxHeight: number = 140): Promise<string> {
+  return await new Promise<string>((resolve) => {
+    const timer = setTimeout(() => resolve(''), 5500);
+    const img = new Image();
+    if (src.startsWith('http://') || src.startsWith('https://')) {
+      img.crossOrigin = 'anonymous';
+    }
+    img.onload = () => {
+      clearTimeout(timer);
+      try {
+        const canvas = document.createElement('canvas');
+        let w = img.naturalWidth || img.width || 240;
+        let h = img.naturalHeight || img.height || 100;
+        if (w > maxWidth) {
+          h = Math.round((h * maxWidth) / w);
+          w = maxWidth;
+        }
+        if (h > maxHeight) {
+          w = Math.round((w * maxHeight) / h);
+          h = maxHeight;
+        }
+        canvas.width = Math.max(w, 1);
+        canvas.height = Math.max(h, 1);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve('');
+          return;
+        }
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/png'));
+      } catch {
+        resolve('');
+      }
+    };
+    img.onerror = () => {
+      clearTimeout(timer);
+      resolve('');
+    };
+    img.src = src;
+  });
+}
+
+/**
+ * Resolves a custom logo (base64 data URL, Google Drive share link, or direct HTTP image URL)
+ * into a crisp, resized transparent PNG Data URL suitable for Firestore caching & jsPDF rendering.
+ */
+export async function resolveDriveOrUrlLogoToDataUrl(
+  url: string,
+  accessToken?: string | null,
+  maxWidth: number = 280
+): Promise<string> {
+  if (!url || typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('data:image/')) return trimmed;
+
+  const fileId = extractGoogleDriveFileIdFromUrl(trimmed);
+
+  // 1. If Google Drive file ID and valid OAuth accessToken exist, download directly via Drive API v3 (100% CORS-free)
+  if (fileId && accessToken && accessToken !== 'GUEST_BYPASS' && accessToken !== 'null') {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          signal: controller.signal
+        }
+      );
+      clearTimeout(timeoutId);
+      if (res.ok) {
+        const blob = await res.blob();
+        if (blob.size > 0 && (blob.type.startsWith('image/') || blob.type === 'application/octet-stream')) {
+          const objUrl = URL.createObjectURL(blob);
+          try {
+            const resized = await blobOrUrlToResizedPngDataUrl(objUrl, maxWidth, 140);
+            if (resized && resized.startsWith('data:image/')) {
+              return resized;
+            }
+          } finally {
+            URL.revokeObjectURL(objUrl);
+          }
+        }
+      }
+    } catch (driveErr) {
+      console.warn('[PDF Logo] Drive API fetch fallback to public URL:', driveErr);
+    }
+  }
+
+  // 2. Try public direct URL candidates (prioritizing CORS-friendly lh3.googleusercontent.com)
+  const candidates = fileId
+    ? [
+        `https://lh3.googleusercontent.com/d/${fileId}=w800`,
+        `https://lh3.googleusercontent.com/d/${fileId}`,
+        `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`,
+        `https://drive.google.com/uc?export=view&id=${fileId}`
+      ]
+    : [trimmed];
+
+  for (const srcUrl of candidates) {
+    const resized = await blobOrUrlToResizedPngDataUrl(srcUrl, maxWidth, 140);
+    if (resized && resized.startsWith('data:image/')) {
+      return resized;
+    }
+  }
+
+  return '';
+}
+
+async function loadLogoWithDimensions(
+  cachedDataUrl?: string,
+  url?: string,
+  accessToken?: string | null,
+  maxWidth: number = 360
+): Promise<{ dataUrl: string; ratio: number } | null> {
+  let dataUrl = '';
+  if (cachedDataUrl && cachedDataUrl.startsWith('data:image/')) {
+    dataUrl = cachedDataUrl;
+  } else if (url) {
+    dataUrl = await resolveDriveOrUrlLogoToDataUrl(url, accessToken, maxWidth);
+  }
   if (!dataUrl || !dataUrl.startsWith('data:image/')) return null;
 
   return await new Promise((resolve) => {
@@ -481,12 +612,19 @@ export async function generateInventoryPDF(
   const rightMargin = 195;
   const contentWidth = rightMargin - leftMargin; // 180mm
 
-  // Preload crisp official PNG logos directly from /public + any custom per-jalur uploaded/URL logos
+  // Preload crisp official PNG logos directly from /public + any custom per-jalur cached/Drive/URL logos
   const logos = await getOfficialLogos();
+  const pdfAccessToken = options?.accessToken || null;
   const [customLeftLogo, customCenterLogo, customRightLogo] = await Promise.all([
-    pdfCfg.headerLeftLogoUrl ? loadLogoWithDimensions(pdfCfg.headerLeftLogoUrl) : Promise.resolve(null),
-    pdfCfg.headerCenterLogoUrl ? loadLogoWithDimensions(pdfCfg.headerCenterLogoUrl) : Promise.resolve(null),
-    pdfCfg.headerRightLogoUrl ? loadLogoWithDimensions(pdfCfg.headerRightLogoUrl) : Promise.resolve(null)
+    pdfCfg.headerLeftLogoDataUrl || pdfCfg.headerLeftLogoUrl
+      ? loadLogoWithDimensions(pdfCfg.headerLeftLogoDataUrl, pdfCfg.headerLeftLogoUrl, pdfAccessToken)
+      : Promise.resolve(null),
+    pdfCfg.headerCenterLogoDataUrl || pdfCfg.headerCenterLogoUrl
+      ? loadLogoWithDimensions(pdfCfg.headerCenterLogoDataUrl, pdfCfg.headerCenterLogoUrl, pdfAccessToken)
+      : Promise.resolve(null),
+    pdfCfg.headerRightLogoDataUrl || pdfCfg.headerRightLogoUrl
+      ? loadLogoWithDimensions(pdfCfg.headerRightLogoDataUrl, pdfCfg.headerRightLogoUrl, pdfAccessToken)
+      : Promise.resolve(null)
   ]);
 
   // Preload 7 official signatures and village stamp

@@ -314,7 +314,8 @@ export default function DocUpload({
         {
           pdfConfig: inventoryPdfConfig,
           projectId: activeProjectId,
-          projectGeoJSONs: loadedGeoJSONs
+          projectGeoJSONs: loadedGeoJSONs,
+          accessToken
         }
       );
       const pdfFileName = buildSanitizedFileName('FORM_INVENT', selectedRecord, 'pdf');
@@ -346,7 +347,8 @@ export default function DocUpload({
         {
           pdfConfig: inventoryPdfConfig,
           projectId: activeProjectId,
-          projectGeoJSONs: loadedGeoJSONs
+          projectGeoJSONs: loadedGeoJSONs,
+          accessToken
         }
       );
       const pdfBlob = docInstance.output('blob');

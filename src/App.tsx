@@ -568,40 +568,83 @@ export default function App() {
   const [isSavingEditOp, setIsSavingEditOp] = useState(false);
   const [editOpError, setEditOpError] = useState<string | null>(null);
 
+  // Strip undefined values recursively before writing to Firestore (Firestore rejects undefined fields)
+  const sanitizeForFirestore = <T,>(payload: T): T => {
+    return JSON.parse(JSON.stringify(payload));
+  };
+
+  // Dedicated cloud map of per-jalur PDF Kop/Footer/Projection configs (synced across all accounts/roles)
+  const cloudPdfConfigsRef = useRef<{
+    byProjectId: Record<string, InventoryFormPdfConfig>;
+    byProjectName: Record<string, InventoryFormPdfConfig>;
+  }>({ byProjectId: {}, byProjectName: {} });
+
+  const mergePdfConfigsIntoProjects = useCallback((list: ProjectConfig[]): ProjectConfig[] => {
+    const { byProjectId, byProjectName } = cloudPdfConfigsRef.current;
+    return list.map(p => {
+      const normName = (p.name || '').trim().toUpperCase();
+      const cloudCfg = byProjectId[p.id] || (normName ? byProjectName[normName] : undefined);
+      if (cloudCfg) {
+        return { ...p, inventoryPdfConfig: cloudCfg };
+      }
+      return p;
+    });
+  }, []);
+
   // Save projects to Firestore cloud database (so other accounts can sync automatically)
-  const saveProjectsToCloud = async (updatedProjects: ProjectConfig[], overrideHideZeroLuas?: boolean) => {
+  const saveProjectsToCloud = async (updatedProjects: ProjectConfig[], overrideHideZeroLuas?: boolean): Promise<boolean> => {
     try {
       const isHide = overrideHideZeroLuas !== undefined ? overrideHideZeroLuas : hideZeroLuas;
+      const cleanProjectsList = sanitizeForFirestore(updatedProjects);
       await setDoc(doc(db, 'configs', 'projects'), {
-        projectsList: updatedProjects,
+        projectsList: cleanProjectsList,
         hideZeroLuas: isHide,
         lastUpdated: Date.now(),
         updatedBy: user?.email || 'unknown'
       });
       console.log("Konfigurasi proyek & filter berhasil disimpan di Firestore cloud!");
+      return true;
     } catch (err) {
       console.warn("Gagal menyimpan ke Firestore cloud (Mungkin Firestore belum diaktifkan):", err);
+      return false;
     }
   };
 
   // Load projects from Firestore cloud database (for automatic cross-device sync)
   const loadProjectsFromCloud = useCallback(async () => {
     try {
+      // Load dedicated PDF Kop/Footer/Projection map first so it is always merged cleanly
+      try {
+        const pdfSnap = await getDoc(doc(db, 'configs', 'pdf_configs'));
+        if (pdfSnap.exists()) {
+          const pdfData = pdfSnap.data();
+          if (pdfData?.byProjectId && typeof pdfData.byProjectId === 'object') {
+            cloudPdfConfigsRef.current = {
+              byProjectId: { ...cloudPdfConfigsRef.current.byProjectId, ...pdfData.byProjectId },
+              byProjectName: { ...cloudPdfConfigsRef.current.byProjectName, ...(pdfData.byProjectName || {}) }
+            };
+          }
+        }
+      } catch (pdfErr) {
+        console.warn("Gagal memuat configs/pdf_configs:", pdfErr);
+      }
+
       const docRef = doc(db, 'configs', 'projects');
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const data = docSnap.data();
         if (data) {
           if (Array.isArray(data.projectsList) && data.projectsList.length > 0) {
-            setProjects(data.projectsList);
-            localStorage.setItem('project_ventura_projects', JSON.stringify(data.projectsList));
+            const mergedList = mergePdfConfigsIntoProjects(data.projectsList);
+            setProjects(mergedList);
+            localStorage.setItem('project_ventura_projects', JSON.stringify(mergedList));
             console.log("Konfigurasi proyek disinkronkan dari Firestore cloud!");
             
             // Also verify active project still exists
             const currentActive = localStorage.getItem('project_ventura_active_project_id') || 'proj-1';
-            const activeExists = data.projectsList.some((p: any) => p.id === currentActive);
+            const activeExists = mergedList.some((p: any) => p.id === currentActive);
             if (!activeExists) {
-              const fallbackId = data.projectsList[0].id;
+              const fallbackId = mergedList[0].id;
               setActiveProjectId(fallbackId);
               localStorage.setItem('project_ventura_active_project_id', fallbackId);
             }
@@ -615,19 +658,45 @@ export default function App() {
     } catch (err) {
       console.warn("Gagal mengambil dari Firestore cloud (Menggunakan local storage):", err);
     }
-  }, []);
+  }, [mergePdfConfigsIntoProjects]);
 
-  // Realtime Cloud Synchronization for Project Configs & Global Filters
+  // Realtime Cloud Synchronization for Project Configs, Global Filters & Dedicated Per-Jalur PDF Kop Configs
   useEffect(() => {
-    let unsub: (() => void) | null = null;
+    let unsubProjects: (() => void) | null = null;
+    let unsubPdfConfigs: (() => void) | null = null;
+
     try {
-      unsub = onSnapshot(doc(db, 'configs', 'projects'), (docSnap) => {
+      unsubPdfConfigs = onSnapshot(doc(db, 'configs', 'pdf_configs'), (docSnap) => {
+        if (docSnap.exists()) {
+          const pdfData = docSnap.data();
+          if (pdfData && typeof pdfData === 'object') {
+            cloudPdfConfigsRef.current = {
+              byProjectId: { ...(pdfData.byProjectId || {}) },
+              byProjectName: { ...(pdfData.byProjectName || {}) }
+            };
+            setProjects(prev => {
+              const merged = mergePdfConfigsIntoProjects(prev);
+              try {
+                localStorage.setItem('project_ventura_projects', JSON.stringify(merged));
+              } catch (e) {}
+              return merged;
+            });
+          }
+        }
+      }, (err) => {
+        console.warn("Realtime pdf_configs sync error:", err);
+      });
+    } catch (e) {}
+
+    try {
+      unsubProjects = onSnapshot(doc(db, 'configs', 'projects'), (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
           if (data) {
             if (Array.isArray(data.projectsList) && data.projectsList.length > 0) {
-              setProjects(data.projectsList);
-              localStorage.setItem('project_ventura_projects', JSON.stringify(data.projectsList));
+              const mergedList = mergePdfConfigsIntoProjects(data.projectsList);
+              setProjects(mergedList);
+              localStorage.setItem('project_ventura_projects', JSON.stringify(mergedList));
             }
             if (typeof data.hideZeroLuas === 'boolean') {
               setHideZeroLuas(data.hideZeroLuas);
@@ -641,9 +710,10 @@ export default function App() {
     } catch (e) {}
 
     return () => {
-      if (unsub) unsub();
+      if (unsubProjects) unsubProjects();
+      if (unsubPdfConfigs) unsubPdfConfigs();
     };
-  }, []);
+  }, [mergePdfConfigsIntoProjects]);
 
   // Track timestamp of our own local Firestore cache writes to prevent self-echo race conditions in onSnapshot
   const lastLocalCacheWriteRef = useRef<number>(0);
@@ -3158,21 +3228,67 @@ export default function App() {
   };
 
   // Update Inventory Form PDF config (Header, Footer & Coordinate Projection) per jalur
+  // Persists cleanly to BOTH configs/pdf_configs AND configs/projects in Firestore so ALL Google accounts & roles stay synced.
   const handleSaveProjectPdfConfig = async (projectId: string, pdfConfig: InventoryFormPdfConfig) => {
     const targetProj = projects.find(p => p.id === projectId);
+    const cleanPdfConfig = sanitizeForFirestore(pdfConfig);
+    const normName = (targetProj?.name || '').trim().toUpperCase();
+
+    // Update in-memory cloudPdfConfigs map immediately
+    cloudPdfConfigsRef.current = {
+      byProjectId: {
+        ...cloudPdfConfigsRef.current.byProjectId,
+        [projectId]: cleanPdfConfig
+      },
+      byProjectName: normName
+        ? { ...cloudPdfConfigsRef.current.byProjectName, [normName]: cleanPdfConfig }
+        : cloudPdfConfigsRef.current.byProjectName
+    };
+
     const updated = projects.map(p =>
-      p.id === projectId ? { ...p, inventoryPdfConfig: pdfConfig } : p
+      p.id === projectId ? { ...p, inventoryPdfConfig: cleanPdfConfig } : p
     );
     setProjects(updated);
     localStorage.setItem('project_ventura_projects', JSON.stringify(updated));
-    await saveProjectsToCloud(updated);
 
-    const projOpt = getCoordinateProjectionOption(pdfConfig.coordinateProjection || 'UTM_49S');
-    setSyncFeedback({
-      type: 'success',
-      message: `✅ Pengaturan Kop PDF, Footer & Proyeksi (${projOpt.shortName}) untuk "${targetProj?.name || projectId}" berhasil disimpan ke Firestore.`,
-      timestamp: Date.now()
-    });
+    // 1. Write to dedicated configs/pdf_configs document (immune to projectsList overwrites / Master Sheet sync)
+    let savedDedicated = false;
+    let cloudErrorMsg = '';
+    try {
+      await setDoc(
+        doc(db, 'configs', 'pdf_configs'),
+        sanitizeForFirestore({
+          byProjectId: cloudPdfConfigsRef.current.byProjectId,
+          byProjectName: cloudPdfConfigsRef.current.byProjectName,
+          lastUpdated: Date.now(),
+          updatedBy: user?.email || 'unknown'
+        }),
+        { merge: true }
+      );
+      savedDedicated = true;
+    } catch (err: any) {
+      cloudErrorMsg = err?.message || String(err);
+      console.error('Gagal menyimpan configs/pdf_configs ke Firestore:', err);
+    }
+
+    // 2. Also update configs/projects (now fully sanitized against undefined values)
+    const savedProjectsList = await saveProjectsToCloud(updated);
+
+    const projOpt = getCoordinateProjectionOption(cleanPdfConfig.coordinateProjection || 'UTM_49S');
+    if (savedDedicated || savedProjectsList) {
+      setSyncFeedback({
+        type: 'success',
+        message: `✅ Pengaturan Kop PDF, Footer & Proyeksi (${projOpt.shortName}) untuk "${targetProj?.name || projectId}" berhasil tersimpan di Firestore & sinkron untuk semua akun.`,
+        timestamp: Date.now()
+      });
+    } else {
+      setSyncFeedback({
+        type: 'error',
+        message: `⚠️ Pengaturan PDF baru tersimpan lokal dan GAGAL ke Firestore (${cloudErrorMsg || 'periksa koneksi internet'}).`,
+        timestamp: Date.now()
+      });
+      alert(`Gagal menyimpan pengaturan Kop PDF ke Firestore Cloud:\n${cloudErrorMsg || 'Periksa koneksi internet Anda.'}\n\nPengaturan belum akan muncul di akun Google lain sampai berhasil tersimpan ke cloud.`);
+    }
   };
 
   // Switch active project path helper
@@ -8753,6 +8869,7 @@ export default function App() {
       {/* Per-Jalur Inventory Form PDF Header, Footer & Coordinate Projection Settings Modal */}
       <ProjectPdfConfigModal
         project={projects.find(p => p.id === editingPdfConfigProjectId) || null}
+        accessToken={token}
         onClose={() => setEditingPdfConfigProjectId(null)}
         onSave={handleSaveProjectPdfConfig}
       />

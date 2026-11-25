@@ -871,6 +871,9 @@ export interface InventoryFormPdfConfig {
   headerLeftLogoUrl?: string;
   headerCenterLogoUrl?: string;
   headerRightLogoUrl?: string;
+  headerLeftLogoDataUrl?: string;
+  headerCenterLogoDataUrl?: string;
+  headerRightLogoDataUrl?: string;
   headerCompanyName?: string;
   headerSubTitle?: string;
   headerAddress?: string;

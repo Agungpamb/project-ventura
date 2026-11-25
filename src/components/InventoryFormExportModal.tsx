@@ -97,7 +97,8 @@ export default function InventoryFormExportModal({
         {
           pdfConfig: inventoryPdfConfig,
           projectId: activeProjectId,
-          projectGeoJSONs: loadedGeoJSONs
+          projectGeoJSONs: loadedGeoJSONs,
+          accessToken
         }
       );
 
@@ -153,7 +154,8 @@ export default function InventoryFormExportModal({
         {
           pdfConfig: inventoryPdfConfig,
           projectId: activeProjectId,
-          projectGeoJSONs: loadedGeoJSONs
+          projectGeoJSONs: loadedGeoJSONs,
+          accessToken
         }
       );
       const pdfBlob = docInstance.output('blob');

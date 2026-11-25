@@ -19,7 +19,7 @@ import {
   type HeaderLayoutMode,
   type CoordinateProjectionId
 } from '../types';
-import { getVendorPresetDefaults } from '../lib/pdfGenerator';
+import { getVendorPresetDefaults, resolveDriveOrUrlLogoToDataUrl } from '../lib/pdfGenerator';
 import {
   COORDINATE_PROJECTION_OPTIONS,
   getCoordinateProjectionOption,
@@ -29,8 +29,21 @@ import { isCombinedLlgKebraonDriyorejoProject } from '../lib/projectTitleHelper'
 
 interface ProjectPdfConfigModalProps {
   project: ProjectConfig | null;
+  accessToken?: string | null;
   onClose: () => void;
   onSave: (projectId: string, config: InventoryFormPdfConfig) => Promise<void> | void;
+}
+
+function getPreviewableImageSrc(dataUrl?: string, url?: string): string {
+  if (dataUrl && dataUrl.startsWith('data:image/')) return dataUrl;
+  const trimmed = (url || '').trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('data:image/')) return trimmed;
+  const dMatch = trimmed.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (dMatch && dMatch[1]) return `https://lh3.googleusercontent.com/d/${dMatch[1]}=w400`;
+  const idMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (idMatch && idMatch[1]) return `https://lh3.googleusercontent.com/d/${idMatch[1]}=w400`;
+  return trimmed;
 }
 
 const PRESET_CARDS: {
@@ -108,6 +121,7 @@ async function resizeLogoFileToDataUrl(file: File, maxWidth: number = 280): Prom
 
 export default function ProjectPdfConfigModal({
   project,
+  accessToken,
   onClose,
   onSave
 }: ProjectPdfConfigModalProps) {
@@ -139,8 +153,19 @@ export default function ProjectPdfConfigModal({
       coordinateLabelOverride: prev.coordinateLabelOverride || '',
       headerLeftLogoUrl: preset === 'SURVEYOR_INDONESIA' ? '' : (prev.headerLeftLogoUrl || ''),
       headerCenterLogoUrl: preset === 'SURVEYOR_INDONESIA' ? '' : (prev.headerCenterLogoUrl || ''),
-      headerRightLogoUrl: preset === 'SURVEYOR_INDONESIA' ? '' : (prev.headerRightLogoUrl || '')
+      headerRightLogoUrl: preset === 'SURVEYOR_INDONESIA' ? '' : (prev.headerRightLogoUrl || ''),
+      headerLeftLogoDataUrl: preset === 'SURVEYOR_INDONESIA' ? '' : (prev.headerLeftLogoDataUrl || ''),
+      headerCenterLogoDataUrl: preset === 'SURVEYOR_INDONESIA' ? '' : (prev.headerCenterLogoDataUrl || ''),
+      headerRightLogoDataUrl: preset === 'SURVEYOR_INDONESIA' ? '' : (prev.headerRightLogoDataUrl || '')
     }));
+  };
+
+  const getDataUrlFieldFor = (
+    field: 'headerLeftLogoUrl' | 'headerCenterLogoUrl' | 'headerRightLogoUrl'
+  ): 'headerLeftLogoDataUrl' | 'headerCenterLogoDataUrl' | 'headerRightLogoDataUrl' => {
+    if (field === 'headerLeftLogoUrl') return 'headerLeftLogoDataUrl';
+    if (field === 'headerCenterLogoUrl') return 'headerCenterLogoDataUrl';
+    return 'headerRightLogoDataUrl';
   };
 
   const handleLogoUpload = async (
@@ -155,23 +180,62 @@ export default function ProjectPdfConfigModal({
     }
     try {
       const dataUrl = await resizeLogoFileToDataUrl(file);
-      setConfig(prev => ({ ...prev, [field]: dataUrl }));
+      const dataField = getDataUrlFieldFor(field);
+      setConfig(prev => ({ ...prev, [field]: '', [dataField]: dataUrl }));
     } catch (err: any) {
       setUploadErr(err?.message || 'Gagal memproses gambar logo.');
     }
   };
 
   const handleResetToDefault = () => {
-    setConfig(getVendorPresetDefaults('SURVEYOR_INDONESIA'));
+    setConfig({
+      ...getVendorPresetDefaults('SURVEYOR_INDONESIA'),
+      headerLeftLogoUrl: '',
+      headerCenterLogoUrl: '',
+      headerRightLogoUrl: '',
+      headerLeftLogoDataUrl: '',
+      headerCenterLogoDataUrl: '',
+      headerRightLogoDataUrl: ''
+    });
     setUploadErr(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
+    setUploadErr(null);
     try {
-      await onSave(project.id, config);
+      // Auto-cache any Google Drive / HTTP logo links into resized PNG Data URLs so ALL accounts & Guests can render them without Drive CORS issues
+      const finalConfig: InventoryFormPdfConfig = { ...config };
+      const pairs: Array<[
+        'headerLeftLogoUrl' | 'headerCenterLogoUrl' | 'headerRightLogoUrl',
+        'headerLeftLogoDataUrl' | 'headerCenterLogoDataUrl' | 'headerRightLogoDataUrl'
+      ]> = [
+        ['headerLeftLogoUrl', 'headerLeftLogoDataUrl'],
+        ['headerCenterLogoUrl', 'headerCenterLogoDataUrl'],
+        ['headerRightLogoUrl', 'headerRightLogoDataUrl']
+      ];
+
+      await Promise.all(
+        pairs.map(async ([urlField, dataField]) => {
+          const rawUrl = (finalConfig[urlField] || '').trim();
+          const existingData = (finalConfig[dataField] || '').trim();
+          if (rawUrl.startsWith('data:image/')) {
+            finalConfig[dataField] = rawUrl;
+            finalConfig[urlField] = '';
+          } else if (rawUrl && !existingData.startsWith('data:image/')) {
+            const cached = await resolveDriveOrUrlLogoToDataUrl(rawUrl, accessToken, 280);
+            if (cached && cached.startsWith('data:image/')) {
+              finalConfig[dataField] = cached;
+            }
+          }
+        })
+      );
+
+      await onSave(project.id, finalConfig);
       onClose();
+    } catch (err: any) {
+      setUploadErr(err?.message || 'Gagal menyimpan pengaturan PDF.');
     } finally {
       setIsSaving(false);
     }
@@ -200,15 +264,19 @@ export default function ProjectPdfConfigModal({
     field: 'headerLeftLogoUrl' | 'headerCenterLogoUrl' | 'headerRightLogoUrl',
     fallbackHint: string
   ) => {
+    const dataField = getDataUrlFieldFor(field);
     const val = config[field] || '';
+    const cachedData = config[dataField] || '';
+    const previewSrc = getPreviewableImageSrc(cachedData, val);
+    const hasLogo = Boolean(previewSrc);
     return (
       <div className="p-3 bg-slate-950/70 rounded-xl border border-white/10 space-y-2">
         <div className="flex items-center justify-between gap-2">
           <span className="text-[11px] font-bold text-slate-200">{title}</span>
-          {val && (
+          {hasLogo && (
             <button
               type="button"
-              onClick={() => setConfig(prev => ({ ...prev, [field]: '' }))}
+              onClick={() => setConfig(prev => ({ ...prev, [field]: '', [dataField]: '' }))}
               className="text-[10px] text-rose-400 hover:text-rose-300 flex items-center gap-1 cursor-pointer"
               title="Hapus logo kustom"
             >
@@ -219,8 +287,8 @@ export default function ProjectPdfConfigModal({
         </div>
         <div className="flex items-center gap-2">
           <div className="w-16 h-10 rounded-lg bg-white flex items-center justify-center p-1 border border-slate-300 shrink-0 overflow-hidden">
-            {val ? (
-              <img src={val} alt={title} className="max-w-full max-h-full object-contain" />
+            {previewSrc ? (
+              <img src={previewSrc} alt={title} className="max-w-full max-h-full object-contain" />
             ) : (
               <span className="text-[8px] text-slate-400 text-center leading-tight px-1">
                 {fallbackHint}
@@ -228,25 +296,36 @@ export default function ProjectPdfConfigModal({
             )}
           </div>
           <div className="flex-1 space-y-1.5 min-w-0">
-            <label className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-lg text-[10px] font-bold cursor-pointer">
-              <Upload className="w-3 h-3" />
-              Unggah PNG/JPG
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp,image/svg+xml"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  void handleLogoUpload(field, f);
-                  e.target.value = '';
-                }}
-              />
-            </label>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <label className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-lg text-[10px] font-bold cursor-pointer">
+                <Upload className="w-3 h-3" />
+                Unggah PNG/JPG
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    void handleLogoUpload(field, f);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+              {cachedData.startsWith('data:image/') && (
+                <span className="text-[9px] font-bold text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 rounded">
+                  ✓ Tersimpan Cloud
+                </span>
+              )}
+            </div>
             <input
               type="text"
               value={val.startsWith('data:image/') ? '' : val}
-              onChange={(e) => setConfig(prev => ({ ...prev, [field]: e.target.value }))}
-              placeholder={val.startsWith('data:image/') ? 'Logo terunggah (Base64 PNG tersimpan)' : 'Atau tempel URL / Link Drive gambar...'}
+              onChange={(e) => setConfig(prev => ({ ...prev, [field]: e.target.value, [dataField]: '' }))}
+              placeholder={
+                cachedData.startsWith('data:image/') || val.startsWith('data:image/')
+                  ? 'Logo tersimpan di cloud (atau tempel URL Drive baru)'
+                  : 'Atau tempel URL / Link Drive gambar...'
+              }
               className="w-full px-2 py-1 bg-slate-900 border border-white/10 rounded-lg text-[10px] text-slate-200 focus:outline-none focus:border-amber-500 placeholder:text-slate-500"
             />
           </div>
@@ -609,8 +688,12 @@ export default function ProjectPdfConfigModal({
                 {previewHeaderMode === 'THREE_LOGOS' ? (
                   <div className="grid grid-cols-3 items-center gap-2 min-h-[38px]">
                     <div className="flex items-center justify-start">
-                      {config.headerLeftLogoUrl ? (
-                        <img src={config.headerLeftLogoUrl} alt="Left" className="max-h-9 max-w-[110px] object-contain" />
+                      {getPreviewableImageSrc(config.headerLeftLogoDataUrl, config.headerLeftLogoUrl) ? (
+                        <img
+                          src={getPreviewableImageSrc(config.headerLeftLogoDataUrl, config.headerLeftLogoUrl)}
+                          alt="Left"
+                          className="max-h-9 max-w-[110px] object-contain"
+                        />
                       ) : (config.vendorPreset || 'SURVEYOR_INDONESIA') === 'SURVEYOR_INDONESIA' ? (
                         <span className="text-[10px] font-black text-slate-700 tracking-wide">DANANTARA</span>
                       ) : (
@@ -618,8 +701,12 @@ export default function ProjectPdfConfigModal({
                       )}
                     </div>
                     <div className="flex items-center justify-center">
-                      {config.headerCenterLogoUrl ? (
-                        <img src={config.headerCenterLogoUrl} alt="Center" className="max-h-9 max-w-[110px] object-contain" />
+                      {getPreviewableImageSrc(config.headerCenterLogoDataUrl, config.headerCenterLogoUrl) ? (
+                        <img
+                          src={getPreviewableImageSrc(config.headerCenterLogoDataUrl, config.headerCenterLogoUrl)}
+                          alt="Center"
+                          className="max-h-9 max-w-[110px] object-contain"
+                        />
                       ) : (config.vendorPreset || 'SURVEYOR_INDONESIA') === 'SURVEYOR_INDONESIA' ? (
                         <span className="text-[11px] font-extrabold text-sky-700">idsurvey</span>
                       ) : (
@@ -627,8 +714,12 @@ export default function ProjectPdfConfigModal({
                       )}
                     </div>
                     <div className="flex items-center justify-end">
-                      {config.headerRightLogoUrl ? (
-                        <img src={config.headerRightLogoUrl} alt="Right" className="max-h-9 max-w-[110px] object-contain" />
+                      {getPreviewableImageSrc(config.headerRightLogoDataUrl, config.headerRightLogoUrl) ? (
+                        <img
+                          src={getPreviewableImageSrc(config.headerRightLogoDataUrl, config.headerRightLogoUrl)}
+                          alt="Right"
+                          className="max-h-9 max-w-[110px] object-contain"
+                        />
                       ) : (config.vendorPreset || 'SURVEYOR_INDONESIA') === 'SURVEYOR_INDONESIA' ? (
                         <span className="text-[10px] font-black text-sky-700 text-right leading-tight">SURVEYOR<br/>INDONESIA</span>
                       ) : (
@@ -640,8 +731,12 @@ export default function ProjectPdfConfigModal({
                   <div className="flex items-center justify-between gap-3 min-h-[42px]">
                     {previewHeaderMode === 'TWO_LOGOS_WITH_TEXT' && (
                       <div className="w-20 flex items-center justify-start shrink-0">
-                        {config.headerLeftLogoUrl ? (
-                          <img src={config.headerLeftLogoUrl} alt="Left" className="max-h-10 max-w-[76px] object-contain" />
+                        {getPreviewableImageSrc(config.headerLeftLogoDataUrl, config.headerLeftLogoUrl) ? (
+                          <img
+                            src={getPreviewableImageSrc(config.headerLeftLogoDataUrl, config.headerLeftLogoUrl)}
+                            alt="Left"
+                            className="max-h-10 max-w-[76px] object-contain"
+                          />
                         ) : (
                           <span className="text-[8px] text-slate-300 border border-dashed border-slate-300 px-1.5 py-1 rounded">Logo Kiri</span>
                         )}
@@ -660,8 +755,12 @@ export default function ProjectPdfConfigModal({
                     </div>
                     {previewHeaderMode === 'TWO_LOGOS_WITH_TEXT' && (
                       <div className="w-20 flex items-center justify-end shrink-0">
-                        {config.headerRightLogoUrl ? (
-                          <img src={config.headerRightLogoUrl} alt="Right" className="max-h-10 max-w-[76px] object-contain" />
+                        {getPreviewableImageSrc(config.headerRightLogoDataUrl, config.headerRightLogoUrl) ? (
+                          <img
+                            src={getPreviewableImageSrc(config.headerRightLogoDataUrl, config.headerRightLogoUrl)}
+                            alt="Right"
+                            className="max-h-10 max-w-[76px] object-contain"
+                          />
                         ) : (
                           <span className="text-[8px] text-slate-300 border border-dashed border-slate-300 px-1.5 py-1 rounded">Logo Kanan</span>
                         )}
