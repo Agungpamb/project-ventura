@@ -1423,27 +1423,53 @@ export async function generateInventoryPDF(
   doc.text('Tanda Tangan', 179.5, yTable + 6, { align: 'center' });
 
   // --- HELPER UNTUK POSISI TENGAH NAMA & TANDA TANGAN (VERTICALLY CENTERED) ---
-  const drawCenteredName = (name: string, x: number, yCenter: number, maxW: number = 24) => {
-    if (!name) {
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7.5);
-      doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.text('....................', x, yCenter + 1, { align: 'center' });
-      return;
-    }
+  const drawCenteredName = (
+    name: string,
+    x: number,
+    yCenter: number,
+    maxW: number = 24,
+    roleSubtitle?: string
+  ) => {
+    const displayName = name || '....................';
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
+    doc.setFontSize(name ? 8 : 7.5);
     doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-    const lines = doc.splitTextToSize(name, maxW);
-    if (lines.length <= 1) {
-      doc.text(lines[0] || '', x, yCenter + 1, { align: 'center' });
-    } else if (lines.length === 2) {
-      doc.text(lines[0], x, yCenter - 1, { align: 'center' });
-      doc.text(lines[1], x, yCenter + 3, { align: 'center' });
-    } else {
-      doc.text(lines[0], x, yCenter - 2.5, { align: 'center' });
-      doc.text(lines[1], x, yCenter + 1, { align: 'center' });
-      doc.text(lines[2], x, yCenter + 4.5, { align: 'center' });
+    const nameLines: string[] = name ? doc.splitTextToSize(displayName, maxW) : [displayName];
+
+    let roleLines: string[] = [];
+    if (roleSubtitle) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      roleLines = doc.splitTextToSize(roleSubtitle, maxW);
+    }
+
+    const nameLineH = 3.4;
+    const roleLineH = 2.8;
+    const gapBetween = roleLines.length > 0 ? 1.0 : 0;
+    const totalHeight =
+      nameLines.length * nameLineH +
+      gapBetween +
+      roleLines.length * roleLineH;
+
+    let curY = yCenter - totalHeight / 2 + 2.4;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(name ? 8 : 7.5);
+    doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
+    nameLines.forEach((line) => {
+      doc.text(line, x, curY, { align: 'center' });
+      curY += nameLineH;
+    });
+
+    if (roleLines.length > 0) {
+      curY += gapBetween - 0.4;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(textGray[0], textGray[1], textGray[2]);
+      roleLines.forEach((line) => {
+        doc.text(line, x, curY, { align: 'center' });
+        curY += roleLineH;
+      });
     }
   };
 
@@ -1464,6 +1490,8 @@ export async function generateInventoryPDF(
     }
   };
 
+  const TIM_INVENT_JABATAN = 'Pelaksana Madya/Operator Madya';
+
   // --- BARIS 1: 1. | Tim 1 | Pemilik | Saksi 1 ---
   const yCenter1 = yTable + 18.5;
 
@@ -1473,8 +1501,8 @@ export async function generateInventoryPDF(
   doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
   doc.text('1.', 17, yCenter1 + 1);
 
-  // Kolom Tim 1 (Nama & TTD)
-  drawCenteredName(nameTim1, 38, yCenter1, 30);
+  // Kolom Tim 1 (Nama, Jabatan & TTD)
+  drawCenteredName(nameTim1, 38, yCenter1, 34, TIM_INVENT_JABATAN);
   drawCenteredSignature(sigTim1, 70, yCenter1);
 
   // Kolom Pihak yang Berhak / Pemilik (Nama & TTD)
@@ -1494,8 +1522,8 @@ export async function generateInventoryPDF(
   doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
   doc.text('2.', 17, yCenter2 + 1);
 
-  // Kolom Tim 2 (Nama & TTD)
-  drawCenteredName(nameTim2, 38, yCenter2, 30);
+  // Kolom Tim 2 (Nama, Jabatan & TTD)
+  drawCenteredName(nameTim2, 38, yCenter2, 34, TIM_INVENT_JABATAN);
   drawCenteredSignature(sigTim2, 70, yCenter2);
 
   // Kolom Pihak yang Berhak Baris 2 (Titik-titik nama & ttd sejajar)
