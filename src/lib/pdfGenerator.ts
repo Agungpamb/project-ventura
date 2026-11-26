@@ -862,16 +862,146 @@ export async function generateInventoryPDF(
     doc.text(`Halaman ${pNum} dari 4`, rightMargin, 22.5, { align: 'right' });
   };
 
+  // =========================================================================
+  // AUTO-FIT TEXT HELPERS (Prevent horizontal/vertical cell overflow WITHOUT
+  // ever expanding row heights or adding extra pages beyond the 4-page rule)
+  // =========================================================================
+  const truncateToWidth = (text: string, maxW: number): string => {
+    const ellipsis = '...';
+    if (doc.getTextWidth(text) <= maxW) return text;
+    if (doc.getTextWidth(ellipsis) >= maxW) return '';
+    let lo = 0;
+    let hi = text.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (doc.getTextWidth(text.slice(0, mid) + ellipsis) <= maxW) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return text.slice(0, lo).trimEnd() + ellipsis;
+  };
+
+  const drawFittedSingleLine = (
+    rawText: string,
+    x: number,
+    y: number,
+    maxW: number,
+    opts: {
+      fontSize?: number;
+      minFontSize?: number;
+      fontStyle?: 'normal' | 'bold' | 'italic' | 'bolditalic';
+      align?: 'left' | 'center' | 'right';
+      color?: number[];
+    } = {}
+  ) => {
+    const text = (rawText ?? '').toString().replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    const startSize = opts.fontSize ?? 8;
+    const minSize = opts.minFontSize ?? 5.5;
+    const style = opts.fontStyle ?? 'normal';
+    const align = opts.align ?? 'left';
+
+    doc.setFont('helvetica', style);
+    if (opts.color) {
+      doc.setTextColor(opts.color[0], opts.color[1], opts.color[2]);
+    }
+
+    let size = startSize;
+    doc.setFontSize(size);
+    while (size > minSize && doc.getTextWidth(text) > maxW) {
+      size = Math.max(minSize, Math.round((size - 0.25) * 100) / 100);
+      doc.setFontSize(size);
+    }
+
+    const finalText = doc.getTextWidth(text) > maxW ? truncateToWidth(text, maxW) : text;
+    doc.text(finalText, x, y, { align });
+  };
+
+  const drawFittedCellText = (
+    rawText: string,
+    x: number,
+    cellTopY: number,
+    cellH: number,
+    maxW: number,
+    opts: {
+      fontSize?: number;
+      minFontSize?: number;
+      fontStyle?: 'normal' | 'bold' | 'italic';
+      align?: 'left' | 'center' | 'right';
+      color?: number[];
+      allowTwoLines?: boolean;
+    } = {}
+  ) => {
+    const text = (rawText ?? '').toString().replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    const startSize = opts.fontSize ?? 8;
+    const minSize = opts.minFontSize ?? 5.5;
+    const style = opts.fontStyle ?? 'normal';
+    const align = opts.align ?? 'left';
+    const allowTwoLines = (opts.allowTwoLines ?? false) && cellH >= 5.0;
+
+    doc.setFont('helvetica', style);
+    if (opts.color) {
+      doc.setTextColor(opts.color[0], opts.color[1], opts.color[2]);
+    }
+
+    // Step 1: Try fitting on a single line cleanly (shrink down to startSize - 1.25 if two lines allowed, else minSize)
+    const singleLineFloor = allowTwoLines ? Math.max(minSize, startSize - 1.25) : minSize;
+    let size = startSize;
+    doc.setFontSize(size);
+    while (size > singleLineFloor && doc.getTextWidth(text) > maxW) {
+      size = Math.max(singleLineFloor, Math.round((size - 0.25) * 100) / 100);
+      doc.setFontSize(size);
+    }
+
+    if (doc.getTextWidth(text) <= maxW || !allowTwoLines) {
+      const finalText = doc.getTextWidth(text) > maxW ? truncateToWidth(text, maxW) : text;
+      const baselineY = cellTopY + cellH / 2 + size * 0.125;
+      doc.text(finalText, x, baselineY, { align });
+      return;
+    }
+
+    // Step 2: Fit nicely into 2 compact lines strictly inside fixed cellH (never expands row height)
+    let twoLineSize = Math.min(startSize - 1.0, 6.75);
+    let lines: string[] = [];
+    while (twoLineSize >= minSize) {
+      doc.setFontSize(twoLineSize);
+      lines = doc.splitTextToSize(text, maxW);
+      const fitsTwo = lines.length <= 2 && lines.every((l) => doc.getTextWidth(l) <= maxW + 0.1);
+      if (fitsTwo) break;
+      if (twoLineSize === minSize) break;
+      twoLineSize = Math.max(minSize, Math.round((twoLineSize - 0.25) * 100) / 100);
+    }
+
+    doc.setFontSize(twoLineSize);
+    if (lines.length > 2) {
+      const line1 = truncateToWidth(lines[0], maxW);
+      const rest = lines.slice(1).join(' ');
+      lines = [line1, truncateToWidth(rest, maxW)];
+    } else {
+      lines = lines.map((l) => (doc.getTextWidth(l) > maxW ? truncateToWidth(l, maxW) : l));
+    }
+
+    if (lines.length === 1) {
+      const baselineY = cellTopY + cellH / 2 + twoLineSize * 0.125;
+      doc.text(lines[0], x, baselineY, { align });
+      return;
+    }
+
+    const lineGap = Math.min(cellH * 0.44, twoLineSize * 0.39);
+    const midY = cellTopY + cellH / 2 + twoLineSize * 0.12;
+    doc.text(lines[0], x, midY - lineGap / 2, { align });
+    doc.text(lines[1], x, midY + lineGap / 2, { align });
+  };
+
   // Helper function to draw contact info footer at the bottom of every page (customizable per jalur)
   const drawPageFooter = (pNum: number, totalPages: number = 4) => {
     // Top border line
     doc.setDrawColor(borderGray[0], borderGray[1], borderGray[2]);
     doc.setLineWidth(0.15);
     doc.line(15, 282, 195, 282);
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.setTextColor(100, 116, 139); // Slate-500
 
     const phoneText = (pdfCfg.footerPhone || '').trim();
     const emailText = (pdfCfg.footerEmail || '').trim();
@@ -884,20 +1014,42 @@ export async function generateInventoryPDF(
     const line1 = (pdfCfg.footerLine1 || '').trim() || structuredLine1Parts.join('   |   ');
     const line2 = (pdfCfg.footerLine2 || '').trim() || webText;
     const leftPrefix = (pdfCfg.footerLeftPrefix || 'Kode Lahan').trim();
+    const footerSlate = [100, 116, 139];
 
     if (line1) {
-      doc.text(line1, 105, 286, { align: 'center', maxWidth: 165 });
+      drawFittedSingleLine(line1, 105, 286, 176, {
+        fontSize: 7,
+        minFontSize: 5.5,
+        fontStyle: 'normal',
+        align: 'center',
+        color: footerSlate
+      });
     }
     if (line2) {
-      doc.setFont('helvetica', 'bold');
-      doc.text(line2, 105, 290, { align: 'center', maxWidth: 110 });
+      drawFittedSingleLine(line2, 105, 290, 58, {
+        fontSize: 7,
+        minFontSize: 5.2,
+        fontStyle: 'bold',
+        align: 'center',
+        color: footerSlate
+      });
     }
 
-    // Page indicator & left code
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.text(`Halaman ${pNum} dari ${totalPages}`, 195, 290, { align: 'right' });
-    doc.text(`${leftPrefix}: ${record.CODE}`, 15, 290);
+    // Page indicator (right zone) & left code (left zone, guarded from colliding with center website)
+    drawFittedSingleLine(`Halaman ${pNum} dari ${totalPages}`, 195, 290, 55, {
+      fontSize: 7,
+      minFontSize: 5.5,
+      fontStyle: 'normal',
+      align: 'right',
+      color: footerSlate
+    });
+    drawFittedSingleLine(`${leftPrefix}: ${record.CODE || '-'}`, 15, 290, 58, {
+      fontSize: 7,
+      minFontSize: 5.2,
+      fontStyle: 'normal',
+      align: 'left',
+      color: footerSlate
+    });
   };
 
   // Helper to draw clean table grids with key-value rows
@@ -940,20 +1092,33 @@ export async function generateInventoryPDF(
       doc.line(col1Right, currentY, col1Right, currentY + rowHeight);
       doc.line(col2Right, currentY, col2Right, currentY + rowHeight);
 
-      // Labels Text
+      // Labels Text (auto-fit inside label column so it never touches the ':' divider)
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
       doc.setTextColor(textGray[0], textGray[1], textGray[2]);
-      doc.text(`${idx + 1}.`, leftMargin + 2, currentY + 4.2);
-      doc.text(row.label, leftMargin + 6, currentY + 4.2);
+      doc.text(`${idx + 1}.`, leftMargin + 2, currentY + 4.1);
+      drawFittedCellText(row.label, leftMargin + 6, currentY, rowHeight, columnWidths[0] - 7.5, {
+        fontSize: 8,
+        minFontSize: 6.0,
+        fontStyle: 'normal',
+        color: textGray,
+        allowTwoLines: false
+      });
 
       // Spacer Column (usually contains ':')
-      doc.text(':', col1Right + 1.8, currentY + 4.2);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(textGray[0], textGray[1], textGray[2]);
+      doc.text(':', col1Right + columnWidths[1] / 2, currentY + 4.1, { align: 'center' });
 
-      // Value text
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.text(row.value || '-', col2Right + 3, currentY + 4.2);
+      // Value text (auto-fit + 2-line support within fixed rowHeight so it never overflows right border)
+      drawFittedCellText(row.value || '-', col2Right + 2.5, currentY, rowHeight, columnWidths[2] - 5, {
+        fontSize: 8,
+        minFontSize: 5.5,
+        fontStyle: 'bold',
+        color: darkSlate,
+        allowTwoLines: true
+      });
 
       currentY += rowHeight;
     });
@@ -967,14 +1132,28 @@ export async function generateInventoryPDF(
   // ==========================================
   drawPageHeader(1);
 
-  // Document main title
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-  doc.text((pdfCfg.docTitleLine1 || 'FORMULIR INVENTARISASI').toUpperCase(), 105, 31, { align: 'center' });
-  doc.text((pdfCfg.docTitleLine2 || 'PEMERIKSAAN RENCANA JALUR TRANSMISI TENAGA LISTRIK').toUpperCase(), 105, 36, { align: 'center' });
-  doc.setFontSize(10);
-  doc.text(effectiveProjectTitle, 105, 41, { align: 'center' });
+  // Document main title (auto-fit single-line so long custom titles never overflow margins or push layout down)
+  drawFittedSingleLine((pdfCfg.docTitleLine1 || 'FORMULIR INVENTARISASI').toUpperCase(), 105, 31, contentWidth, {
+    fontSize: 11,
+    minFontSize: 8,
+    fontStyle: 'bold',
+    align: 'center',
+    color: darkSlate
+  });
+  drawFittedSingleLine((pdfCfg.docTitleLine2 || 'PEMERIKSAAN RENCANA JALUR TRANSMISI TENAGA LISTRIK').toUpperCase(), 105, 36, contentWidth, {
+    fontSize: 11,
+    minFontSize: 7.5,
+    fontStyle: 'bold',
+    align: 'center',
+    color: darkSlate
+  });
+  drawFittedSingleLine(effectiveProjectTitle, 105, 41, contentWidth, {
+    fontSize: 10,
+    minFontSize: 7,
+    fontStyle: 'bold',
+    align: 'center',
+    color: darkSlate
+  });
 
   let y = 47;
 
@@ -1018,13 +1197,17 @@ export async function generateInventoryPDF(
   y += 3;
   const coordProjectionLabel = projectionOption.sheetRowLabel;
   const coordProjectionValue = (pdfCfg.coordinateLabelOverride || '').trim() || projectionOption.sheetRowValue;
+  const buktiKepemilikanValue = [
+    (record.JENIS_ALAS_HAK || '').trim(),
+    record.NOMER_HAK && record.NOMER_HAK.trim() ? `(No: ${record.NOMER_HAK.trim()})` : ''
+  ].filter(Boolean).join(' ') || '-';
 
   const section3Data = [
     { label: coordProjectionLabel, value: coordProjectionValue },
     { label: 'Desa / Kelurahan', value: record.DESA ? record.DESA.trim().replace(/^(desa|kelurahan|kel\.?|dsa\.?)\s+/i, '').toUpperCase() : '-' },
     { label: 'Kecamatan', value: record.KECAMATAN },
     { label: 'Kabupaten/Kota', value: record.KABUPATEN },
-    { label: 'Jenis Bukti Kepenguasaan / Kepemilikan', value: `${record.JENIS_ALAS_HAK} ${record.NOMER_HAK ? '(No: ' + record.NOMER_HAK + ')' : ''}` },
+    { label: 'Jenis Bukti Kepenguasaan / Kepemilikan', value: buktiKepemilikanValue },
     { label: 'Penutup Lahan / Kondisi Fisik Lahan', value: record.PENUTUP_LAHAN }
   ];
   y = drawKeyValueTable(y, section3Data, [62, 6, 112]);
@@ -1038,8 +1221,8 @@ export async function generateInventoryPDF(
 
   y += 3;
   
-  // Custom styled table for buildings and land
-  const table4Widths = [12, 88, 35, 45]; // Total = 180mm
+  // Custom styled table for buildings and land (rebalanced widths so KETERANGAN / SPESIFIKASI has ample space)
+  const table4Widths = [12, 54, 30, 84]; // Total = 180mm (NO=12, URAIAN=54, LUAS=30, KETERANGAN=84)
   const col1 = leftMargin;
   const col2 = col1 + table4Widths[0];
   const col3 = col2 + table4Widths[1];
@@ -1049,60 +1232,47 @@ export async function generateInventoryPDF(
   doc.setFillColor(darkSlate[0], darkSlate[1], darkSlate[2]);
   doc.rect(leftMargin, y, contentWidth, 6.5, 'F');
   
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.setTextColor(255, 255, 255);
-  doc.text('NO', col1 + 4, y + 4.5);
-  doc.text('URAIAN', col2 + 4, y + 4.5);
-  doc.text('LUAS (M²)', col3 + 4, y + 4.5);
-  doc.text('KETERANGAN / SPESIFIKASI', col4 + 4, y + 4.5);
+  const whiteColor = [255, 255, 255];
+  drawFittedSingleLine('NO', col1 + table4Widths[0] / 2, y + 4.4, table4Widths[0] - 2, {
+    fontSize: 8, minFontSize: 6.5, fontStyle: 'bold', align: 'center', color: whiteColor
+  });
+  drawFittedSingleLine('URAIAN', col2 + 3, y + 4.4, table4Widths[1] - 6, {
+    fontSize: 8, minFontSize: 6.5, fontStyle: 'bold', align: 'left', color: whiteColor
+  });
+  drawFittedSingleLine('LUAS (M²)', col3 + 3, y + 4.4, table4Widths[2] - 6, {
+    fontSize: 8, minFontSize: 6.5, fontStyle: 'bold', align: 'left', color: whiteColor
+  });
+  drawFittedSingleLine('KETERANGAN / SPESIFIKASI', col4 + 3, y + 4.4, table4Widths[3] - 6, {
+    fontSize: 8, minFontSize: 6.5, fontStyle: 'bold', align: 'left', color: whiteColor
+  });
 
   y += 6.5;
 
+  const formatBuildingSpec = (b?: { luas?: string; bentuk?: string; jenis?: string }) => {
+    if (!b?.luas) return '';
+    return [b.bentuk, b.jenis].map((s) => (s || '').trim()).filter(Boolean).join(' · ');
+  };
+
   // Compile Tanah + 5 Buildings to print
   const table4Rows = [
-    { no: '1.', uraian: 'Luas Tanah', luas: record.LUAS, ket: `Kondisi: ${record.PENUTUP_LAHAN}` },
-    { 
-      no: '2.', 
-      uraian: 'Luas Bangunan 1', 
-      luas: record.buildings?.[0]?.luas || '', 
-      ket: record.buildings?.[0]?.luas ? `${record.buildings[0].bentuk || ''} · ${record.buildings[0].jenis || ''}` : '' 
-    },
-    { 
-      no: '3.', 
-      uraian: 'Luas Bangunan 2', 
-      luas: record.buildings?.[1]?.luas || '', 
-      ket: record.buildings?.[1]?.luas ? `${record.buildings[1].bentuk || ''} · ${record.buildings[1].jenis || ''}` : '' 
-    },
-    { 
-      no: '4.', 
-      uraian: 'Luas Bangunan 3', 
-      luas: record.buildings?.[2]?.luas || '', 
-      ket: record.buildings?.[2]?.luas ? `${record.buildings[2].bentuk || ''} · ${record.buildings[2].jenis || ''}` : '' 
-    },
-    { 
-      no: '5.', 
-      uraian: 'Luas Bangunan 4', 
-      luas: record.buildings?.[3]?.luas || '', 
-      ket: record.buildings?.[3]?.luas ? `${record.buildings[3].bentuk || ''} · ${record.buildings[3].jenis || ''}` : '' 
-    },
-    { 
-      no: '6.', 
-      uraian: 'Luas Bangunan 5', 
-      luas: record.buildings?.[4]?.luas || '', 
-      ket: record.buildings?.[4]?.luas ? `${record.buildings[4].bentuk || ''} · ${record.buildings[4].jenis || ''}` : '' 
-    }
+    { no: '1.', uraian: 'Luas Tanah', luas: record.LUAS, ket: record.PENUTUP_LAHAN ? `Kondisi: ${record.PENUTUP_LAHAN}` : '-' },
+    { no: '2.', uraian: 'Luas Bangunan 1', luas: record.buildings?.[0]?.luas || '', ket: formatBuildingSpec(record.buildings?.[0]) },
+    { no: '3.', uraian: 'Luas Bangunan 2', luas: record.buildings?.[1]?.luas || '', ket: formatBuildingSpec(record.buildings?.[1]) },
+    { no: '4.', uraian: 'Luas Bangunan 3', luas: record.buildings?.[2]?.luas || '', ket: formatBuildingSpec(record.buildings?.[2]) },
+    { no: '5.', uraian: 'Luas Bangunan 4', luas: record.buildings?.[3]?.luas || '', ket: formatBuildingSpec(record.buildings?.[3]) },
+    { no: '6.', uraian: 'Luas Bangunan 5', luas: record.buildings?.[4]?.luas || '', ket: formatBuildingSpec(record.buildings?.[4]) }
   ];
 
+  const rowHeight4 = 6;
   doc.setDrawColor(darkSlate[0], darkSlate[1], darkSlate[2]);
   doc.setLineWidth(0.3);
-  doc.rect(leftMargin, y, contentWidth, table4Rows.length * 6);
+  doc.rect(leftMargin, y, contentWidth, table4Rows.length * rowHeight4);
 
   table4Rows.forEach((row, idx) => {
     // Alternating background
     if (idx % 2 === 1) {
       doc.setFillColor(249, 250, 251);
-      doc.rect(leftMargin + 0.15, y + 0.15, contentWidth - 0.3, 5.7, 'F');
+      doc.rect(leftMargin + 0.15, y + 0.15, contentWidth - 0.3, rowHeight4 - 0.3, 'F');
     }
 
     // Dividers
@@ -1115,29 +1285,26 @@ export async function generateInventoryPDF(
     // Vertical line split
     doc.setDrawColor(darkSlate[0], darkSlate[1], darkSlate[2]);
     doc.setLineWidth(0.2);
-    doc.line(col2, y, col2, y + 6);
-    doc.line(col3, y, col3, y + 6);
-    doc.line(col4, y, col4, y + 6);
+    doc.line(col2, y, col2, y + rowHeight4);
+    doc.line(col3, y, col3, y + rowHeight4);
+    doc.line(col4, y, col4, y + rowHeight4);
 
-    // Text Values
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(textGray[0], textGray[1], textGray[2]);
-    doc.text(row.no, col1 + 4, y + 4.2);
-    doc.text(row.uraian, col2 + 4, y + 4.2);
+    // Text Values (auto-fit inside fixed 6mm cell so nothing ever overflows borders)
+    drawFittedCellText(row.no, col1 + table4Widths[0] / 2, y, rowHeight4, table4Widths[0] - 2, {
+      fontSize: 8, minFontSize: 6.5, fontStyle: 'normal', align: 'center', color: textGray
+    });
+    drawFittedCellText(row.uraian, col2 + 3, y, rowHeight4, table4Widths[1] - 6, {
+      fontSize: 8, minFontSize: 6.0, fontStyle: 'normal', align: 'left', color: textGray
+    });
+    drawFittedCellText(row.luas ? `${row.luas} m²` : '-', col3 + 3, y, rowHeight4, table4Widths[2] - 6, {
+      fontSize: 8, minFontSize: 6.0, fontStyle: 'bold', align: 'left', color: darkSlate
+    });
+    drawFittedCellText(row.ket || '-', col4 + 3, y, rowHeight4, table4Widths[3] - 6, {
+      fontSize: 8, minFontSize: 5.5, fontStyle: 'normal', align: 'left', color: [100, 116, 139], allowTwoLines: true
+    });
 
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-    doc.text(row.luas ? `${row.luas} m²` : '-', col3 + 4, y + 4.2);
-    
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(100, 116, 139);
-    doc.text(row.ket || '-', col4 + 4, y + 4.2);
-
-    y += 6;
+    y += rowHeight4;
   });
-
-  drawPageFooter(1);
 
 
   // ==========================================
@@ -1171,21 +1338,36 @@ export async function generateInventoryPDF(
     doc.setFillColor(darkSlate[0], darkSlate[1], darkSlate[2]);
     doc.rect(leftMargin, startY, contentWidth, 11, 'F');
 
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(255, 255, 255);
-    
-    doc.text('NO', xCol1 + 4, startY + 7, { align: 'left' });
-    doc.text('JENIS TANAMAN', xCol2 + 6, startY + 7, { align: 'left' });
-    
-    doc.text('JUMLAH TANAMAN BUAH', xCol3 + colWidthsCrop[2] / 2, startY + 3.5, { align: 'center' });
-    doc.text('PRODUKTIF', xCol3 + subWidthsBuah[0] / 2, startY + 8.5, { align: 'center' });
-    doc.text('NON-PRODUKTIF', xCol3 + subWidthsBuah[0] + subWidthsBuah[1] / 2, startY + 8.5, { align: 'center' });
+    const whiteText = [255, 255, 255];
+    drawFittedSingleLine('NO', xCol1 + colWidthsCrop[0] / 2, startY + 7, colWidthsCrop[0] - 2, {
+      fontSize: 7.5, minFontSize: 6.0, fontStyle: 'bold', align: 'center', color: whiteText
+    });
+    drawFittedSingleLine('JENIS TANAMAN', xCol2 + 3, startY + 7, colWidthsCrop[1] - 6, {
+      fontSize: 7.5, minFontSize: 6.0, fontStyle: 'bold', align: 'left', color: whiteText
+    });
 
-    doc.text('JUMLAH TANAMAN KERAS', xCol4 + colWidthsCrop[3] / 2, startY + 3.5, { align: 'center' });
-    doc.text('KECIL', xCol4 + subWidthsKeras[0] / 2, startY + 8.5, { align: 'center' });
-    doc.text('SEDANG', xCol4 + subWidthsKeras[0] + subWidthsKeras[1] / 2, startY + 8.5, { align: 'center' });
-    doc.text('BESAR', xCol4 + subWidthsKeras[0] + subWidthsKeras[1] + subWidthsKeras[2] / 2, startY + 8.5, { align: 'center' });
+    drawFittedSingleLine('JUMLAH TANAMAN BUAH', xCol3 + colWidthsCrop[2] / 2, startY + 3.5, colWidthsCrop[2] - 2, {
+      fontSize: 7.5, minFontSize: 6.0, fontStyle: 'bold', align: 'center', color: whiteText
+    });
+    drawFittedSingleLine('PRODUKTIF', xCol3 + subWidthsBuah[0] / 2, startY + 8.5, subWidthsBuah[0] - 2, {
+      fontSize: 7.2, minFontSize: 5.5, fontStyle: 'bold', align: 'center', color: whiteText
+    });
+    drawFittedSingleLine('NON-PRODUKTIF', xCol3 + subWidthsBuah[0] + subWidthsBuah[1] / 2, startY + 8.5, subWidthsBuah[1] - 2, {
+      fontSize: 7.2, minFontSize: 5.5, fontStyle: 'bold', align: 'center', color: whiteText
+    });
+
+    drawFittedSingleLine('JUMLAH TANAMAN KERAS', xCol4 + colWidthsCrop[3] / 2, startY + 3.5, colWidthsCrop[3] - 2, {
+      fontSize: 7.5, minFontSize: 6.0, fontStyle: 'bold', align: 'center', color: whiteText
+    });
+    drawFittedSingleLine('KECIL', xCol4 + subWidthsKeras[0] / 2, startY + 8.5, subWidthsKeras[0] - 2, {
+      fontSize: 7.2, minFontSize: 5.5, fontStyle: 'bold', align: 'center', color: whiteText
+    });
+    drawFittedSingleLine('SEDANG', xCol4 + subWidthsKeras[0] + subWidthsKeras[1] / 2, startY + 8.5, subWidthsKeras[1] - 2, {
+      fontSize: 7.2, minFontSize: 5.5, fontStyle: 'bold', align: 'center', color: whiteText
+    });
+    drawFittedSingleLine('BESAR', xCol4 + subWidthsKeras[0] + subWidthsKeras[1] + subWidthsKeras[2] / 2, startY + 8.5, subWidthsKeras[2] - 2, {
+      fontSize: 7.2, minFontSize: 5.5, fontStyle: 'bold', align: 'center', color: whiteText
+    });
 
     doc.setDrawColor(255, 255, 255);
     doc.setLineWidth(0.25);
@@ -1201,7 +1383,7 @@ export async function generateInventoryPDF(
   // Filter crops with name
   const activePlants = (record.plants || []).filter(p => p.jenis && p.jenis.trim() !== "");
   
-  // Total target rows (30 is max)
+  // Total target rows (30 is max) — dynamically fit all rows + declaration + signatures on Page 2 (NEVER add Page 5!)
   const totalPlantRows = Math.max(14, Math.min(30, activePlants.length));
   const plantRowsToDraw: any[] = [];
   
@@ -1213,23 +1395,30 @@ export async function generateInventoryPDF(
     }
   }
 
-  const rowHeight2 = 5.2;
+  // Pre-compute declaration & signature height budget so Page 2 strictly stays 1 page
+  const isCompactPage2 = totalPlantRows > 20;
+  const gapAfterCropTable = isCompactPage2 ? 3 : 5;
+  const declFontSize = isCompactPage2 ? 7.5 : 8;
+  const declLineH = isCompactPage2 ? 3.6 : 4.2;
+  const declBottomGap = isCompactPage2 ? 3.5 : 5;
+  const sigRowStep = isCompactPage2 ? 16.5 : 18.5;
+  const sigBottomOffset = isCompactPage2 ? 10 : 12;
+  const sigStampOffset = isCompactPage2 ? 10 : 11;
+  const sigKadesNameOffset = isCompactPage2 ? 20.5 : 23;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(declFontSize);
+  const closingText = 'Yang bertanda tangan di bawah ini, menyatakan bahwa secara bersama-sama telah melakukan inventarisasi dengan hasil yang sesuai dengan di lapangan dan tidak akan mengubah hasil inventarisasi ini sampai proses kompensasi selesai.';
+  const lines = doc.splitTextToSize(closingText, contentWidth - 4);
+
+  const declTotalH = lines.length * declLineH + declBottomGap;
+  const sigTotalH = sigRowStep * 2 + sigBottomOffset + sigStampOffset + sigKadesNameOffset;
+  const maxPage2BottomY = 277; // Safe margin above footer line at y=282
+  const availableForPlants = Math.max(40, maxPage2BottomY - y2 - gapAfterCropTable - declTotalH - sigTotalH);
+  const rowHeight2 = Math.min(5.2, Math.max(3.6, Math.floor((availableForPlants / totalPlantRows) * 10) / 10));
+  const cropFontSize = rowHeight2 >= 4.8 ? 7.5 : rowHeight2 >= 4.2 ? 7.0 : 6.5;
 
   plantRowsToDraw.forEach((row, idx) => {
-    // Check if we need to add a page due to height overflow
-    if (y2 + rowHeight2 > 265) {
-      doc.setDrawColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-      doc.setLineWidth(0.3);
-      doc.line(leftMargin, y2, rightMargin, y2);
-
-      doc.addPage();
-      currentPNum++;
-      drawPageHeader(currentPNum);
-      y2 = 30;
-      drawCropTableHeader(y2);
-      y2 += 11;
-    }
-
     // Zebra Striping
     if (idx % 2 === 1) {
       doc.setFillColor(249, 250, 251);
@@ -1260,52 +1449,64 @@ export async function generateInventoryPDF(
     // Horizontal border at bottom
     doc.line(leftMargin, y2 + rowHeight2, rightMargin, y2 + rowHeight2);
 
-    // Write text values
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
-    doc.setTextColor(textGray[0], textGray[1], textGray[2]);
-    doc.text(`${idx + 1}`, xCol1 + 4, y2 + 3.6);
+    // Write auto-fitted text values (never overflow into neighboring columns)
+    drawFittedCellText(`${idx + 1}`, xCol1 + colWidthsCrop[0] / 2, y2, rowHeight2, colWidthsCrop[0] - 2, {
+      fontSize: cropFontSize, minFontSize: 5.5, fontStyle: 'normal', align: 'center', color: textGray
+    });
 
-    doc.setFont('helvetica', row.jenis ? 'bold' : 'normal');
-    doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-    doc.text(row.jenis || '', xCol2 + 4, y2 + 3.6);
+    if (row.jenis) {
+      drawFittedCellText(row.jenis, xCol2 + 2.5, y2, rowHeight2, colWidthsCrop[1] - 5, {
+        fontSize: cropFontSize, minFontSize: 5.2, fontStyle: 'bold', align: 'left', color: darkSlate, allowTwoLines: rowHeight2 >= 5.0
+      });
+    }
 
-    doc.setFont('helvetica', 'bold');
-    doc.text(row.sudah_menghasilkan || (row.jenis ? '0' : ''), xCol3 + subWidthsBuah[0]/2, y2 + 3.6, { align: 'center' });
-    doc.text(row.belum_menghasilkan || (row.jenis ? '0' : ''), xCol3 + subWidthsBuah[0] + subWidthsBuah[1]/2, y2 + 3.6, { align: 'center' });
+    const valProd = row.sudah_menghasilkan || (row.jenis ? '0' : '');
+    const valNonProd = row.belum_menghasilkan || (row.jenis ? '0' : '');
+    const valKecil = row.kecil || (row.jenis ? '0' : '');
+    const valSedang = row.sedang || (row.jenis ? '0' : '');
+    const valBesar = row.besar || (row.jenis ? '0' : '');
 
-    doc.text(row.kecil || (row.jenis ? '0' : ''), xCol4 + subWidthsKeras[0]/2, y2 + 3.6, { align: 'center' });
-    doc.text(row.sedang || (row.jenis ? '0' : ''), xCol4 + subWidthsKeras[0] + subWidthsKeras[1]/2, y2 + 3.6, { align: 'center' });
-    doc.text(row.besar || (row.jenis ? '0' : ''), xCol4 + subWidthsKeras[0] + subWidthsKeras[1] + subWidthsKeras[2]/2, y2 + 3.6, { align: 'center' });
+    if (valProd) {
+      drawFittedCellText(String(valProd), xCol3 + subWidthsBuah[0] / 2, y2, rowHeight2, subWidthsBuah[0] - 2.5, {
+        fontSize: cropFontSize, minFontSize: 5.2, fontStyle: 'bold', align: 'center', color: darkSlate
+      });
+    }
+    if (valNonProd) {
+      drawFittedCellText(String(valNonProd), xCol3 + subWidthsBuah[0] + subWidthsBuah[1] / 2, y2, rowHeight2, subWidthsBuah[1] - 2.5, {
+        fontSize: cropFontSize, minFontSize: 5.2, fontStyle: 'bold', align: 'center', color: darkSlate
+      });
+    }
+    if (valKecil) {
+      drawFittedCellText(String(valKecil), xCol4 + subWidthsKeras[0] / 2, y2, rowHeight2, subWidthsKeras[0] - 2, {
+        fontSize: cropFontSize, minFontSize: 5.0, fontStyle: 'bold', align: 'center', color: darkSlate
+      });
+    }
+    if (valSedang) {
+      drawFittedCellText(String(valSedang), xCol4 + subWidthsKeras[0] + subWidthsKeras[1] / 2, y2, rowHeight2, subWidthsKeras[1] - 2, {
+        fontSize: cropFontSize, minFontSize: 5.0, fontStyle: 'bold', align: 'center', color: darkSlate
+      });
+    }
+    if (valBesar) {
+      drawFittedCellText(String(valBesar), xCol4 + subWidthsKeras[0] + subWidthsKeras[1] + subWidthsKeras[2] / 2, y2, rowHeight2, subWidthsKeras[2] - 2, {
+        fontSize: cropFontSize, minFontSize: 5.0, fontStyle: 'bold', align: 'center', color: darkSlate
+      });
+    }
 
     y2 += rowHeight2;
   });
 
-  y2 += 5;
+  y2 += gapAfterCropTable;
 
   // --- DECLARATION TEXT BLOCK (SESUAI GAMBAR ACUAN) ---
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
+  doc.setFontSize(declFontSize);
   doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-  
-  const closingText = 'Yang bertanda tangan di bawah ini, menyatakan bahwa secara bersama-sama telah melakukan inventarisasi dengan hasil yang sesuai dengan di lapangan dan tidak akan mengubah hasil inventarisasi ini sampai proses kompensasi selesai.';
-  const lines = doc.splitTextToSize(closingText, contentWidth - 4);
 
-  // Check if declaration and signatures fit on this page (New layout takes ~92mm)
-  const signaturesHeight = 92; 
-  if (y2 + lines.length * 4.2 + 8 + signaturesHeight > 275) {
-    drawPageFooter(currentPNum);
-    doc.addPage();
-    currentPNum++;
-    drawPageHeader(currentPNum);
-    y2 = 30;
-  }
-  
   lines.forEach((line: string, i: number) => {
-    doc.text(line, leftMargin + 1, y2 + 4 + (i * 4.2));
+    doc.text(line, leftMargin + 1, y2 + 3.8 + (i * declLineH));
   });
 
-  y2 += lines.length * 4.2 + 5;
+  y2 += declTotalH;
 
   // Helper for title casing names from user data while preserving common Indonesian academic/honorific titles
   const PRESERVED_UPPER_TOKENS = new Set([
@@ -1430,11 +1631,29 @@ export async function generateInventoryPDF(
     maxW: number = 24,
     roleSubtitle?: string
   ) => {
-    const displayName = name || '....................';
+    const displayName = (name || '....................').trim();
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(name ? 8 : 7.5);
+    let nameFontSize = name ? 8 : 7.5;
+    doc.setFontSize(nameFontSize);
     doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-    const nameLines: string[] = name ? doc.splitTextToSize(displayName, maxW) : [displayName];
+
+    let nameLines: string[] = name ? doc.splitTextToSize(displayName, maxW) : [displayName];
+    // Shrink font slightly if long name wraps beyond 2 lines or has a wide unbroken word
+    if (name) {
+      while (
+        nameFontSize > 6.0 &&
+        (nameLines.length > 2 || nameLines.some((l) => doc.getTextWidth(l) > maxW + 0.1))
+      ) {
+        nameFontSize = Math.max(6.0, Math.round((nameFontSize - 0.25) * 100) / 100);
+        doc.setFontSize(nameFontSize);
+        nameLines = doc.splitTextToSize(displayName, maxW);
+      }
+      if (nameLines.length > 3) {
+        nameLines = [nameLines[0], nameLines[1], truncateToWidth(nameLines.slice(2).join(' '), maxW)];
+      } else {
+        nameLines = nameLines.map((l) => (doc.getTextWidth(l) > maxW ? truncateToWidth(l, maxW) : l));
+      }
+    }
 
     let roleLines: string[] = [];
     if (roleSubtitle) {
@@ -1443,18 +1662,18 @@ export async function generateInventoryPDF(
       roleLines = doc.splitTextToSize(roleSubtitle, maxW);
     }
 
-    const nameLineH = 3.4;
-    const roleLineH = 2.8;
-    const gapBetween = roleLines.length > 0 ? 1.0 : 0;
+    const nameLineH = nameFontSize >= 7.5 ? 3.4 : 2.9;
+    const roleLineH = 2.6;
+    const gapBetween = roleLines.length > 0 ? 0.9 : 0;
     const totalHeight =
       nameLines.length * nameLineH +
       gapBetween +
       roleLines.length * roleLineH;
 
-    let curY = yCenter - totalHeight / 2 + 2.4;
+    let curY = yCenter - totalHeight / 2 + 2.3;
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(name ? 8 : 7.5);
+    doc.setFontSize(nameFontSize);
     doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
     nameLines.forEach((line) => {
       doc.text(line, x, curY, { align: 'center' });
@@ -1493,7 +1712,7 @@ export async function generateInventoryPDF(
   const TIM_INVENT_JABATAN = 'Pelaksana Madya/Operator Madya';
 
   // --- BARIS 1: 1. | Tim 1 | Pemilik | Saksi 1 ---
-  const yCenter1 = yTable + 18.5;
+  const yCenter1 = yTable + sigRowStep;
 
   // Nomor 1.
   doc.setFont('helvetica', 'normal');
@@ -1514,7 +1733,7 @@ export async function generateInventoryPDF(
   drawCenteredSignature(sigSaksi1, 179.5, yCenter1);
 
   // --- BARIS 2: 2. | Tim 2 | .................... | Saksi 2 ---
-  const yCenter2 = yCenter1 + 18.5;
+  const yCenter2 = yCenter1 + sigRowStep;
 
   // Nomor 2.
   doc.setFont('helvetica', 'normal');
@@ -1538,7 +1757,7 @@ export async function generateInventoryPDF(
   drawCenteredSignature(sigSaksi2, 179.5, yCenter2);
 
   // --- BAGIAN BAWAH: TANGGAL, MENGETAHUI, KEPALA DESA, STEMPEL & TTD OVERLAY, NAMA KADES ---
-  const yBottom = yCenter2 + 12;
+  const yBottom = yCenter2 + sigBottomOffset;
 
   // Tanggal
   doc.setFont('helvetica', 'normal');
@@ -1547,15 +1766,16 @@ export async function generateInventoryPDF(
   doc.text(displayDate, 105, yBottom, { align: 'center' });
 
   // "Mengetahui"
-  doc.text('Mengetahui', 105, yBottom + 4.5, { align: 'center' });
+  doc.text('Mengetahui', 105, yBottom + 4.3, { align: 'center' });
 
-  // "Kepala Desa [DESA]"
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.text(desaTitle, 105, yBottom + 9.5, { align: 'center' });
+  // "Kepala Desa / Lurah [DESA]" (auto-fit width)
+  drawFittedSingleLine(desaTitle, 105, yBottom + 9.0, 160, {
+    fontSize: 8.5, minFontSize: 6.5, fontStyle: 'bold', align: 'center', color: darkSlate
+  });
 
   // Stempel Desa & Tanda Tangan Kades (Layered Overlay)
-  const yStamp = yBottom + 11;
+  const yStamp = yBottom + sigStampOffset;
+  const stampSize = isCompactPage2 ? 21 : 24;
 
   if (capDesa && capDesa.startsWith('data:image/')) {
     try {
@@ -1563,7 +1783,7 @@ export async function generateInventoryPDF(
       if (hasGState) {
         (doc as any).setGState(new (doc as any).GState({ opacity: 0.85 }));
       }
-      doc.addImage(capDesa, 'PNG', 82, yStamp, 24, 24, undefined, 'FAST');
+      doc.addImage(capDesa, 'PNG', 82, yStamp, stampSize, stampSize, undefined, 'FAST');
       if (hasGState) {
         (doc as any).setGState(new (doc as any).GState({ opacity: 1.0 }));
       }
@@ -1574,23 +1794,20 @@ export async function generateInventoryPDF(
 
   if (sigKades && sigKades.startsWith('data:image/')) {
     try {
-      doc.addImage(sigKades, 'PNG', 96, yStamp + 2, 27, 16, undefined, 'FAST');
+      doc.addImage(sigKades, 'PNG', 96, yStamp + 1.5, 27, isCompactPage2 ? 14 : 16, undefined, 'FAST');
     } catch (e) {
       console.warn('Failed to embed sigKades:', e);
     }
   } else {
     doc.setFont('helvetica', 'normal');
-    doc.text('........................................', 105, yStamp + 17, { align: 'center' });
+    doc.text('........................................', 105, yStamp + (isCompactPage2 ? 15 : 17), { align: 'center' });
   }
 
-  // Nama Kades di bawah stempel & tanda tangan
-  const yKadesName = yStamp + 23;
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-  doc.text(nameKades, 105, yKadesName, { align: 'center' });
-
-  drawPageFooter(currentPNum);
+  // Nama Kades di bawah stempel & tanda tangan (auto-fit width)
+  const yKadesName = yStamp + sigKadesNameOffset;
+  drawFittedSingleLine(nameKades, 105, yKadesName, 160, {
+    fontSize: 8.5, minFontSize: 6.5, fontStyle: 'bold', align: 'center', color: darkSlate
+  });
 
 
   // ==========================================
@@ -1600,14 +1817,12 @@ export async function generateInventoryPDF(
   currentPNum++;
   drawPageHeader(currentPNum);
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-  doc.text('SITUASI DAN DENAH BIDANG TANAH UNTUK KOMPENSASI', 105, 30, { align: 'center' });
-  
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.text(`NOMER BIDANG : ${record.NOBID || '-'}`, 105, 34, { align: 'center' });
+  drawFittedSingleLine('SITUASI DAN DENAH BIDANG TANAH UNTUK KOMPENSASI', 105, 30, contentWidth, {
+    fontSize: 10, minFontSize: 8, fontStyle: 'bold', align: 'center', color: darkSlate
+  });
+  drawFittedSingleLine(`NOMER BIDANG : ${record.NOBID || '-'}`, 105, 34, contentWidth, {
+    fontSize: 8, minFontSize: 6.5, fontStyle: 'normal', align: 'center', color: darkSlate
+  });
 
   // Attempt to load and render polygon points dynamically!
   let polygonPoints: [number, number][] = [];
@@ -2428,53 +2643,58 @@ export async function generateInventoryPDF(
   doc.text('SITUASI MENGGAMBARKAN KONDISI SEMPADAN DAN BIDANG TANAH', 105, boxY + boxH + 4, { align: 'center' });
 
   // COORDINATES TABLE / GRID (uses the configured per-jalur projection)
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
   const coordSectionSuffix = (pdfCfg.coordinateLabelOverride || '').trim() || projectionOption.shortName;
-  doc.text(`I. KOORDINAT BIDANG TANAH (${coordSectionSuffix})`, leftMargin, 115);
+  drawFittedSingleLine(`I. KOORDINAT BIDANG TANAH (${coordSectionSuffix})`, leftMargin, 115, contentWidth, {
+    fontSize: 8.5, minFontSize: 6.5, fontStyle: 'bold', align: 'left', color: darkSlate
+  });
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(51, 65, 85);
-
+  const coordSlate = [51, 65, 85];
   let coordY = 120;
   let lastCoordY = coordY;
 
   if (polygonPoints && polygonPoints.length > 0) {
     const uniquePoints = polygonPoints.slice(0, polygonPoints.length - 1);
-    const totalPts = uniquePoints.length; // Show all points!
-    const numCols = totalPts > 22 ? 3 : 2;
+    const totalPts = uniquePoints.length; // Show all points while keeping Section II safely above footer (y=282)
+    const numCols = totalPts > 72 ? 4 : totalPts > 20 ? 3 : 2;
     const numRows = Math.ceil(totalPts / numCols);
-    const rowHeight = totalPts > 18 ? 4.5 : 5.0;
-    const colWidth = numCols === 3 ? 59 : 90;
+    // Keep lastCoordY <= 241 so II. BATAS-BATAS TANAH (height ~28.5mm) always fits cleanly above y=282
+    const maxCoordBlockH = 117;
+    const rawRowH = numRows > 1 ? Math.min(5.0, maxCoordBlockH / numRows) : 5.0;
+    const rowHeight = Math.max(3.0, Math.floor(rawRowH * 10) / 10);
+    const colGap = 2;
+    const usableColW = (contentWidth - (numCols - 1) * colGap) / numCols;
+    const baseCoordFont = numCols === 2 ? 7.5 : numCols === 3 ? 6.8 : 6.0;
+    const labelW = numCols === 2 ? 20.5 : numCols === 3 ? 14.5 : 10.0;
+    const valOffset = labelW + 1.0;
+    const valMaxW = Math.max(18, usableColW - valOffset - 0.5);
 
     uniquePoints.forEach((pt, i) => {
-      const formatted = formatProjectedCoordinate(pt[0], pt[1], projectionId, numCols === 3);
+      const formatted = formatProjectedCoordinate(pt[0], pt[1], projectionId, numCols >= 3);
       const colIdx = Math.floor(i / numRows);
       const rowIdx = i % numRows;
-      const px = leftMargin + (numCols === 3 ? 2 : 4) + (colIdx * colWidth);
-      const py = coordY + (rowIdx * rowHeight);
+      const px = leftMargin + colIdx * (usableColW + colGap);
+      const py = coordY + rowIdx * rowHeight;
 
-      doc.setFont('helvetica', 'bold');
-      doc.text(`Koordinat P${i+1}`, px, py);
-      doc.setFont('helvetica', 'normal');
-      if (numCols === 3) {
-        doc.text(formatted.primaryText, px + 18, py);
-      } else {
-        doc.text(formatted.primaryText, px + 22, py);
-      }
+      const labelText = numCols === 2 ? `Koordinat P${i + 1}` : numCols === 3 ? `Koord. P${i + 1}` : `P${i + 1}`;
+      drawFittedSingleLine(labelText, px, py, labelW, {
+        fontSize: baseCoordFont, minFontSize: 5.0, fontStyle: 'bold', align: 'left', color: coordSlate
+      });
+      drawFittedSingleLine(formatted.primaryText, px + valOffset, py, valMaxW, {
+        fontSize: baseCoordFont, minFontSize: 4.8, fontStyle: 'normal', align: 'left', color: coordSlate
+      });
     });
 
     lastCoordY = coordY + ((numRows - 1) * rowHeight) + 4;
   } else {
     doc.setFont('helvetica', 'italic');
+    doc.setFontSize(7.5);
+    doc.setTextColor(coordSlate[0], coordSlate[1], coordSlate[2]);
     doc.text('Data koordinat bidang tanah tidak tersedia.', leftMargin + 6, coordY);
     lastCoordY = coordY + 6;
   }
 
-  // BOUNDARIES TABLE - Dynamically placed below Section I
-  const batasYStart = Math.max(162, lastCoordY + 6);
+  // BOUNDARIES TABLE - Dynamically placed below Section I, strictly clamped above footer (y=282)
+  const batasYStart = Math.min(248, Math.max(162, lastCoordY + 6));
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
   doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
@@ -2515,17 +2735,22 @@ export async function generateInventoryPDF(
     doc.line(leftMargin + 12, currBatasY, leftMargin + 12, currBatasY + rowHeightB);
     doc.line(leftMargin + 65, currBatasY, leftMargin + 65, currBatasY + rowHeightB);
 
-    // Text
+    // Text (auto-fitted so long neighbor names / ministries never overflow right border)
+    drawFittedCellText(b.no, leftMargin + 6, currBatasY, rowHeightB, 10, {
+      fontSize: 8, minFontSize: 6.5, fontStyle: 'normal', align: 'center', color: textGray
+    });
+    drawFittedCellText(b.arah, leftMargin + 15, currBatasY, rowHeightB, 48, {
+      fontSize: 8, minFontSize: 6.0, fontStyle: 'normal', align: 'left', color: textGray
+    });
+
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     doc.setTextColor(textGray[0], textGray[1], textGray[2]);
-    doc.text(b.no, leftMargin + 4, currBatasY + 4.2);
-    doc.text(b.arah, leftMargin + 15, currBatasY + 4.2);
+    doc.text(':', leftMargin + 67, currBatasY + 4.1);
 
-    doc.text(':', leftMargin + 67, currBatasY + 4.2);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-    doc.text(b.value, leftMargin + 71, currBatasY + 4.2);
+    drawFittedCellText(b.value || '-', leftMargin + 70, currBatasY, rowHeightB, rightMargin - (leftMargin + 70) - 2.5, {
+      fontSize: 8, minFontSize: 5.2, fontStyle: 'bold', align: 'left', color: darkSlate, allowTwoLines: true
+    });
 
     currBatasY += rowHeightB;
   });
@@ -2549,14 +2774,12 @@ export async function generateInventoryPDF(
   currentPNum++;
   drawPageHeader(currentPNum);
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-  doc.text('DOKUMENTASI SITUASI BIDANG TANAH', 105, 30, { align: 'center' });
-  
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.text(`KODE LAHAN : ${record.CODE || '-'}`, 105, 34, { align: 'center' });
+  drawFittedSingleLine('DOKUMENTASI SITUASI BIDANG TANAH', 105, 30, contentWidth, {
+    fontSize: 10, minFontSize: 8, fontStyle: 'bold', align: 'center', color: darkSlate
+  });
+  drawFittedSingleLine(`KODE LAHAN : ${record.CODE || '-'}`, 105, 34, contentWidth, {
+    fontSize: 8, minFontSize: 6.0, fontStyle: 'normal', align: 'center', color: darkSlate
+  });
 
   // Large elegant container box for documentation photos (matching screenshot)
   doc.setDrawColor(darkSlate[0], darkSlate[1], darkSlate[2]);
