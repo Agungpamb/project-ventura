@@ -4,11 +4,23 @@ import { toPng } from 'html-to-image';
 import { 
   Map as MapIcon, Layers, Compass, RotateCw, Printer, Search, 
   ChevronDown, Info, Shield, CheckCircle2, FileText, ArrowUp, Download, Image as ImageIcon, Loader2,
-  Edit3, ExternalLink, Trash2, MapPin, Navigation, X
+  Edit3, ExternalLink, Trash2, MapPin, Navigation, X, Link2, Eye, EyeOff, Crosshair, AlertCircle
 } from 'lucide-react';
 import DeleteParcelModal from "./DeleteParcelModal";
 import type { LandRecord } from '../types';
 import { resolveProjectTitleByDesa } from '../lib/projectTitleHelper';
+import {
+  CogDriveGridLayer,
+  COG_CRS_OVERRIDE_OPTIONS,
+  type CogLayerMetadata
+} from '../lib/cogDriveLayer';
+import {
+  extractGoogleDriveFileId,
+  getLocalAerialCogConfig,
+  saveAerialCogConfigToCloud,
+  subscribeAerialCogConfig,
+  type AerialCogConfig
+} from '../lib/aerialCogStorage';
 
 interface LoadedGeoJSON {
   id: string;
@@ -34,6 +46,8 @@ interface PetaBidangTanahProps {
   role?: string | null;
   activeProjectName?: string;
   activeProjectId?: string;
+  accessToken?: string;
+  userEmail?: string;
   onNavigateToInput?: (record: LandRecord) => void;
   onDeleteRecord?: (record: LandRecord, adjustNextParcels: boolean) => Promise<void>;
 }
@@ -88,6 +102,8 @@ export default function PetaBidangTanah({
   role,
   activeProjectName,
   activeProjectId,
+  accessToken,
+  userEmail,
   onNavigateToInput,
   onDeleteRecord
 }: PetaBidangTanahProps) {
@@ -96,6 +112,21 @@ export default function PetaBidangTanah({
   const bottomMapContainerRef = useRef<HTMLDivElement | null>(null);
   const topMapRef = useRef<L.Map | null>(null);
   const bottomMapRef = useRef<L.Map | null>(null);
+  const cogLayerRef = useRef<CogDriveGridLayer | null>(null);
+
+  // Aerial Photo COG (Google Drive Streaming) State — scoped per activeProjectId
+  const cogProjectKey = activeProjectId || activeProjectName || 'default';
+  const [cogConfig, setCogConfig] = useState<AerialCogConfig | null>(() => getLocalAerialCogConfig(cogProjectKey));
+  const [cogPanelOpen, setCogPanelOpen] = useState<boolean>(false);
+  const [cogUrlInput, setCogUrlInput] = useState<string>(() => getLocalAerialCogConfig(cogProjectKey)?.driveUrl || '');
+  const [cogEpsgInput, setCogEpsgInput] = useState<string>(() => getLocalAerialCogConfig(cogProjectKey)?.epsgOverride || '');
+  const [cogOpacity, setCogOpacity] = useState<number>(() => getLocalAerialCogConfig(cogProjectKey)?.opacity ?? 1);
+  const [cogEnabled, setCogEnabled] = useState<boolean>(() => getLocalAerialCogConfig(cogProjectKey)?.enabled ?? true);
+  const [cogSaving, setCogSaving] = useState<boolean>(false);
+  const [cogStatusMsg, setCogStatusMsg] = useState<string | null>(null);
+  const [cogMeta, setCogMeta] = useState<CogLayerMetadata | null>(null);
+  const [cogError, setCogError] = useState<string | null>(null);
+  const [cogActiveTiles, setCogActiveTiles] = useState<number>(0);
 
   // Sync state flag to prevent infinite loops during drag/zoom sync
   const isSyncingRef = useRef(false);
@@ -951,6 +982,197 @@ export default function PetaBidangTanah({
     };
   }, []);
 
+  // Subscribe to per-project Aerial COG Drive config in Firestore (synced across all Google accounts)
+  useEffect(() => {
+    const localInit = getLocalAerialCogConfig(cogProjectKey);
+    setCogConfig(localInit);
+    setCogUrlInput(localInit?.driveUrl || '');
+    setCogEpsgInput(localInit?.epsgOverride || '');
+    setCogOpacity(localInit?.opacity ?? 1);
+    setCogEnabled(localInit?.enabled ?? true);
+    setCogMeta(null);
+    setCogError(null);
+    setCogStatusMsg(null);
+
+    const unsubscribe = subscribeAerialCogConfig(cogProjectKey, (cloudCfg) => {
+      setCogConfig(cloudCfg);
+      if (cloudCfg) {
+        setCogUrlInput(cloudCfg.driveUrl || '');
+        setCogEpsgInput(cloudCfg.epsgOverride || '');
+        setCogOpacity(cloudCfg.opacity ?? 1);
+        setCogEnabled(cloudCfg.enabled ?? true);
+      } else {
+        setCogMeta(null);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [cogProjectKey]);
+
+  // Attach / Update Google Drive COG Streaming Layer on Bottom Map (Citra Satelit / Drone)
+  useEffect(() => {
+    const bottomMap = bottomMapRef.current;
+    if (!bottomMap || !(bottomMap as any)._mapPane) return;
+
+    // Clean up previous COG layer if any
+    if (cogLayerRef.current) {
+      try {
+        bottomMap.removeLayer(cogLayerRef.current);
+      } catch {
+        // ignore
+      }
+      cogLayerRef.current = null;
+    }
+
+    setCogActiveTiles(0);
+    setCogError(null);
+
+    if (!cogConfig?.fileId || !cogEnabled) {
+      return;
+    }
+
+    let cancelled = false;
+    const layer = new CogDriveGridLayer({
+      fileId: cogConfig.fileId,
+      accessToken,
+      epsgOverride: cogConfig.epsgOverride || '',
+      opacity: cogOpacity,
+      zIndex: 200,
+      onMetadataLoaded: (meta) => {
+        if (!cancelled) {
+          setCogMeta(meta);
+          setCogError(null);
+        }
+      },
+      onError: (msg) => {
+        if (!cancelled) {
+          setCogError(msg);
+        }
+      },
+      onTileActivity: (count) => {
+        if (!cancelled) {
+          setCogActiveTiles(count);
+        }
+      }
+    });
+
+    layer.addTo(bottomMap);
+    cogLayerRef.current = layer;
+
+    // Trigger metadata read eagerly so user immediately sees CRS, file size & bounds
+    layer.initMetadata().catch(() => {
+      // error already reported via onError callback
+    });
+
+    return () => {
+      cancelled = true;
+      if (cogLayerRef.current === layer) {
+        try {
+          bottomMap.removeLayer(layer);
+        } catch {
+          // ignore
+        }
+        cogLayerRef.current = null;
+      }
+    };
+  }, [cogConfig?.fileId, cogConfig?.epsgOverride, cogEnabled, accessToken]);
+
+  // Smooth opacity updates without re-fetching any COG tiles from Google Drive
+  useEffect(() => {
+    if (cogLayerRef.current) {
+      cogLayerRef.current.setOpacity(cogOpacity);
+    }
+  }, [cogOpacity]);
+
+  const handleSaveCogLink = async () => {
+    const trimmedUrl = cogUrlInput.trim();
+    if (!trimmedUrl) {
+      setCogError('Silakan tempel link Google Drive file Foto Udara (.tif COG) terlebih dahulu.');
+      return;
+    }
+    const fileId = extractGoogleDriveFileId(trimmedUrl);
+    if (!fileId) {
+      setCogError('Format link Google Drive tidak dikenali. Contoh: https://drive.google.com/file/d/FILE_ID/view?usp=sharing');
+      return;
+    }
+
+    setCogSaving(true);
+    setCogError(null);
+    setCogStatusMsg(null);
+    try {
+      const nextCfg: AerialCogConfig = {
+        driveUrl: trimmedUrl,
+        fileId,
+        enabled: true,
+        opacity: cogOpacity,
+        epsgOverride: cogEpsgInput,
+        updatedAt: Date.now(),
+        updatedBy: userEmail || ''
+      };
+      await saveAerialCogConfigToCloud(cogProjectKey, nextCfg);
+      setCogConfig(nextCfg);
+      setCogEnabled(true);
+      setCogStatusMsg('Link Foto Udara COG berhasil dipasang & disinkronkan untuk jalur ini!');
+    } catch (err: any) {
+      setCogError(`Gagal menyimpan konfigurasi COG: ${err?.message || err}`);
+    } finally {
+      setCogSaving(false);
+    }
+  };
+
+  const handleRemoveCogLink = async () => {
+    setCogSaving(true);
+    setCogError(null);
+    setCogStatusMsg(null);
+    try {
+      await saveAerialCogConfigToCloud(cogProjectKey, null);
+      setCogConfig(null);
+      setCogUrlInput('');
+      setCogEpsgInput('');
+      setCogMeta(null);
+      setCogStatusMsg('Layer Foto Udara COG untuk jalur ini telah dihapus.');
+    } catch (err: any) {
+      setCogError(`Gagal menghapus link COG: ${err?.message || err}`);
+    } finally {
+      setCogSaving(false);
+    }
+  };
+
+  const handleToggleCogEnabled = async () => {
+    const nextEnabled = !cogEnabled;
+    setCogEnabled(nextEnabled);
+    if (cogConfig) {
+      try {
+        await saveAerialCogConfigToCloud(cogProjectKey, {
+          ...cogConfig,
+          enabled: nextEnabled,
+          opacity: cogOpacity,
+          updatedAt: Date.now(),
+          updatedBy: userEmail || cogConfig.updatedBy || ''
+        });
+      } catch {
+        // local state already updated
+      }
+    }
+  };
+
+  const handleZoomToCog = () => {
+    if (!cogMeta?.boundsLatLng || !cogMeta.boundsLatLng.isValid()) return;
+    const bottomMap = bottomMapRef.current;
+    if (bottomMap && (bottomMap as any)._mapPane) {
+      bottomMap.fitBounds(cogMeta.boundsLatLng, { animate: true, padding: [24, 24], maxZoom: 18 });
+    }
+  };
+
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes || !Number.isFinite(bytes)) return '';
+    if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+    if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+    return `${(bytes / 1024).toFixed(0)} KB`;
+  };
+
   // Render Features & Layers on Both Maps
   useEffect(() => {
     const topMap = topMapRef.current;
@@ -1454,6 +1676,26 @@ export default function PetaBidangTanah({
 
           <div className="flex flex-wrap items-center gap-2">
             <button
+              onClick={() => setCogPanelOpen(prev => !prev)}
+              className={`px-3.5 py-2.5 text-xs font-bold rounded-xl transition flex items-center gap-2 shadow cursor-pointer border ${
+                cogConfig?.fileId && cogEnabled
+                  ? 'bg-sky-600/90 hover:bg-sky-500 text-white border-sky-400/50'
+                  : 'bg-slate-800 hover:bg-slate-700 text-sky-300 border-sky-500/40'
+              }`}
+              title="Pasang atau atur Foto Udara / Drone (.tif COG) dari Google Drive"
+            >
+              <ImageIcon className="w-4 h-4" />
+              <span>Foto Udara (COG)</span>
+              {cogConfig?.fileId && (
+                <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono ${cogEnabled ? 'bg-emerald-400/20 text-emerald-200' : 'bg-slate-900/60 text-slate-400'}`}>
+                  {cogEnabled ? 'ON' : 'OFF'}
+                </span>
+              )}
+              {cogActiveTiles > 0 && (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-200" />
+              )}
+            </button>
+            <button
               onClick={handleExportPNG}
               disabled={isExportingPNG}
               className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition flex items-center gap-2 shadow-lg cursor-pointer"
@@ -1615,6 +1857,174 @@ export default function PetaBidangTanah({
                   Azimuth: <strong>{Number(spanSlopeDetails.azimuthDeg || 0).toFixed(2)}°</strong>
                 </span>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Panel Foto Udara / Drone (COG Google Drive Streaming) */}
+        {cogPanelOpen && (
+          <div className="pt-3 border-t border-white/10 space-y-3">
+            <div className="bg-slate-950/80 border border-sky-500/30 rounded-xl p-4 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-xs font-black text-sky-300 flex items-center gap-2">
+                    <Link2 className="w-4 h-4 text-sky-400" />
+                    FOTO UDARA / DRONE (COG GOOGLE DRIVE) — KHUSUS JALUR INI
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Tempel link Google Drive file <span className="font-mono text-sky-200">.tif (COG / WebP / UTM)</span>. Streaming langsung via HTTP Range Request (tidak mendownload utuh &amp; <strong className="text-emerald-300">0 MB kuota Firebase</strong>).
+                  </p>
+                </div>
+                <button
+                  onClick={() => setCogPanelOpen(false)}
+                  className="self-start sm:self-center p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition cursor-pointer"
+                  title="Tutup panel"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-2.5 items-end">
+                <div className="lg:col-span-6">
+                  <label className="text-[10px] font-bold text-slate-300 block mb-1">
+                    Link Google Drive File COG (.tif) atau File ID:
+                  </label>
+                  <input
+                    type="text"
+                    value={cogUrlInput}
+                    onChange={(e) => setCogUrlInput(e.target.value)}
+                    placeholder="https://drive.google.com/file/d/1AbC.../view?usp=sharing"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-400 font-mono"
+                  />
+                </div>
+
+                <div className="lg:col-span-3">
+                  <label className="text-[10px] font-bold text-slate-300 block mb-1">
+                    Proyeksi / Zona UTM File COG:
+                  </label>
+                  <select
+                    value={cogEpsgInput}
+                    onChange={(e) => setCogEpsgInput(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-xs font-semibold text-white focus:outline-none focus:border-sky-400"
+                  >
+                    {COG_CRS_OVERRIDE_OPTIONS.map((opt) => (
+                      <option key={opt.value || 'auto'} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="lg:col-span-3 flex items-center gap-2">
+                  <button
+                    onClick={handleSaveCogLink}
+                    disabled={cogSaving}
+                    className="flex-1 px-3.5 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 shadow cursor-pointer"
+                  >
+                    {cogSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                    <span>Pasang &amp; Simpan</span>
+                  </button>
+                  {cogConfig?.fileId && (
+                    <button
+                      onClick={handleRemoveCogLink}
+                      disabled={cogSaving}
+                      className="px-2.5 py-2 bg-rose-950/70 hover:bg-rose-900/80 text-rose-300 border border-rose-500/30 text-xs font-bold rounded-xl transition cursor-pointer"
+                      title="Hapus link Foto Udara COG jalur ini"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Active Layer Controls (ON/OFF, Opacity, Zoom, Metadata) */}
+              {cogConfig?.fileId && (
+                <div className="pt-2.5 border-t border-white/10 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      onClick={handleToggleCogEnabled}
+                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 border transition cursor-pointer ${
+                        cogEnabled
+                          ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-600/30'
+                          : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+                      }`}
+                    >
+                      {cogEnabled ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                      <span>{cogEnabled ? 'Layer Foto Udara: AKTIF' : 'Layer Foto Udara: MATI'}</span>
+                    </button>
+
+                    <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1">
+                      <span className="text-[10px] font-bold text-slate-400">Opasitas:</span>
+                      <input
+                        type="range"
+                        min={10}
+                        max={100}
+                        step={5}
+                        value={Math.round(cogOpacity * 100)}
+                        onChange={(e) => setCogOpacity(Number(e.target.value) / 100)}
+                        className="w-24 accent-sky-400 cursor-pointer"
+                      />
+                      <span className="text-[10px] font-mono font-bold text-sky-300 w-8 text-right">
+                        {Math.round(cogOpacity * 100)}%
+                      </span>
+                    </div>
+
+                    {cogMeta?.boundsLatLng?.isValid() && (
+                      <button
+                        onClick={handleZoomToCog}
+                        className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <Crosshair className="w-3.5 h-3.5" />
+                        <span>Zoom ke Foto Udara</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Live COG Metadata Badge */}
+                  <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
+                    {cogActiveTiles > 0 && (
+                      <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30 flex items-center gap-1">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Streaming {cogActiveTiles} tile...
+                      </span>
+                    )}
+                    {cogMeta && (
+                      <>
+                        {cogMeta.fileName && (
+                          <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700 max-w-[200px] truncate" title={cogMeta.fileName}>
+                            {cogMeta.fileName}
+                            {cogMeta.fileSizeBytes ? ` (${formatFileSize(cogMeta.fileSizeBytes)})` : ''}
+                          </span>
+                        )}
+                        <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                          {cogMeta.crsLabel}
+                        </span>
+                        <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                          {cogMeta.compressionName} · {cogMeta.overviewCount} Overviews
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Status / Error Banner */}
+              {cogStatusMsg && !cogError && (
+                <div className="text-[11px] text-emerald-300 bg-emerald-950/50 border border-emerald-500/30 rounded-lg px-3 py-2 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>{cogStatusMsg}</span>
+                </div>
+              )}
+              {cogError && (
+                <div className="text-[11px] text-rose-200 bg-rose-950/60 border border-rose-500/40 rounded-lg px-3 py-2 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+                  <span>{cogError}</span>
+                </div>
+              )}
+
+              <p className="text-[10px] text-slate-500">
+                Tips: Pastikan file di Google Drive minimal dibagikan sebagai <strong className="text-slate-300">Viewer</strong> (untuk tim / <em>Anyone with the link</em>) dan akun Google kamu sudah login penuh (bukan mode tamu). Foto udara tampil otomatis di <strong>Peta Bawah (Citra Satelit/Drone)</strong> tepat di bawah garis bidang tanah GeoJSON.
+              </p>
             </div>
           </div>
         )}

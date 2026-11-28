@@ -5754,6 +5754,8 @@ export default function App() {
                     role={role} 
                     activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
                     activeProjectId={activeProjectId}
+                    accessToken={token || undefined}
+                    userEmail={user?.email || undefined}
                     onNavigateToInput={(rec) => {
                       setSelectedRecordForEdit(rec);
                       setActiveMenu('input');
