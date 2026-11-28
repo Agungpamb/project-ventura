@@ -22,6 +22,13 @@ import {
   getDriveLayerDocId,
   loadDeployedDefaultGeoJSONs
 } from './lib/geojsonStorage';
+import {
+  extractGoogleDriveFileId,
+  getLocalAerialCogConfig,
+  getLocalCustomDriveApiKey,
+  loadAerialCogConfigFromCloud,
+  saveAerialCogConfigToCloud
+} from './lib/aerialCogStorage';
 import { 
   type LandRecord, 
   compareLandRecords, 
@@ -469,6 +476,9 @@ export default function App() {
   // File 3: Surat Instansi
   const [newProjectAgencyLetterSpreadsheetId, setNewProjectAgencyLetterSpreadsheetId] = useState('');
   const [newProjectAgencyLetterPublicCsvUrl, setNewProjectAgencyLetterPublicCsvUrl] = useState('');
+  // Foto Udara COG (Google Drive) per Jalur
+  const [newProjectAerialCogUrl, setNewProjectAerialCogUrl] = useState('');
+  const [newProjectAerialCogEpsg, setNewProjectAerialCogEpsg] = useState('');
 
   const [showPinSettings, setShowPinSettings] = useState(false);
   const [newAdminPin, setNewAdminPin] = useState('');
@@ -496,6 +506,11 @@ export default function App() {
   // File 3: Surat Instansi
   const [editAgencyLetterSpreadsheetId, setEditAgencyLetterSpreadsheetId] = useState('');
   const [editAgencyLetterPublicCsvUrl, setEditAgencyLetterPublicCsvUrl] = useState('');
+  // Foto Udara COG (Google Drive) per Jalur di Edit ID
+  const [editAerialCogUrl, setEditAerialCogUrl] = useState('');
+  const [editAerialCogEpsg, setEditAerialCogEpsg] = useState('');
+  const [isTestingCog, setIsTestingCog] = useState(false);
+  const [cogTestFeedback, setCogTestFeedback] = useState<{ success: boolean; message: string } | null>(null);
 
   // GeoJSON Drive Sync state
   const [isSyncingDriveGeoJSON, setIsSyncingDriveGeoJSON] = useState<string | null>(null);
@@ -3150,6 +3165,9 @@ export default function App() {
     const cleanNewSpreadsheetId = extractDriveFolderId(newProjectSpreadsheetId) || null;
     const cleanNewResumeSpreadsheetId = extractDriveFolderId(newProjectResumeSpreadsheetId) || null;
     const cleanNewAgencySpreadsheetId = extractDriveFolderId(newProjectAgencyLetterSpreadsheetId) || null;
+    const cleanNewAerialCogUrl = newProjectAerialCogUrl.trim() || null;
+    const cleanNewAerialCogFileId = extractGoogleDriveFileId(cleanNewAerialCogUrl) || null;
+    const cleanNewAerialCogEpsg = newProjectAerialCogEpsg.trim() || null;
 
     const newProj: ProjectConfig = {
       id: `proj-${Date.now()}`,
@@ -3168,6 +3186,10 @@ export default function App() {
       // File 3: Surat Instansi (13 Kolom)
       agencyLetterSpreadsheetId: cleanNewAgencySpreadsheetId,
       agencyLetterPublicCsvUrl: newProjectAgencyLetterPublicCsvUrl.trim() || null,
+      // Foto Udara COG (Google Drive)
+      aerialCogUrl: cleanNewAerialCogUrl,
+      aerialCogFileId: cleanNewAerialCogFileId,
+      aerialCogEpsg: cleanNewAerialCogEpsg,
       resumeStages: DEFAULT_RESUME_STAGES
     };
 
@@ -3175,6 +3197,17 @@ export default function App() {
     setProjects(updated);
     localStorage.setItem('project_ventura_projects', JSON.stringify(updated));
     saveProjectsToCloud(updated);
+    if (cleanNewAerialCogFileId && cleanNewAerialCogUrl) {
+      void saveAerialCogConfigToCloud(newProj.id, {
+        driveUrl: cleanNewAerialCogUrl,
+        fileId: cleanNewAerialCogFileId,
+        enabled: true,
+        opacity: 1,
+        epsgOverride: cleanNewAerialCogEpsg || '',
+        updatedAt: Date.now(),
+        updatedBy: user?.email || ''
+      });
+    }
     setActiveProjectId(newProj.id);
     localStorage.setItem('project_ventura_active_project_id', newProj.id);
     setSpreadsheetId(newProj.spreadsheetId);
@@ -3206,6 +3239,8 @@ export default function App() {
     setNewProjectResumePublicCsvUrl('');
     setNewProjectAgencyLetterSpreadsheetId('');
     setNewProjectAgencyLetterPublicCsvUrl('');
+    setNewProjectAerialCogUrl('');
+    setNewProjectAerialCogEpsg('');
     setIsAddingProject(false);
   };
 
@@ -3330,6 +3365,17 @@ export default function App() {
     // File 3: Surat Instansi
     setEditAgencyLetterSpreadsheetId(proj.agencyLetterSpreadsheetId || '');
     setEditAgencyLetterPublicCsvUrl(proj.agencyLetterPublicCsvUrl || '');
+    // Foto Udara COG (Google Drive) — check local/cloud dedicated config first, then project fields
+    const localCog = getLocalAerialCogConfig(proj.id);
+    setEditAerialCogUrl(localCog?.driveUrl || proj.aerialCogUrl || proj.aerialCogFileId || '');
+    setEditAerialCogEpsg(localCog?.epsgOverride || proj.aerialCogEpsg || '');
+    setCogTestFeedback(null);
+    void loadAerialCogConfigFromCloud(proj.id).then((cloudCog) => {
+      if (cloudCog?.driveUrl) {
+        setEditAerialCogUrl((prev) => prev || cloudCog.driveUrl);
+        setEditAerialCogEpsg((prev) => prev || cloudCog.epsgOverride || '');
+      }
+    });
   };
 
   // Cancel editing IDs
@@ -3346,6 +3392,49 @@ export default function App() {
     setEditResumePublicCsvUrl('');
     setEditAgencyLetterSpreadsheetId('');
     setEditAgencyLetterPublicCsvUrl('');
+    setEditAerialCogUrl('');
+    setEditAerialCogEpsg('');
+    setCogTestFeedback(null);
+  };
+
+  // Test Google Drive COG link (Guest API Key mode or OAuth) directly from Edit ID form
+  const handleTestEditAerialCog = async (rawUrl: string, epsgOverride: string, testGuestMode: boolean) => {
+    const fileId = extractGoogleDriveFileId(rawUrl);
+    if (!fileId) {
+      setCogTestFeedback({
+        success: false,
+        message: 'Format link/ID Google Drive COG tidak dikenali. Contoh: https://drive.google.com/file/d/FILE_ID/view'
+      });
+      return;
+    }
+    setIsTestingCog(true);
+    setCogTestFeedback(null);
+    try {
+      const { probeCogDriveMetadata } = await import('./lib/cogDriveLayer');
+      const meta = await probeCogDriveMetadata({
+        fileId,
+        accessToken: testGuestMode ? undefined : (token || undefined),
+        googleApiKey: getLocalCustomDriveApiKey(),
+        preferApiKey: testGuestMode,
+        epsgOverride
+      });
+      const sizeStr = meta.fileSizeBytes
+        ? (meta.fileSizeBytes >= 1024 ** 3
+            ? `${(meta.fileSizeBytes / 1024 ** 3).toFixed(2)} GB`
+            : `${(meta.fileSizeBytes / 1024 ** 2).toFixed(1)} MB`)
+        : '';
+      setCogTestFeedback({
+        success: true,
+        message: `✓ ${testGuestMode ? 'Akses Tamu (API Key) OK' : 'Akses Login OK'} — ${meta.fileName || fileId}${sizeStr ? ` (${sizeStr})` : ''} · ${meta.crsLabel} · ${meta.compressionName} · ${meta.overviewCount} Overviews`
+      });
+    } catch (err: any) {
+      setCogTestFeedback({
+        success: false,
+        message: err?.message || String(err)
+      });
+    } finally {
+      setIsTestingCog(false);
+    }
   };
 
   // Save manual Spreadsheet & Folder IDs (supports both bare IDs and full Google URLs!)
@@ -3362,6 +3451,17 @@ export default function App() {
     const cleanSpreadsheetId = extractDriveFolderId(editSpreadsheetId) || null;
     const cleanResumeSpreadsheetId = extractDriveFolderId(editResumeSpreadsheetId) || null;
     const cleanAgencySpreadsheetId = extractDriveFolderId(editAgencyLetterSpreadsheetId) || null;
+    const cleanAerialCogUrl = editAerialCogUrl.trim() || null;
+    const cleanAerialCogFileId = extractGoogleDriveFileId(cleanAerialCogUrl) || null;
+    const cleanAerialCogEpsg = editAerialCogEpsg.trim() || null;
+
+    if (cleanAerialCogUrl && !cleanAerialCogFileId) {
+      setCogTestFeedback({
+        success: false,
+        message: 'Link/ID Foto Udara COG tidak valid. Kosongkan jika belum ada, atau tempel link Google Drive file .tif yang benar.'
+      });
+      return;
+    }
 
     const updated = projects.map(p => {
       if (p.id === editingProjectId) {
@@ -3380,7 +3480,11 @@ export default function App() {
           resumePublicCsvUrl: editResumePublicCsvUrl.trim() || null,
           // File 3: Surat Instansi
           agencyLetterSpreadsheetId: cleanAgencySpreadsheetId,
-          agencyLetterPublicCsvUrl: editAgencyLetterPublicCsvUrl.trim() || null
+          agencyLetterPublicCsvUrl: editAgencyLetterPublicCsvUrl.trim() || null,
+          // Foto Udara COG (Google Drive)
+          aerialCogUrl: cleanAerialCogUrl,
+          aerialCogFileId: cleanAerialCogFileId,
+          aerialCogEpsg: cleanAerialCogEpsg
         };
       }
       return p;
@@ -3392,6 +3496,22 @@ export default function App() {
     setProjects(updated);
     localStorage.setItem('project_ventura_projects', JSON.stringify(updated));
     saveProjectsToCloud(updated);
+
+    // Sync Foto Udara COG link to dedicated Firestore configs/aerial_cog_configs (immune to Master Sheet sync)
+    if (cleanAerialCogFileId && cleanAerialCogUrl) {
+      const existingCog = getLocalAerialCogConfig(editingProjectId);
+      void saveAerialCogConfigToCloud(editingProjectId, {
+        driveUrl: cleanAerialCogUrl,
+        fileId: cleanAerialCogFileId,
+        enabled: existingCog ? existingCog.enabled : true,
+        opacity: existingCog ? existingCog.opacity : 1,
+        epsgOverride: cleanAerialCogEpsg || '',
+        updatedAt: Date.now(),
+        updatedBy: user?.email || ''
+      });
+    } else {
+      void saveAerialCogConfigToCloud(editingProjectId, null);
+    }
 
     // Force data reload if we just edited the active project
     if (activeProjectId === editingProjectId) {
@@ -7152,6 +7272,49 @@ export default function App() {
                                 </div>
                               </div>
 
+                              {/* Input Link / ID Google Drive Foto Udara / Drone (.tif COG) per Jalur */}
+                              <div className="p-4 bg-slate-950/80 rounded-xl border border-sky-500/30 space-y-3">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                  <label className="text-xs font-bold text-sky-300 uppercase flex items-center gap-1.5">
+                                    <Globe className="w-4 h-4 text-sky-400" />
+                                    Link / ID File Google Drive Foto Udara / Drone (.tif COG) — Opsional
+                                  </label>
+                                  <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 self-start sm:self-auto">
+                                    0 MB Kuota Firebase · Akses Tamu OK
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5">
+                                  <div className="md:col-span-8">
+                                    <input
+                                      type="text"
+                                      value={newProjectAerialCogUrl}
+                                      onChange={(e) => setNewProjectAerialCogUrl(e.target.value)}
+                                      placeholder="Tempel link Google Drive file .tif (COG) atau File ID (Contoh: https://drive.google.com/file/d/.../view)"
+                                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-sky-200 font-mono focus:outline-none focus:border-sky-400"
+                                    />
+                                  </div>
+                                  <div className="md:col-span-4">
+                                    <select
+                                      value={newProjectAerialCogEpsg}
+                                      onChange={(e) => setNewProjectAerialCogEpsg(e.target.value)}
+                                      className="w-full px-2.5 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs font-semibold text-white focus:outline-none focus:border-sky-400"
+                                    >
+                                      <option value="">Proyeksi: Otomatis dari File COG</option>
+                                      <option value="EPSG:32647">UTM Zone 47N (Riau / Bangkinang / Sumut)</option>
+                                      <option value="EPSG:32648">UTM Zone 48N (Kepri / Riau Timur)</option>
+                                      <option value="EPSG:32747">UTM Zone 47S (Sumbar / Bengkulu / Jambi)</option>
+                                      <option value="EPSG:32748">UTM Zone 48S (Lampung / Banten / Jabar)</option>
+                                      <option value="EPSG:32749">UTM Zone 49S (Jateng / DIY / Jatim)</option>
+                                      <option value="EPSG:32750">UTM Zone 50S (Bali / Sulsel / Kaltim)</option>
+                                      <option value="EPSG:3857">Web Mercator (EPSG:3857)</option>
+                                    </select>
+                                  </div>
+                                </div>
+                                <p className="text-[10px] text-slate-400">
+                                  Streaming langsung dari Google Drive per potongan tile (<span className="font-mono">HTTP Range</span>). Set file Drive ke <strong className="text-slate-200">Siapa saja yang memiliki link → Pelihat (Viewer)</strong> agar Tamu (tanpa login Google) juga bisa melihat di Peta Bidang Tanah.
+                                </p>
+                              </div>
+
                               <div className="flex justify-end gap-2 pt-2 border-t border-white/5">
                                 <button
                                   type="button"
@@ -7167,6 +7330,8 @@ export default function App() {
                                     setNewProjectResumePublicCsvUrl('');
                                     setNewProjectAgencyLetterSpreadsheetId('');
                                     setNewProjectAgencyLetterPublicCsvUrl('');
+                                    setNewProjectAerialCogUrl('');
+                                    setNewProjectAerialCogEpsg('');
                                   }}
                                   className="px-4 py-2 bg-slate-900 hover:bg-slate-950 text-slate-300 text-xs font-bold rounded-xl border border-white/10 cursor-pointer"
                                 >
@@ -7482,6 +7647,87 @@ export default function App() {
                                     </div>
                                   </div>
                                 </div>
+                              </div>
+
+                              {/* Input Link / ID Google Drive Foto Udara / Drone (.tif COG) Per Jalur */}
+                              <div className="p-4 bg-slate-950/80 rounded-xl border border-sky-500/30 space-y-3">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                  <label className="text-xs font-bold text-sky-300 uppercase flex items-center gap-1.5">
+                                    <Globe className="w-4 h-4 text-sky-400" />
+                                    Link / ID File Google Drive Foto Udara / Drone (.tif COG)
+                                  </label>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                      0 MB Kuota Firebase · Akses Tamu OK
+                                    </span>
+                                    {editAerialCogUrl.trim() && (
+                                      <button
+                                        type="button"
+                                        disabled={isTestingCog}
+                                        onClick={() => void handleTestEditAerialCog(editAerialCogUrl, editAerialCogEpsg, true)}
+                                        className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold rounded-lg cursor-pointer flex items-center gap-1 transition disabled:opacity-50"
+                                        title="Uji apakah file COG bisa diakses langsung oleh Tamu (Guest) lewat Google Drive API Key"
+                                      >
+                                        <Sparkles className={`w-3 h-3 ${isTestingCog ? 'animate-spin' : ''}`} />
+                                        {isTestingCog ? 'Menguji...' : 'Uji Akses Tamu'}
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5">
+                                  <div className="md:col-span-8">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
+                                      Link Google Drive File COG (.tif) atau File ID
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={editAerialCogUrl}
+                                      onChange={(e) => {
+                                        setEditAerialCogUrl(e.target.value);
+                                        setCogTestFeedback(null);
+                                      }}
+                                      placeholder="Tempel link Google Drive file .tif COG (Contoh: https://drive.google.com/file/d/1AbC.../view?usp=sharing)"
+                                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-sky-200 font-mono focus:outline-none focus:border-sky-400"
+                                    />
+                                  </div>
+                                  <div className="md:col-span-4">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
+                                      Proyeksi / Zona UTM File COG
+                                    </label>
+                                    <select
+                                      value={editAerialCogEpsg}
+                                      onChange={(e) => setEditAerialCogEpsg(e.target.value)}
+                                      className="w-full px-2.5 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs font-semibold text-white focus:outline-none focus:border-sky-400"
+                                    >
+                                      <option value="">Otomatis dari Metadata COG (Disarankan)</option>
+                                      <option value="EPSG:32647">UTM Zone 47N — Riau / Bangkinang / Petapahan</option>
+                                      <option value="EPSG:32648">UTM Zone 48N — Kepri / Riau Timur</option>
+                                      <option value="EPSG:32646">UTM Zone 46N — Aceh Barat</option>
+                                      <option value="EPSG:32747">UTM Zone 47S — Sumbar / Bengkulu / Jambi</option>
+                                      <option value="EPSG:32748">UTM Zone 48S — Lampung / Banten / Jabar</option>
+                                      <option value="EPSG:32749">UTM Zone 49S — Jateng / DIY / Jatim</option>
+                                      <option value="EPSG:32750">UTM Zone 50S — Bali / Sulsel / Kaltim</option>
+                                      <option value="EPSG:3857">Web Mercator (EPSG:3857)</option>
+                                      <option value="EPSG:4326">Geografis WGS84 (EPSG:4326)</option>
+                                    </select>
+                                  </div>
+                                </div>
+
+                                {cogTestFeedback && (
+                                  <div className={`p-2.5 rounded-xl border text-xs flex items-start gap-2 ${
+                                    cogTestFeedback.success
+                                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                                      : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                                  }`}>
+                                    {cogTestFeedback.success ? <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />}
+                                    <span>{cogTestFeedback.message}</span>
+                                  </div>
+                                )}
+
+                                <p className="text-[10px] text-slate-400 leading-relaxed">
+                                  File tetap di Google Drive &amp; di-stream langsung per potongan tile (<span className="font-mono text-sky-200">HTTP Range</span>) di <strong>Peta Bidang Tanah</strong>. Agar <strong>Tamu (tanpa login Google)</strong> ikut melihat, pastikan file di Google Drive diset <strong className="text-slate-200">Siapa saja yang memiliki link → Pelihat (Viewer)</strong>. Kosongkan kolom ini jika jalur belum memiliki Foto Udara.
+                                </p>
                               </div>
                             </div>
 

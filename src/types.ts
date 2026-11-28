@@ -909,6 +909,10 @@ export interface ProjectConfig {
   agencyLetterUploadsFolderId?: string | null; // ID Folder Berkas Surat Instansi (PDF & Foto per Instansi)
   // 4. Konfigurasi Header, Footer & Proyeksi Koordinat Form Inventarisasi PDF (Per Jalur)
   inventoryPdfConfig?: InventoryFormPdfConfig;
+  // 5. Foto Udara / Drone COG Google Drive (Per Jalur — 0 MB kuota Firebase)
+  aerialCogUrl?: string | null;
+  aerialCogFileId?: string | null;
+  aerialCogEpsg?: string | null;
   status?: string;
   webhookUrl?: string;
   geojsonPolylineUrl?: string;
