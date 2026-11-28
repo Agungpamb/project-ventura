@@ -9,6 +9,9 @@ import {
 } from 'geotiff';
 import { fetchWithTimeout } from './googleApi';
 import { getAccessToken } from './firebase';
+import firebaseConfig from '@/firebase-applet-config.json';
+
+export type CogAuthMode = 'OAUTH' | 'API_KEY' | 'PUBLIC_URL';
 
 export interface CogLayerMetadata {
   fileId: string;
@@ -22,11 +25,14 @@ export interface CogLayerMetadata {
   compressionName: string;
   samplesPerPixel: number;
   boundsLatLng: L.LatLngBounds;
+  authMode: CogAuthMode;
 }
 
 export interface CogDriveLayerOptions extends L.GridLayerOptions {
   fileId: string;
   accessToken?: string;
+  googleApiKey?: string;
+  preferApiKey?: boolean; // Useful to test Guest / Tamu mode explicitly
   epsgOverride?: string;
   onMetadataLoaded?: (meta: CogLayerMetadata) => void;
   onError?: (message: string) => void;
@@ -45,6 +51,20 @@ export const COG_CRS_OVERRIDE_OPTIONS: Array<{ value: string; label: string }> =
   { value: 'EPSG:3857', label: 'Web Mercator (EPSG:3857)' },
   { value: 'EPSG:4326', label: 'Geografis WGS84 (EPSG:4326)' }
 ];
+
+/**
+ * Resolves the Google Drive API Key for Guest/Tamu access (Option A):
+ * 1. Admin's custom API key from Firestore config (if provided)
+ * 2. VITE_GOOGLE_DRIVE_API_KEY env var (if configured)
+ * 3. Default Google Cloud / Firebase Web API key from firebase-applet-config.json
+ */
+export function resolveEffectiveDriveApiKey(customApiKey?: string): string {
+  const custom = (customApiKey || '').trim();
+  if (custom) return custom;
+  const envKey = typeof import.meta !== 'undefined' ? String((import.meta as any).env?.VITE_GOOGLE_DRIVE_API_KEY || '').trim() : '';
+  if (envKey) return envKey;
+  return String((firebaseConfig as any)?.apiKey || '').trim();
+}
 
 // ============================================================================
 // PROJ4 DYNAMIC EPSG REGISTRATION (Supports ALL UTM N/S, TM-3°, 3857, 4326)
@@ -167,7 +187,8 @@ function getCompressionLabel(compressionId: number | undefined): string {
 }
 
 // ============================================================================
-// GOOGLE DRIVE API V3 HTTP RANGE CLIENT (NEVER DOWNLOADS FULL 2.5 GB FILE!)
+// GOOGLE DRIVE API V3 HTTP RANGE CLIENT (OAUTH + GUEST API KEY FALLBACK!)
+// NEVER DOWNLOADS FULL 2.5 GB FILE!
 // ============================================================================
 class DriveFetchResponse extends BaseResponse {
   private response: Response;
@@ -195,51 +216,43 @@ class DriveFetchResponse extends BaseResponse {
 }
 
 class GoogleDriveRangeClient extends BaseClient {
+  private fileId: string;
   private fallbackToken?: string;
+  private apiKey: string;
+  private preferApiKey: boolean;
+  public activeAuthMode: CogAuthMode = 'API_KEY';
 
-  constructor(fileId: string, fallbackToken?: string) {
+  constructor(fileId: string, fallbackToken?: string, googleApiKey?: string, preferApiKey = false) {
     super(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`);
+    this.fileId = fileId;
     this.fallbackToken = fallbackToken;
+    this.apiKey = resolveEffectiveDriveApiKey(googleApiKey);
+    this.preferApiKey = preferApiKey;
   }
 
-  private async resolveToken(): Promise<string> {
+  private async resolveOAuthToken(): Promise<string> {
+    if (this.preferApiKey) return '';
     const liveToken = await getAccessToken();
-    const token = (liveToken && liveToken !== 'GUEST_BYPASS')
-      ? liveToken
-      : (this.fallbackToken && this.fallbackToken !== 'GUEST_BYPASS' ? this.fallbackToken : '');
-    if (!token) {
-      throw new Error('Akun Google belum login penuh (OAuth Drive). Silakan login Google terlebih dahulu untuk membaca Foto Udara COG dari Google Drive.');
-    }
-    return token;
+    if (liveToken && liveToken !== 'GUEST_BYPASS') return liveToken;
+    if (this.fallbackToken && this.fallbackToken !== 'GUEST_BYPASS') return this.fallbackToken;
+    return '';
   }
 
-  async request(options: RequestInit = {}): Promise<BaseResponse> {
-    const token = await this.resolveToken();
-    const reqHeaders = new Headers(options.headers || {});
-    reqHeaders.set('Authorization', `Bearer ${token}`);
+  private buildApiKeyUrl(): string {
+    return `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(this.fileId)}?alt=media&supportsAllDrives=true&key=${encodeURIComponent(this.apiKey)}`;
+  }
 
-    const requestedRange = reqHeaders.get('Range');
-
-    const response = await fetchWithTimeout(
-      this.url,
-      {
-        method: 'GET',
-        headers: reqHeaders,
-        signal: options.signal
-      },
-      45000
-    );
-
-    if (response.status === 401) {
-      throw new Error('Sesi token Google Drive habis (401). Silakan klik segarkan / login ulang akun Google.');
+  private async parseDriveErrorReason(response: Response): Promise<string> {
+    try {
+      const text = await response.clone().text();
+      const parsed = JSON.parse(text);
+      return String(parsed?.error?.message || '');
+    } catch {
+      return '';
     }
-    if (response.status === 403) {
-      throw new Error('Akses Google Drive ditolak (403). Pastikan file COG sudah dibagikan minimal sebagai Viewer ke akun ini (atau Anyone with the link → Viewer).');
-    }
-    if (response.status === 404) {
-      throw new Error('File COG tidak ditemukan di Google Drive (404). Periksa kembali link Google Drive yang ditempel.');
-    }
+  }
 
+  private async verifyRangeSafety(response: Response, requestedRange: string | null): Promise<void> {
     // Safety guard: NEVER download an entire multi-GB file if Range header was ignored
     if (requestedRange && response.status === 200) {
       const len = Number(response.headers.get('content-length') || 0);
@@ -252,30 +265,243 @@ class GoogleDriveRangeClient extends BaseClient {
         throw new Error('Server mengembalikan file penuh (bukan potongan Range). Streaming dibatalkan demi keamanan memori browser.');
       }
     }
+  }
 
-    return new DriveFetchResponse(response);
+  async request(options: RequestInit = {}): Promise<BaseResponse> {
+    const token = await this.resolveOAuthToken();
+    const baseHeaders = new Headers(options.headers || {});
+    const requestedRange = baseHeaders.get('Range');
+
+    // 1. Try OAuth Bearer token first (when user is signed in with full Google Drive access)
+    if (token) {
+      const oauthHeaders = new Headers(baseHeaders);
+      oauthHeaders.set('Authorization', `Bearer ${token}`);
+
+      const response = await fetchWithTimeout(
+        this.url,
+        {
+          method: 'GET',
+          headers: oauthHeaders,
+          signal: options.signal
+        },
+        45000
+      );
+
+      if (response.ok || response.status === 206) {
+        await this.verifyRangeSafety(response, requestedRange);
+        this.activeAuthMode = 'OAUTH';
+        return new DriveFetchResponse(response);
+      }
+
+      // If OAuth got 401/403 and we have an API Key, seamlessly fall back to public API Key mode!
+      if ((response.status === 401 || response.status === 403) && this.apiKey) {
+        const keyRes = await fetchWithTimeout(
+          this.buildApiKeyUrl(),
+          {
+            method: 'GET',
+            headers: baseHeaders,
+            signal: options.signal
+          },
+          45000
+        );
+        if (keyRes.ok || keyRes.status === 206) {
+          await this.verifyRangeSafety(keyRes, requestedRange);
+          this.activeAuthMode = 'API_KEY';
+          return new DriveFetchResponse(keyRes);
+        }
+      }
+
+      if (response.status === 401) {
+        throw new Error('Sesi token Google Drive habis (401). Silakan segarkan login Google atau set file Drive ke "Siapa saja yang memiliki link → Pelihat".');
+      }
+      if (response.status === 403) {
+        throw new Error('Akses Google Drive ditolak (403). Pastikan file COG sudah dibagikan minimal sebagai Pelihat (Viewer) ke akun ini atau "Siapa saja yang memiliki link".');
+      }
+      if (response.status === 404) {
+        throw new Error('File COG tidak ditemukan di Google Drive (404). Periksa kembali link Google Drive yang ditempel.');
+      }
+      return new DriveFetchResponse(response);
+    }
+
+    // 2. Guest / Tamu mode (Option A): Stream directly via Google Drive API v3 + API Key!
+    if (!this.apiKey) {
+      throw new Error('Google Drive API Key belum tersedia untuk mode Tamu. Silakan isi API Key di Manajemen Proyek atau login menggunakan akun Google.');
+    }
+
+    const keyResponse = await fetchWithTimeout(
+      this.buildApiKeyUrl(),
+      {
+        method: 'GET',
+        headers: baseHeaders,
+        signal: options.signal
+      },
+      45000
+    );
+
+    if (keyResponse.ok || keyResponse.status === 206) {
+      await this.verifyRangeSafety(keyResponse, requestedRange);
+      this.activeAuthMode = 'API_KEY';
+      return new DriveFetchResponse(keyResponse);
+    }
+
+    const detail = await this.parseDriveErrorReason(keyResponse);
+    if (keyResponse.status === 403) {
+      if (/has not been used|disabled|accessNotConfigured/i.test(detail)) {
+        throw new Error('Google Drive API belum diaktifkan di Google Cloud Console untuk API Key ini. Aktifkan "Google Drive API" di Google Cloud Console (gratis) agar Tamu bisa melihat Foto Udara COG.');
+      }
+      if (/API key not valid|referer|blocked/i.test(detail)) {
+        throw new Error(`API Key Google Drive ditolak (403): ${detail || 'Periksa pembatasan domain / API Key di Google Cloud Console.'}`);
+      }
+      throw new Error('Akses Tamu ke file COG ditolak (403). Pastikan file di Google Drive diset "Siapa saja yang memiliki link → Pelihat (Viewer)".');
+    }
+    if (keyResponse.status === 404) {
+      throw new Error('File COG tidak dapat diakses oleh Tamu (404). Pastikan link benar DAN izin berbagi file di Google Drive diset "Siapa saja yang memiliki link → Pelihat (Viewer)".');
+    }
+
+    return new DriveFetchResponse(keyResponse);
   }
 }
 
-async function fetchDriveFileMeta(fileId: string, fallbackToken?: string): Promise<{ name?: string; size?: number }> {
+async function fetchDriveFileMeta(
+  fileId: string,
+  fallbackToken?: string,
+  googleApiKey?: string,
+  preferApiKey = false
+): Promise<{ name?: string; size?: number }> {
   try {
-    const liveToken = await getAccessToken();
-    const token = (liveToken && liveToken !== 'GUEST_BYPASS') ? liveToken : fallbackToken;
-    if (!token || token === 'GUEST_BYPASS') return {};
-    const res = await fetchWithTimeout(
-      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=name,size&supportsAllDrives=true`,
-      { headers: { Authorization: `Bearer ${token}` } },
-      15000
-    );
-    if (!res.ok) return {};
-    const data = await res.json();
-    return {
-      name: typeof data?.name === 'string' ? data.name : undefined,
-      size: data?.size ? Number(data.size) : undefined
-    };
+    const liveToken = preferApiKey ? '' : await getAccessToken();
+    const token = preferApiKey
+      ? ''
+      : ((liveToken && liveToken !== 'GUEST_BYPASS')
+          ? liveToken
+          : (fallbackToken && fallbackToken !== 'GUEST_BYPASS' ? fallbackToken : ''));
+    const apiKey = resolveEffectiveDriveApiKey(googleApiKey);
+
+    if (token) {
+      const res = await fetchWithTimeout(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=name,size&supportsAllDrives=true`,
+        { headers: { Authorization: `Bearer ${token}` } },
+        15000
+      );
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          name: typeof data?.name === 'string' ? data.name : undefined,
+          size: data?.size ? Number(data.size) : undefined
+        };
+      }
+    }
+
+    if (apiKey) {
+      const res = await fetchWithTimeout(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=name,size&supportsAllDrives=true&key=${encodeURIComponent(apiKey)}`,
+        {},
+        15000
+      );
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          name: typeof data?.name === 'string' ? data.name : undefined,
+          size: data?.size ? Number(data.size) : undefined
+        };
+      }
+    }
+    return {};
   } catch {
     return {};
   }
+}
+
+/**
+ * Standalone helper used by Manajemen Proyek ("Uji Koneksi COG") to test a Drive COG
+ * in either OAuth mode or Guest/Tamu API Key mode without mounting a Leaflet map.
+ */
+export async function probeCogDriveMetadata(params: {
+  fileId: string;
+  accessToken?: string;
+  googleApiKey?: string;
+  preferApiKey?: boolean;
+  epsgOverride?: string;
+}): Promise<CogLayerMetadata> {
+  const client = new GoogleDriveRangeClient(
+    params.fileId,
+    params.accessToken,
+    params.googleApiKey,
+    Boolean(params.preferApiKey)
+  );
+
+  const [tiff, driveMeta] = await Promise.all([
+    fromCustomClient(client, {
+      allowFullFile: false,
+      maxRanges: 0,
+      blockSize: 262144,
+      cacheSize: 16
+    } as any),
+    fetchDriveFileMeta(params.fileId, params.accessToken, params.googleApiKey, Boolean(params.preferApiKey))
+  ]);
+
+  const mainImage = await tiff.getImage(0);
+  const width = mainImage.getWidth();
+  const height = mainImage.getHeight();
+  const rawBbox = mainImage.getBoundingBox();
+  const cogBbox: [number, number, number, number] = [
+    Math.min(rawBbox[0], rawBbox[2]),
+    Math.min(rawBbox[1], rawBbox[3]),
+    Math.max(rawBbox[0], rawBbox[2]),
+    Math.max(rawBbox[1], rawBbox[3])
+  ];
+
+  const cogEpsg = detectEpsgFromImage(mainImage, params.epsgOverride);
+  const cogToWgs84 = proj4(cogEpsg, 'EPSG:4326');
+  const corners: Array<[number, number]> = [
+    [cogBbox[0], cogBbox[1]],
+    [cogBbox[2], cogBbox[1]],
+    [cogBbox[2], cogBbox[3]],
+    [cogBbox[0], cogBbox[3]]
+  ];
+
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  for (const [cx, cy] of corners) {
+    const [lng, lat] = cogToWgs84.forward([cx, cy]);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+    }
+  }
+
+  const imageCount = await tiff.getImageCount();
+  let overviewCount = 0;
+  for (let idx = 1; idx < imageCount; idx++) {
+    try {
+      const img = await tiff.getImage(idx);
+      const fd: any = img.fileDirectory || {};
+      const subfileType = Number(fd.NewSubfileType || 0);
+      const photometric = Number(fd.PhotometricInterpretation ?? -1);
+      if ((subfileType & 4) === 0 && photometric !== 4) {
+        overviewCount++;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const fdMain: any = mainImage.fileDirectory || {};
+  return {
+    fileId: params.fileId,
+    fileName: driveMeta.name,
+    fileSizeBytes: driveMeta.size,
+    width,
+    height,
+    epsgCode: cogEpsg,
+    crsLabel: formatCrsLabel(cogEpsg),
+    overviewCount,
+    compressionName: getCompressionLabel(Number(fdMain.Compression)),
+    samplesPerPixel: mainImage.getSamplesPerPixel(),
+    boundsLatLng: L.latLngBounds(L.latLng(minLat, minLng), L.latLng(maxLat, maxLng)),
+    authMode: client.activeAuthMode
+  };
 }
 
 // ============================================================================
@@ -417,8 +643,8 @@ export class CogDriveGridLayer extends L.GridLayer {
   }
 
   private async loadCogContext(): Promise<ParsedCogContext> {
-    const { fileId, accessToken, epsgOverride } = this.cogOptions;
-    const client = new GoogleDriveRangeClient(fileId, accessToken);
+    const { fileId, accessToken, googleApiKey, preferApiKey, epsgOverride } = this.cogOptions;
+    const client = new GoogleDriveRangeClient(fileId, accessToken, googleApiKey, Boolean(preferApiKey));
 
     // maxRanges: 0 ensures single HTTP Range requests (Google Drive API v3 compliant)
     // allowFullFile: false guarantees we NEVER buffer the entire 2.5 GB file
@@ -429,7 +655,7 @@ export class CogDriveGridLayer extends L.GridLayer {
         blockSize: 262144, // 256 KB per cached chunk
         cacheSize: 200 // ~50 MB LRU chunk cache in browser memory
       } as any),
-      fetchDriveFileMeta(fileId, accessToken)
+      fetchDriveFileMeta(fileId, accessToken, googleApiKey, Boolean(preferApiKey))
     ]);
 
     const mainImage = await tiff.getImage(0);
@@ -532,7 +758,8 @@ export class CogDriveGridLayer extends L.GridLayer {
       overviewCount: Math.max(0, overviews.length - 1),
       compressionName,
       samplesPerPixel,
-      boundsLatLng
+      boundsLatLng,
+      authMode: client.activeAuthMode
     };
 
     this.cogOptions.onMetadataLoaded?.(metadata);
@@ -601,7 +828,6 @@ export class CogDriveGridLayer extends L.GridLayer {
     const [cogMinX, cogMinY, cogMaxX, cogMaxY] = ctx.cogBbox;
 
     // Project 9x9 control grid across the tile from EPSG:3857 -> COG CRS (e.g., UTM 47N)
-    // Only 81 proj4 transforms (<0.1ms) gives sub-millimeter bilinear warp accuracy per 256px tile!
     const GRID = 8;
     const gridCount = GRID + 1;
     const gridCogX = new Float64Array(gridCount * gridCount);
@@ -653,7 +879,6 @@ export class CogDriveGridLayer extends L.GridLayer {
         break;
       }
     }
-    // If zoomed far out beyond the coarsest overview, use the coarsest overview
     if (desiredRes > ctx.overviews[ctx.overviews.length - 1].resX) {
       chosen = ctx.overviews[ctx.overviews.length - 1];
     }
@@ -661,7 +886,6 @@ export class CogDriveGridLayer extends L.GridLayer {
     const cogSpanX = cogMaxX - cogMinX;
     const cogSpanY = cogMaxY - cogMinY;
 
-    // Pixel window inside chosen overview (with 1px margin for smooth edge sampling)
     const rawWinX0 = Math.floor(((interMinX - cogMinX) / cogSpanX) * chosen.width) - 1;
     const rawWinX1 = Math.ceil(((interMaxX - cogMinX) / cogSpanX) * chosen.width) + 1;
     const rawWinY0 = Math.floor(((cogMaxY - interMaxY) / cogSpanY) * chosen.height) - 1;
@@ -676,7 +900,6 @@ export class CogDriveGridLayer extends L.GridLayer {
     const srcWinH = winY1 - winY0;
     if (srcWinW <= 0 || srcWinH <= 0) return;
 
-    // Limit decoded readout dimensions when zoomed very far out
     const maxReadDim = 384;
     const scaleDown = Math.min(1, maxReadDim / Math.max(srcWinW, srcWinH));
     const outW = Math.max(1, Math.round(srcWinW * scaleDown));
@@ -711,12 +934,11 @@ export class CogDriveGridLayer extends L.GridLayer {
     const imgData = ctx2d.createImageData(tileW, tileH);
     const dst = imgData.data;
 
-    // Map COG world coordinate -> pixel index in our fetched [outW x outH] buffer
     const invSpanX = chosen.width / cogSpanX;
     const invSpanY = chosen.height / cogSpanY;
     const bufScaleX = outW / srcWinW;
     const bufScaleY = outH / srcWinH;
-    const cellStep = tileW / GRID; // 32 pixels per grid cell
+    const cellStep = tileW / GRID;
 
     for (let gy = 0; gy < GRID; gy++) {
       const pyStart = gy * cellStep;

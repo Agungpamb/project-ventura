@@ -64,6 +64,7 @@ const QCPlantRepetitionPanel = lazy(() => import('./components/QCPlantRepetition
 const DaftarNominatifPanel = lazy(() => import('./components/DaftarNominatifPanel'));
 const ResumeProjectPanel = lazy(() => import('./components/ResumeProjectPanel'));
 const SuratInstansiPanel = lazy(() => import('./components/SuratInstansiPanel'));
+const AerialCogManagerPanel = lazy(() => import('./components/AerialCogManagerPanel'));
 import { 
   Map as MapIcon, Database, UploadCloud, ShieldAlert, LogOut, 
   RefreshCw, FileSpreadsheet, KeyRound, CheckSquare,
@@ -5961,7 +5962,7 @@ export default function App() {
                         }`}
                       >
                         <Layers className="w-4 h-4 text-amber-400" />
-                        Manajemen Berkas GeoJSON
+                        Manajemen GeoJSON &amp; Foto Udara (COG)
                       </button>
                       <button
                         onClick={() => setProjectSubTab('operators')}
@@ -7819,10 +7820,19 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Tab 4: Manajemen Berkas GeoJSON */}
+                    {/* Tab 4: Manajemen Berkas GeoJSON & Foto Udara (COG) */}
                     {projectSubTab === 'geojson' && (
                       <div className="space-y-6 animate-fadeIn" id="admin_manage_geojson">
-                        
+                        {/* Foto Udara / Drone (COG Google Drive — Option A: OAuth + Guest API Key) */}
+                        <Suspense fallback={<div className="p-6 text-xs text-slate-400">Memuat manajemen Foto Udara COG...</div>}>
+                          <AerialCogManagerPanel
+                            projects={projects}
+                            activeProjectId={activeProjectId}
+                            accessToken={token || undefined}
+                            userEmail={user?.email || undefined}
+                          />
+                        </Suspense>
+
                         {/* A. Info & Description */}
                         <div className="glass-card p-6 rounded-2xl border border-amber-500/30 shadow-xl space-y-5">
                           <div className="flex items-center gap-1.5 text-amber-300 text-sm font-bold uppercase tracking-wider border-b border-white/5 pb-2.5">

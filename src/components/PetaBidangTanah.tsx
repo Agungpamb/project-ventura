@@ -17,6 +17,7 @@ import {
 import {
   extractGoogleDriveFileId,
   getLocalAerialCogConfig,
+  getLocalCustomDriveApiKey,
   saveAerialCogConfigToCloud,
   subscribeAerialCogConfig,
   type AerialCogConfig
@@ -127,6 +128,8 @@ export default function PetaBidangTanah({
   const [cogMeta, setCogMeta] = useState<CogLayerMetadata | null>(null);
   const [cogError, setCogError] = useState<string | null>(null);
   const [cogActiveTiles, setCogActiveTiles] = useState<number>(0);
+  const [customDriveApiKey, setCustomDriveApiKey] = useState<string>(() => getLocalCustomDriveApiKey());
+  const isGuestRole = (role || '').toLowerCase() === 'tamu' || (role || '').toLowerCase() === 'guest';
 
   // Sync state flag to prevent infinite loops during drag/zoom sync
   const isSyncingRef = useRef(false);
@@ -994,7 +997,8 @@ export default function PetaBidangTanah({
     setCogError(null);
     setCogStatusMsg(null);
 
-    const unsubscribe = subscribeAerialCogConfig(cogProjectKey, (cloudCfg) => {
+    const unsubscribe = subscribeAerialCogConfig(cogProjectKey, (cloudCfg, cloudApiKey) => {
+      setCustomDriveApiKey(cloudApiKey || '');
       setCogConfig(cloudCfg);
       if (cloudCfg) {
         setCogUrlInput(cloudCfg.driveUrl || '');
@@ -1037,6 +1041,7 @@ export default function PetaBidangTanah({
     const layer = new CogDriveGridLayer({
       fileId: cogConfig.fileId,
       accessToken,
+      googleApiKey: customDriveApiKey,
       epsgOverride: cogConfig.epsgOverride || '',
       opacity: cogOpacity,
       zIndex: 200,
@@ -1077,7 +1082,7 @@ export default function PetaBidangTanah({
         cogLayerRef.current = null;
       }
     };
-  }, [cogConfig?.fileId, cogConfig?.epsgOverride, cogEnabled, accessToken]);
+  }, [cogConfig?.fileId, cogConfig?.epsgOverride, cogEnabled, accessToken, customDriveApiKey]);
 
   // Smooth opacity updates without re-fetching any COG tiles from Google Drive
   useEffect(() => {
@@ -1143,7 +1148,8 @@ export default function PetaBidangTanah({
   const handleToggleCogEnabled = async () => {
     const nextEnabled = !cogEnabled;
     setCogEnabled(nextEnabled);
-    if (cogConfig) {
+    // Guests toggle visibility locally for their own viewport without overwriting shared config
+    if (cogConfig && !isGuestRole) {
       try {
         await saveAerialCogConfigToCloud(cogProjectKey, {
           ...cogConfig,
@@ -1884,58 +1890,64 @@ export default function PetaBidangTanah({
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-2.5 items-end">
-                <div className="lg:col-span-6">
-                  <label className="text-[10px] font-bold text-slate-300 block mb-1">
-                    Link Google Drive File COG (.tif) atau File ID:
-                  </label>
-                  <input
-                    type="text"
-                    value={cogUrlInput}
-                    onChange={(e) => setCogUrlInput(e.target.value)}
-                    placeholder="https://drive.google.com/file/d/1AbC.../view?usp=sharing"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-400 font-mono"
-                  />
-                </div>
+              {!isGuestRole ? (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-2.5 items-end">
+                  <div className="lg:col-span-6">
+                    <label className="text-[10px] font-bold text-slate-300 block mb-1">
+                      Link Google Drive File COG (.tif) atau File ID:
+                    </label>
+                    <input
+                      type="text"
+                      value={cogUrlInput}
+                      onChange={(e) => setCogUrlInput(e.target.value)}
+                      placeholder="https://drive.google.com/file/d/1AbC.../view?usp=sharing"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-400 font-mono"
+                    />
+                  </div>
 
-                <div className="lg:col-span-3">
-                  <label className="text-[10px] font-bold text-slate-300 block mb-1">
-                    Proyeksi / Zona UTM File COG:
-                  </label>
-                  <select
-                    value={cogEpsgInput}
-                    onChange={(e) => setCogEpsgInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-xs font-semibold text-white focus:outline-none focus:border-sky-400"
-                  >
-                    {COG_CRS_OVERRIDE_OPTIONS.map((opt) => (
-                      <option key={opt.value || 'auto'} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="lg:col-span-3 flex items-center gap-2">
-                  <button
-                    onClick={handleSaveCogLink}
-                    disabled={cogSaving}
-                    className="flex-1 px-3.5 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 shadow cursor-pointer"
-                  >
-                    {cogSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                    <span>Pasang &amp; Simpan</span>
-                  </button>
-                  {cogConfig?.fileId && (
-                    <button
-                      onClick={handleRemoveCogLink}
-                      disabled={cogSaving}
-                      className="px-2.5 py-2 bg-rose-950/70 hover:bg-rose-900/80 text-rose-300 border border-rose-500/30 text-xs font-bold rounded-xl transition cursor-pointer"
-                      title="Hapus link Foto Udara COG jalur ini"
+                  <div className="lg:col-span-3">
+                    <label className="text-[10px] font-bold text-slate-300 block mb-1">
+                      Proyeksi / Zona UTM File COG:
+                    </label>
+                    <select
+                      value={cogEpsgInput}
+                      onChange={(e) => setCogEpsgInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-xs font-semibold text-white focus:outline-none focus:border-sky-400"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      {COG_CRS_OVERRIDE_OPTIONS.map((opt) => (
+                        <option key={opt.value || 'auto'} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="lg:col-span-3 flex items-center gap-2">
+                    <button
+                      onClick={handleSaveCogLink}
+                      disabled={cogSaving}
+                      className="flex-1 px-3.5 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 shadow cursor-pointer"
+                    >
+                      {cogSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                      <span>Pasang &amp; Simpan</span>
                     </button>
-                  )}
+                    {cogConfig?.fileId && (
+                      <button
+                        onClick={handleRemoveCogLink}
+                        disabled={cogSaving}
+                        className="px-2.5 py-2 bg-rose-950/70 hover:bg-rose-900/80 text-rose-300 border border-rose-500/30 text-xs font-bold rounded-xl transition cursor-pointer"
+                        title="Hapus link Foto Udara COG jalur ini"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
+              ) : !cogConfig?.fileId ? (
+                <div className="text-xs text-slate-400 bg-slate-900/70 border border-white/10 rounded-xl px-3.5 py-2.5">
+                  Foto Udara (COG) untuk jalur ini belum dikonfigurasi oleh Admin.
+                </div>
+              ) : null}
 
               {/* Active Layer Controls (ON/OFF, Opacity, Zoom, Metadata) */}
               {cogConfig?.fileId && (
@@ -2002,6 +2014,9 @@ export default function PetaBidangTanah({
                         <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
                           {cogMeta.compressionName} · {cogMeta.overviewCount} Overviews
                         </span>
+                        <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                          {cogMeta.authMode === 'API_KEY' ? 'Mode Tamu · API Key' : 'Google OAuth'}
+                        </span>
                       </>
                     )}
                   </div>
@@ -2023,7 +2038,7 @@ export default function PetaBidangTanah({
               )}
 
               <p className="text-[10px] text-slate-500">
-                Tips: Pastikan file di Google Drive minimal dibagikan sebagai <strong className="text-slate-300">Viewer</strong> (untuk tim / <em>Anyone with the link</em>) dan akun Google kamu sudah login penuh (bukan mode tamu). Foto udara tampil otomatis di <strong>Peta Bawah (Citra Satelit/Drone)</strong> tepat di bawah garis bidang tanah GeoJSON.
+                Tips: Agar <strong>Tamu (tanpa login Google)</strong> ikut melihat foto udara, pastikan file di Google Drive diset <strong className="text-slate-300">Siapa saja yang memiliki link → Pelihat (Viewer)</strong>. Admin juga bisa mengelola &amp; menguji link COG per jalur di menu <strong>5. Manajemen Proyek → Manajemen GeoJSON &amp; Foto Udara (COG)</strong>.
               </p>
             </div>
           </div>

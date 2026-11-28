@@ -12,7 +12,13 @@ export interface AerialCogConfig {
   updatedBy?: string;
 }
 
+export interface AerialCogStoreState {
+  byProject: Record<string, AerialCogConfig>;
+  customDriveApiKey: string; // Optional override; if empty, uses project's default Google/Firebase API key
+}
+
 const LOCAL_STORAGE_KEY = 'project_ventura_aerial_cog_configs_v1';
+const LOCAL_API_KEY_STORAGE = 'project_ventura_aerial_cog_api_key_v1';
 const FIRESTORE_COLLECTION = 'configs';
 const FIRESTORE_DOC_ID = 'aerial_cog_configs';
 
@@ -49,7 +55,7 @@ export function extractGoogleDriveFileId(input: string | null | undefined): stri
   return null;
 }
 
-function normalizeProjectKey(projectId: string): string {
+export function normalizeCogProjectKey(projectId: string): string {
   return (projectId || 'default').trim().replace(/[.#$/[\]]/g, '_');
 }
 
@@ -89,14 +95,41 @@ function writeLocalMap(map: Record<string, AerialCogConfig>): void {
   }
 }
 
+export function getLocalCustomDriveApiKey(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    return (localStorage.getItem(LOCAL_API_KEY_STORAGE) || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+export function saveLocalCustomDriveApiKey(apiKey: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const clean = (apiKey || '').trim();
+    if (clean) {
+      localStorage.setItem(LOCAL_API_KEY_STORAGE, clean);
+    } else {
+      localStorage.removeItem(LOCAL_API_KEY_STORAGE);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export function getLocalAerialCogConfig(projectId: string): AerialCogConfig | null {
-  const key = normalizeProjectKey(projectId);
+  const key = normalizeCogProjectKey(projectId);
   const map = readLocalMap();
   return map[key] || null;
 }
 
+export function getAllLocalAerialCogConfigs(): Record<string, AerialCogConfig> {
+  return readLocalMap();
+}
+
 export function saveLocalAerialCogConfig(projectId: string, config: AerialCogConfig | null): void {
-  const key = normalizeProjectKey(projectId);
+  const key = normalizeCogProjectKey(projectId);
   const map = readLocalMap();
   if (config && config.fileId) {
     map[key] = sanitizeConfig(config);
@@ -108,14 +141,17 @@ export function saveLocalAerialCogConfig(projectId: string, config: AerialCogCon
 
 /**
  * Loads the per-project COG config from Firestore `configs/aerial_cog_configs`
- * (only stores a tiny link/fileId JSON object, ~200 bytes — zero impact on Firebase free quota).
+ * (only stores tiny link/fileId JSON objects, ~200 bytes — zero impact on Firebase free quota).
  */
 export async function loadAerialCogConfigFromCloud(projectId: string): Promise<AerialCogConfig | null> {
-  const key = normalizeProjectKey(projectId);
+  const key = normalizeCogProjectKey(projectId);
   try {
     const snap = await getDoc(doc(db, FIRESTORE_COLLECTION, FIRESTORE_DOC_ID));
     if (snap.exists()) {
-      const data = snap.data() as { byProject?: Record<string, AerialCogConfig> };
+      const data = snap.data() as { byProject?: Record<string, AerialCogConfig>; customDriveApiKey?: string };
+      if (typeof data?.customDriveApiKey === 'string') {
+        saveLocalCustomDriveApiKey(data.customDriveApiKey);
+      }
       const cloudCfg = data?.byProject?.[key] || null;
       if (cloudCfg && cloudCfg.fileId) {
         saveLocalAerialCogConfig(projectId, cloudCfg);
@@ -129,27 +165,63 @@ export async function loadAerialCogConfigFromCloud(projectId: string): Promise<A
 }
 
 /**
- * Subscribes in real time to per-project COG config changes across all logged-in accounts.
+ * Subscribes in real time to ALL project COG configs + optional custom Drive API Key.
  */
-export function subscribeAerialCogConfig(
-  projectId: string,
-  onUpdate: (config: AerialCogConfig | null) => void
+export function subscribeAllAerialCogConfigs(
+  onUpdate: (state: AerialCogStoreState) => void
 ): () => void {
-  const key = normalizeProjectKey(projectId);
   return onSnapshot(
     doc(db, FIRESTORE_COLLECTION, FIRESTORE_DOC_ID),
     (snap) => {
       if (snap.exists()) {
-        const data = snap.data() as { byProject?: Record<string, AerialCogConfig> };
+        const data = snap.data() as { byProject?: Record<string, AerialCogConfig>; customDriveApiKey?: string };
+        const byProjectRaw = data?.byProject || {};
+        const cleanMap: Record<string, AerialCogConfig> = {};
+        Object.entries(byProjectRaw).forEach(([k, v]) => {
+          if (v && v.fileId) {
+            cleanMap[k] = sanitizeConfig(v);
+          }
+        });
+        const customKey = typeof data?.customDriveApiKey === 'string' ? data.customDriveApiKey.trim() : '';
+        writeLocalMap(cleanMap);
+        saveLocalCustomDriveApiKey(customKey);
+        onUpdate({ byProject: cleanMap, customDriveApiKey: customKey });
+      } else {
+        onUpdate({ byProject: {}, customDriveApiKey: '' });
+      }
+    },
+    (err) => {
+      console.warn('[AerialCOG] Realtime all-configs sync error:', err);
+    }
+  );
+}
+
+/**
+ * Subscribes in real time to a single project's COG config + global custom Drive API Key.
+ */
+export function subscribeAerialCogConfig(
+  projectId: string,
+  onUpdate: (config: AerialCogConfig | null, customDriveApiKey: string) => void
+): () => void {
+  const key = normalizeCogProjectKey(projectId);
+  return onSnapshot(
+    doc(db, FIRESTORE_COLLECTION, FIRESTORE_DOC_ID),
+    (snap) => {
+      if (snap.exists()) {
+        const data = snap.data() as { byProject?: Record<string, AerialCogConfig>; customDriveApiKey?: string };
+        const customKey = typeof data?.customDriveApiKey === 'string' ? data.customDriveApiKey.trim() : '';
+        saveLocalCustomDriveApiKey(customKey);
         const cloudCfg = data?.byProject?.[key] || null;
         if (cloudCfg && cloudCfg.fileId) {
           const clean = sanitizeConfig(cloudCfg);
           saveLocalAerialCogConfig(projectId, clean);
-          onUpdate(clean);
+          onUpdate(clean, customKey);
           return;
         }
+        onUpdate(null, customKey);
+        return;
       }
-      onUpdate(null);
+      onUpdate(null, '');
     },
     (err) => {
       console.warn('[AerialCOG] Realtime sync error:', err);
@@ -164,7 +236,7 @@ export async function saveAerialCogConfigToCloud(
   projectId: string,
   config: AerialCogConfig | null
 ): Promise<void> {
-  const key = normalizeProjectKey(projectId);
+  const key = normalizeCogProjectKey(projectId);
   saveLocalAerialCogConfig(projectId, config);
 
   const ref = doc(db, FIRESTORE_COLLECTION, FIRESTORE_DOC_ID);
@@ -192,4 +264,22 @@ export async function saveAerialCogConfigToCloud(
       { merge: true }
     );
   }
+}
+
+/**
+ * Saves optional custom Google Drive API Key (for Guest/Tamu access) to Firestore `configs/aerial_cog_configs`.
+ * Leaving it empty tells the app to use the default project Google/Firebase API key automatically.
+ */
+export async function saveCustomDriveApiKeyToCloud(apiKey: string): Promise<void> {
+  const clean = (apiKey || '').trim();
+  saveLocalCustomDriveApiKey(clean);
+  const ref = doc(db, FIRESTORE_COLLECTION, FIRESTORE_DOC_ID);
+  await setDoc(
+    ref,
+    {
+      customDriveApiKey: clean,
+      updatedAt: Date.now()
+    },
+    { merge: true }
+  );
 }
