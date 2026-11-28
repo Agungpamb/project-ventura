@@ -5864,6 +5864,7 @@ export default function App() {
                     role={role} 
                     activeProjectName={projects.find(p => p.id === activeProjectId)?.name}
                     activeProjectId={activeProjectId}
+                    accessToken={token || undefined}
                     onDeleteRecord={handleDeleteRecord}
                   />
                 )}

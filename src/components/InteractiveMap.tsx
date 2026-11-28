@@ -2,8 +2,8 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import L from 'leaflet';
 import { 
   Map as MapIcon, Layers, Radio, Globe, UploadCloud, Info, CheckCircle2, Clock, 
-  XCircle, MapPin, Search, FileText, ChevronRight, Eye, Trash2, HelpCircle, X,
-  Navigation, ExternalLink
+  XCircle, MapPin, Search, FileText, ChevronRight, Eye, EyeOff, Trash2, HelpCircle, X,
+  Navigation, ExternalLink, Image as ImageIcon, Loader2, Crosshair, AlertCircle
 } from 'lucide-react';
 import type { LandRecord } from '../types';
 import { db } from '../lib/firebase';
@@ -16,6 +16,16 @@ import {
   loadDeployedDefaultGeoJSONs
 } from '../lib/geojsonStorage';
 import DeleteParcelModal from './DeleteParcelModal';
+import {
+  CogDriveGridLayer,
+  type CogLayerMetadata
+} from '../lib/cogDriveLayer';
+import {
+  getLocalAerialCogConfig,
+  getLocalCustomDriveApiKey,
+  subscribeAerialCogConfig,
+  type AerialCogConfig
+} from '../lib/aerialCogStorage';
 
 interface InteractiveMapProps {
   onDeleteRecord?: (record: LandRecord, adjustNextParcels: boolean) => Promise<void>;
@@ -23,6 +33,7 @@ interface InteractiveMapProps {
   role?: string | null;
   activeProjectName?: string;
   activeProjectId?: string;
+  accessToken?: string;
   loadedGeoJSONs?: LoadedGeoJSON[];
 }
 
@@ -297,10 +308,21 @@ const checkRecordMatch = (featProps: any, record: LandRecord, layer?: LoadedGeoJ
   return false;
 };
 
-export default function InteractiveMap({ records, role, activeProjectName, activeProjectId, loadedGeoJSONs: propLoadedGeoJSONs, onDeleteRecord }: InteractiveMapProps) {
+export default function InteractiveMap({ records, role, activeProjectName, activeProjectId, accessToken, loadedGeoJSONs: propLoadedGeoJSONs, onDeleteRecord }: InteractiveMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const geojsonLayersRef = useRef<{ [key: string]: L.GeoJSON }>({});
+  const cogLayerRef = useRef<CogDriveGridLayer | null>(null);
+
+  // Aerial Photo COG (Google Drive Streaming — synced per activeProjectId via Firestore)
+  const cogProjectKey = activeProjectId || activeProjectName || 'default';
+  const [cogConfig, setCogConfig] = useState<AerialCogConfig | null>(() => getLocalAerialCogConfig(cogProjectKey));
+  const [cogEnabled, setCogEnabled] = useState<boolean>(() => getLocalAerialCogConfig(cogProjectKey)?.enabled ?? true);
+  const [cogOpacity, setCogOpacity] = useState<number>(() => getLocalAerialCogConfig(cogProjectKey)?.opacity ?? 1);
+  const [customDriveApiKey, setCustomDriveApiKey] = useState<string>(() => getLocalCustomDriveApiKey());
+  const [cogMeta, setCogMeta] = useState<CogLayerMetadata | null>(null);
+  const [cogError, setCogError] = useState<string | null>(null);
+  const [cogActiveTiles, setCogActiveTiles] = useState<number>(0);
   
   // States
   const [basemap, setBasemap] = useState<'osm' | 'satelit' | 'google'>('google');
@@ -645,6 +667,117 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
       google.addTo(mapRef.current);
     }
   }, [basemap]);
+
+  // Subscribe to per-project Aerial COG Drive config in Firestore (synced across all accounts & Guests)
+  useEffect(() => {
+    const localInit = getLocalAerialCogConfig(cogProjectKey);
+    setCogConfig(localInit);
+    setCogEnabled(localInit?.enabled ?? true);
+    setCogOpacity(localInit?.opacity ?? 1);
+    setCogMeta(null);
+    setCogError(null);
+
+    const unsubscribe = subscribeAerialCogConfig(cogProjectKey, (cloudCfg, cloudApiKey) => {
+      setCustomDriveApiKey(cloudApiKey || '');
+      setCogConfig(cloudCfg);
+      if (cloudCfg) {
+        setCogEnabled(cloudCfg.enabled ?? true);
+        setCogOpacity(cloudCfg.opacity ?? 1);
+      } else {
+        setCogMeta(null);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [cogProjectKey]);
+
+  // Attach / Update Google Drive COG Streaming Layer on InteractiveMap
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !(map as any)._mapPane) return;
+
+    if (cogLayerRef.current) {
+      try {
+        map.removeLayer(cogLayerRef.current);
+      } catch {
+        // ignore
+      }
+      cogLayerRef.current = null;
+    }
+
+    setCogActiveTiles(0);
+    setCogError(null);
+
+    if (!cogConfig?.fileId || !cogEnabled) {
+      return;
+    }
+
+    let cancelled = false;
+    const layer = new CogDriveGridLayer({
+      fileId: cogConfig.fileId,
+      accessToken,
+      googleApiKey: customDriveApiKey,
+      epsgOverride: cogConfig.epsgOverride || '',
+      opacity: cogOpacity,
+      zIndex: 200,
+      onMetadataLoaded: (meta) => {
+        if (!cancelled) {
+          setCogMeta(meta);
+          setCogError(null);
+        }
+      },
+      onError: (msg) => {
+        if (!cancelled) {
+          setCogError(msg);
+        }
+      },
+      onTileActivity: (count) => {
+        if (!cancelled) {
+          setCogActiveTiles(count);
+        }
+      }
+    });
+
+    layer.addTo(map);
+    cogLayerRef.current = layer;
+
+    layer.initMetadata().catch(() => {
+      // handled by onError
+    });
+
+    return () => {
+      cancelled = true;
+      if (cogLayerRef.current === layer) {
+        try {
+          map.removeLayer(layer);
+        } catch {
+          // ignore
+        }
+        cogLayerRef.current = null;
+      }
+    };
+  }, [cogConfig?.fileId, cogConfig?.epsgOverride, cogEnabled, accessToken, customDriveApiKey]);
+
+  // Instant opacity update without re-fetching tiles
+  useEffect(() => {
+    if (cogLayerRef.current) {
+      cogLayerRef.current.setOpacity(cogOpacity);
+    }
+  }, [cogOpacity]);
+
+  const handleZoomToCog = () => {
+    if (!cogMeta?.boundsLatLng?.isValid()) return;
+    if (mapRef.current && (mapRef.current as any)._mapPane) {
+      mapRef.current.flyToBounds(cogMeta.boundsLatLng, { padding: [30, 30], maxZoom: 18, duration: 0.6 });
+    }
+  };
+
+  const formatCogFileSize = (bytes?: number) => {
+    if (!bytes || !Number.isFinite(bytes)) return '';
+    if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+    if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+    return `${(bytes / 1024).toFixed(0)} KB`;
+  };
 
   // Custom styling generator for GeoJSON features
   const getFeatureStyle = (type: 'bidang' | 'jalur' | 'tower', isHighlighted: boolean) => {
@@ -1102,55 +1235,139 @@ export default function InteractiveMap({ records, role, activeProjectName, activ
     <div className="space-y-6" id="interactive_gis_map_root">
       
       {/* Top Header Row */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 glass-card p-6 rounded-2xl shadow-xl">
-        <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2 font-sans">
-            <MapIcon className="w-6 h-6 text-amber-400" />
-            Sistem Informasi Geografis & Peta Spasial (GIS)
-          </h1>
-          <p className="text-slate-300 text-sm mt-1 font-sans">
-            Visualisasi bidang tanah jalur transmisi, tapak tower, koridor bebas hambatan (ROW), dan data kepemilikan.
-          </p>
+      <div className="glass-card p-6 rounded-2xl shadow-xl space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2 font-sans">
+              <MapIcon className="w-6 h-6 text-amber-400" />
+              Sistem Informasi Geografis &amp; Peta Spasial (GIS)
+            </h1>
+            <p className="text-slate-300 text-sm mt-1 font-sans">
+              Visualisasi bidang tanah jalur transmisi, tapak tower, koridor bebas hambatan (ROW), dan data kepemilikan.
+            </p>
+          </div>
+
+          {/* Basemap Toggle Buttons */}
+          <div className="flex items-center gap-2.5 bg-slate-900/60 p-1 rounded-xl border border-white/10 self-start md:self-center">
+            <button
+              onClick={() => setBasemap('google')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                basemap === 'google'
+                  ? 'bg-amber-500 text-slate-950 font-bold shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Google Satellite Hybrid (Mendukung Zoom Sangat Detail)"
+            >
+              <Globe className="w-3.5 h-3.5 text-emerald-400" />
+              Satelit Google
+            </button>
+            <button
+              onClick={() => setBasemap('satelit')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                basemap === 'satelit'
+                  ? 'bg-amber-500 text-slate-950 font-bold shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Esri World Imagery"
+            >
+              <Globe className="w-3.5 h-3.5" />
+              Satelit Esri
+            </button>
+            <button
+              onClick={() => setBasemap('osm')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                basemap === 'osm'
+                  ? 'bg-amber-500 text-slate-950 font-bold shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Radio className="w-3.5 h-3.5" />
+              Vektor OSM
+            </button>
+          </div>
         </div>
 
-        {/* Basemap Toggle Buttons */}
-        <div className="flex items-center gap-2.5 bg-slate-900/60 p-1 rounded-xl border border-white/10 self-start md:self-center">
-          <button
-            onClick={() => setBasemap('google')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-              basemap === 'google'
-                ? 'bg-amber-500 text-slate-950 font-bold shadow-md'
-                : 'text-slate-400 hover:text-white'
-            }`}
-            title="Google Satellite Hybrid (Mendukung Zoom Sangat Detail)"
-          >
-            <Globe className="w-3.5 h-3.5 text-emerald-400" />
-            Satelit Google
-          </button>
-          <button
-            onClick={() => setBasemap('satelit')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-              basemap === 'satelit'
-                ? 'bg-amber-500 text-slate-950 font-bold shadow-md'
-                : 'text-slate-400 hover:text-white'
-            }`}
-            title="Esri World Imagery"
-          >
-            <Globe className="w-3.5 h-3.5" />
-            Satelit Esri
-          </button>
-          <button
-            onClick={() => setBasemap('osm')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-              basemap === 'osm'
-                ? 'bg-amber-500 text-slate-950 font-bold shadow-md'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Radio className="w-3.5 h-3.5" />
-            Vektor OSM
-          </button>
-        </div>
+        {/* Foto Udara / Drone (COG Google Drive) Bar — otomatis tampil bila jalur ini sudah terhubung COG di Edit ID */}
+        {cogConfig?.fileId && (
+          <div className="pt-3 border-t border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => setCogEnabled((prev) => !prev)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition cursor-pointer ${
+                  cogEnabled
+                    ? 'bg-sky-600/25 text-sky-200 border-sky-400/50 hover:bg-sky-600/35'
+                    : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-white'
+                }`}
+              >
+                <ImageIcon className="w-3.5 h-3.5 text-sky-400" />
+                {cogEnabled ? <Eye className="w-3.5 h-3.5 text-emerald-400" /> : <EyeOff className="w-3.5 h-3.5" />}
+                <span>Foto Udara (COG): {cogEnabled ? 'ON' : 'OFF'}</span>
+              </button>
+
+              {cogEnabled && (
+                <div className="flex items-center gap-2 bg-slate-900/80 border border-white/10 rounded-xl px-3 py-1.5">
+                  <span className="text-[10px] font-bold text-slate-400">Opasitas:</span>
+                  <input
+                    type="range"
+                    min={10}
+                    max={100}
+                    step={5}
+                    value={Math.round(cogOpacity * 100)}
+                    onChange={(e) => setCogOpacity(Number(e.target.value) / 100)}
+                    className="w-24 accent-sky-400 cursor-pointer"
+                  />
+                  <span className="text-[10px] font-mono font-bold text-sky-300 w-8 text-right">
+                    {Math.round(cogOpacity * 100)}%
+                  </span>
+                </div>
+              )}
+
+              {cogEnabled && cogMeta?.boundsLatLng?.isValid() && (
+                <button
+                  type="button"
+                  onClick={handleZoomToCog}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <Crosshair className="w-3.5 h-3.5" />
+                  <span>Zoom ke Foto Udara</span>
+                </button>
+              )}
+            </div>
+
+            {/* Live Streaming Status & COG Metadata */}
+            <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
+              {cogActiveTiles > 0 && (
+                <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30 flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Streaming {cogActiveTiles} tile...
+                </span>
+              )}
+              {cogMeta && (
+                <>
+                  {cogMeta.fileName && (
+                    <span className="px-2 py-0.5 rounded bg-slate-900 text-slate-200 border border-white/10 max-w-[210px] truncate" title={cogMeta.fileName}>
+                      {cogMeta.fileName}
+                      {cogMeta.fileSizeBytes ? ` (${formatCogFileSize(cogMeta.fileSizeBytes)})` : ''}
+                    </span>
+                  )}
+                  <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                    {cogMeta.crsLabel}
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                    {cogMeta.authMode === 'API_KEY' ? 'Mode Tamu · API Key' : 'Google OAuth'}
+                  </span>
+                </>
+              )}
+              {cogError && (
+                <span className="px-2.5 py-1 rounded bg-rose-950/70 text-rose-200 border border-rose-500/40 flex items-center gap-1.5 font-sans text-[11px]">
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                  <span>{cogError}</span>
+                </span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Peta & Navigasi Spasial */}
